@@ -6,7 +6,9 @@ COPY package*.json ./
 
 RUN npm ci --only=production
 
-RUN npx tsc --build
+COPY src/ ./src/
+
+RUN npx tsc
 
 COPY dist/ ./dist/
 
