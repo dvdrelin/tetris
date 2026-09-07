@@ -6,6 +6,32 @@ const BOARD_WIDTH = 10;
 const BOARD_HEIGHT = 20;
 const BOARD_PIXELS_W = BOARD_WIDTH * CELL_SIZE;
 const BOARD_PIXELS_H = BOARD_HEIGHT * CELL_SIZE;
+const API_URL = 'https://tetris-api-dvdrelin.amvera.io';
+
+// ====== API ======
+async function saveScore(playerName, score, mode, level, lines) {
+  try {
+    const res = await fetch(`${API_URL}/api/score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerName, score, mode, level, linesCleared: lines })
+    });
+    if (res.ok) console.log('Score saved!');
+  } catch (e) {
+    console.warn('API save failed:', e);
+  }
+}
+
+async function getLeaderboard(mode) {
+  try {
+    const res = await fetch(`${API_URL}/api/leaderboard?mode=${mode || 0}&limit=10`);
+    const data = await res.json();
+    return data.leaderboard || [];
+  } catch (e) {
+    console.warn('API leaderboard failed:', e);
+    return [];
+  }
+}
 
 // ====== PIECE DEFINITIONS ======
 const PIECE_TYPES = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
@@ -782,7 +808,9 @@ class UI {
   saveScore() {
     const state = this.engine.getState();
     const name = prompt('Введите ваше имя:') || 'Player';
-    // Save to localStorage
+    // Save to API + localStorage fallback
+    saveScore(name, state.score, state.mode, state.level, state.lines)
+      .catch(() => {}); // fallback to localStorage
     const scores = JSON.parse(localStorage.getItem('neon-tetris-scores') || '[]');
     scores.push({ name, score: state.score, level: state.level, lines: state.lines, mode: state.mode, date: new Date().toISOString() });
     scores.sort((a, b) => b.score - a.score);
@@ -803,8 +831,9 @@ class UI {
 
 // ====== LEADERBOARD ======
 function getLeaderboard(mode) {
-  const scores = JSON.parse(localStorage.getItem('neon-tetris-scores') || '[]');
-  return scores.filter(s => mode === undefined || s.mode === mode).slice(0, 10);
+  return JSON.parse(localStorage.getItem('neon-tetris-scores') || '[]')
+    .filter(s => mode === undefined || s.mode === mode)
+    .slice(0, 10);
 }
 
 function showLeaderboard() {
