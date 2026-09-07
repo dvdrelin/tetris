@@ -1,0 +1,19 @@
+{
+  "name": "neon-tetris",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:frontend dev:backend",
+    "dev:frontend": "cd frontend && npx vite --port 3001 --host",
+    "dev:backend": "cd backend && npx ts-node-dev --respawn --transpileOnly src/index.ts",
+    "build": "npm-run-all build:backend build:frontend",
+    "build:frontend": "cd frontend && npx vite build",
+    "build:backend": "cd backend && npx tsc",
+    "start": "cd backend && node dist/index.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "npm-run-all": "^4.1.1"
+  }
+}
