@@ -143,7 +143,7 @@ export default defineComponent({
   display: flex;
   justify-content: center;
   align-items: center;
-  background: #0a0a1a;
+  background: rgba(10, 10, 26, 0.7);
   position: relative;
   z-index: 1;
 }
