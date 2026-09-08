@@ -12,8 +12,10 @@ export default defineComponent({
     const currentView = ref<'menu' | 'game' | 'leaderboard'>('menu')
     let bgCanvas: HTMLCanvasElement | null = null
     let bgAnimId: number | null = null
-    let bgParticles: Array<{ x: number; y: number; vx: number; vy: number; size: number; color: string }> = []
+    let bgCtx: CanvasRenderingContext2D | null = null
+    let bgParticles: Array<{ x: number; y: number; vx: number; vy: number; size: number; baseAlpha: number; hue: number }> = []
     let lastBgTime = 0
+    let bgStartTime = 0
 
     function showGame() {
       currentView.value = 'game'
@@ -34,29 +36,38 @@ export default defineComponent({
 
     const viewOrder = computed(() => ['menu', 'game', 'leaderboard'])
 
+    // Cosmic breathing — gentle, dark, peaceful
+    const COSMIC_CYCLE = 12000 // 12s full cycle (slow breathing)
+    const PARTICLE_COUNT = 360
+
     function initBgCanvas() {
       const canvas = document.createElement('canvas')
       canvas.id = 'bg-canvas'
       canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;'
       document.body.prepend(canvas)
       bgCanvas = canvas
+      bgCtx = canvas.getContext('2d')
 
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      bgParticles = []
       const w = window.innerWidth
       const h = window.innerHeight
-      for (let i = 0; i < 50; i++) {
+
+      bgParticles = []
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
         bgParticles.push({
           x: Math.random() * w,
           y: Math.random() * h,
-          vx: (Math.random() - 0.5) * 0.3,
-          vy: (Math.random() - 0.5) * 0.3,
-          size: 1 + Math.random() * 2,
-          color: `hsla(${Math.random() * 360}, 80%, 60%, 0.3)`,
+          vx: (Math.random() - 0.5) * 0.25,
+          vy: (Math.random() - 0.5) * 0.25,
+          size: 0.8 + Math.random() * 2,
+          phase: Math.random() * Math.PI * 2, // smooth opacity phase per particle
+          speed: 0.3 + Math.random() * 0.5,   // breathing speed per particle
+          alphaMin: 0.08 + Math.random() * 0.12,
+          alphaMax: 0.3 + Math.random() * 0.2,
+          hue: Math.random() * 60 + 220, // blues and purples: 220-280
         })
       }
+
+      bgStartTime = performance.now()
 
       function animateBg(timestamp: number) {
         if (!lastBgTime) lastBgTime = timestamp
@@ -65,18 +76,33 @@ export default defineComponent({
 
         const cw = bgCanvas!.width
         const ch = bgCanvas!.height
-        ctx.clearRect(0, 0, cw, ch)
+        bgCtx!.clearRect(0, 0, cw, ch)
 
-        bgParticles.forEach(p => {
+        const elapsed = timestamp - bgStartTime
+
+        for (let i = 0; i < bgParticles.length; i++) {
+          const p = bgParticles[i]
+
+          // Move particle
           p.x += p.vx * dt * 60
           p.y += p.vy * dt * 60
-          if (p.x < 0 || p.x > cw) p.vx *= -1
-          if (p.y < 0 || p.y > ch) p.vy *= -1
-          ctx.fillStyle = p.color
-          ctx.beginPath()
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
-          ctx.fill()
-        })
+
+          // Seamless wrap
+          if (p.x < 0) p.x = cw
+          if (p.x > cw) p.x = 0
+          if (p.y < 0) p.y = ch
+          if (p.y > ch) p.y = 0
+
+          // Gentle breathing opacity — smooth sine wave per particle
+          const breathT = elapsed * 0.001 * p.speed + p.phase
+          const breath = 0.5 + 0.5 * Math.sin(breathT)
+          const alpha = p.alphaMin + (p.alphaMax - p.alphaMin) * breath
+
+          bgCtx!.fillStyle = `hsla(${p.hue}, 50%, 55%, ${alpha})`
+          bgCtx!.beginPath()
+          bgCtx!.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+          bgCtx!.fill()
+        }
 
         bgAnimId = requestAnimationFrame(animateBg)
       }
@@ -91,7 +117,7 @@ export default defineComponent({
       resize()
       window.addEventListener('resize', resize)
       lastBgTime = 0
-      animateBg(0)
+      animateBg(performance.now())
     }
 
     function stopBgCanvas() {
@@ -100,6 +126,7 @@ export default defineComponent({
         bgCanvas.remove()
         bgCanvas = null
       }
+      bgCtx = null
       bgParticles = []
     }
 
