@@ -1,6 +1,5 @@
 import { Piece, PieceType } from './types';
 
-export const PIECE_SHAPES: Record<PieceType, number[][][]> = {
 const COLORS: Record<PieceType, number> = {
   [PieceType.I]: 1,
   [PieceType.O]: 2,
@@ -11,7 +10,7 @@ const COLORS: Record<PieceType, number> = {
   [PieceType.L]: 7,
 };
 
-const PIECE_SHAPES: Record<PieceType, number[][][]> = {
+export const PIECE_SHAPES: Record<PieceType, number[][][]> = {
   [PieceType.I]: [
     [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]],
     [[0,1,0,0], [0,1,0,0], [0,1,0,0], [0,1,0,0]],
@@ -26,9 +25,9 @@ const PIECE_SHAPES: Record<PieceType, number[][][]> = {
   ],
   [PieceType.T]: [
     [[0,1,0], [1,1,1], [0,0,0]],
-    [[0,1,0], [0,1,0], [0,1,0]],
+    [[0,1,0], [0,1,1], [0,1,0]],
     [[0,0,0], [1,1,1], [0,1,0]],
-    [[1,0,0], [1,0,0], [1,1,0]],
+    [[0,1,0], [1,1,0], [0,1,0]],
   ],
   [PieceType.S]: [
     [[0,1,1], [1,1,0], [0,0,0]],
@@ -46,13 +45,13 @@ const PIECE_SHAPES: Record<PieceType, number[][][]> = {
     [[1,0,0], [1,1,1], [0,0,0]],
     [[0,1,1], [0,1,0], [0,1,0]],
     [[0,0,0], [1,1,1], [0,0,1]],
-    [[0,0,1], [0,1,0], [0,1,0]],
+    [[0,1,0], [0,1,0], [1,1,0]],
   ],
   [PieceType.L]: [
     [[0,0,1], [1,1,1], [0,0,0]],
     [[0,1,0], [0,1,0], [0,1,1]],
     [[0,0,0], [1,1,1], [1,0,0]],
-    [[1,0,0], [1,1,0], [0,0,0]],
+    [[1,1,0], [0,1,0], [0,1,0]],
   ],
 };
 
@@ -97,15 +96,19 @@ export class PieceFactoryProvider {
   }
 
   public createPiece(type: PieceType): Piece {
-    const shape = PIECE_SHAPES[type][0];
-    const colors: number[][] = [];
-    for (let r = 0; r < shape.length; r++) {
-      const row: number[] = [];
-      for (let c = 0; c < shape[r].length; c++) {
-        row.push(shape[r][c] ? COLORS[type] : 0);
-      }
-      colors.push(row);
-    }
-    return { type, shape, colors };
+    return buildPiece(type, PIECE_SHAPES[type][0]);
   }
+}
+
+// Builds a piece (shape + matching colors) for an arbitrary rotation.
+export function buildPiece(type: PieceType, shape: number[][]): Piece {
+  const colors: number[][] = [];
+  for (let r = 0; r < shape.length; r++) {
+    const row: number[] = [];
+    for (let c = 0; c < shape[r].length; c++) {
+      row.push(shape[r][c] ? COLORS[type] : 0);
+    }
+    colors.push(row);
+  }
+  return { type, shape, colors };
 }

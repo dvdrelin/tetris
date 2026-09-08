@@ -1,11 +1,11 @@
 import {
   GameState, Position, RotationState, GameMode, GameConfig,
-  Cell, CellState, Piece, PieceType, TickResult, Particle
+  Cell, CellState, Piece, PieceType, TickResult
 } from '../domain/types';
 import { BoardManager } from '../domain/board';
-import { PieceFactoryProvider, PIECE_SHAPES } from '../domain/pieces';
-import { CommandType } from '../cqrs/commands';
-import { AnyCommand, AnyQuery, QueryType } from '../cqrs/queries';
+import { PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '../domain/pieces';
+import { CommandType, AnyCommand } from '../cqrs/commands';
+import { AnyQuery, QueryType } from '../cqrs/queries';
 import { GAME_CONFIG, SCORING_CONFIG } from '../config/game-config';
 
 // Type guard for command types
@@ -28,7 +28,7 @@ export class GameEngine {
   private callbacks: GameEngineCallbacks;
 
   // Mutable state (not exposed directly)
-  private board: Cell[][];
+  private board: Cell[][] = [];
   private readonly width: number;
   private readonly height: number;
   private currentPiece: Piece | null = null;
@@ -39,11 +39,10 @@ export class GameEngine {
   private level: number = 1;
   private linesCleared: number = 0;
   private combo: number = 0;
-  private isRunning: boolean = false;
-  private isPaused: boolean = false;
-  private isGameOver: boolean = false;
-  private readonly mode: GameMode;
-  private particles: Particle[] = [];
+  private _isRunning: boolean = false;
+  private _isPaused: boolean = false;
+  private _isGameOver: boolean = false;
+  private mode: GameMode;
 
   constructor(callbacks: GameEngineCallbacks) {
     this.callbacks = callbacks;
@@ -61,16 +60,19 @@ export class GameEngine {
   // ====== CQRS Command Handlers ======
 
   handleCommand(command: AnyCommand): void {
+    if (!isCommandType(command.type)) return;
+
     const handlerMap: Record<string, () => void> = {
       [CommandType.StartGame]: () => this.startGame(command),
       [CommandType.MovePiece]: () => this.movePiece(command),
-      [CommandType.RotatePiece]: () => this.rotatePiece(command),
+      [CommandType.RotatePiece]: () => this.rotatePiece(this.currentRotation.index, (command as any).payload?.direction === 'cw' ? 1 : -1),
       [CommandType.SoftDrop]: () => this.softDrop(command),
       [CommandType.HardDrop]: () => this.hardDrop(command),
       [CommandType.Tick]: () => this.tick(),
       [CommandType.PauseGame]: () => this.pauseGame(),
       [CommandType.ResumeGame]: () => this.resumeGame(),
     };
+
     const handler = handlerMap[command.type];
     if (handler) {
       handler();
@@ -95,22 +97,22 @@ export class GameEngine {
   // ====== Game Lifecycle ======
 
   private startGame(command: any): void {
-    this.mode = command.payload?.mode === 1 ? GameMode.Hardcore : GameMode.Arcade;
+    this.mode = command.payload?.hardcore ? GameMode.Hardcore : GameMode.Arcade;
     this.reset();
     this.spawnNextPiece();
-    this.isRunning = true;
-    this.isPaused = false;
-    this.isGameOver = false;
+    this._isRunning = true;
+    this._isPaused = false;
+    this._isGameOver = false;
     this.callbacks.onStateChange?.();
   }
 
   private pauseGame(): void {
-    this.isPaused = true;
+    this._isPaused = true;
     this.callbacks.onStateChange?.();
   }
 
   private resumeGame(): void {
-    this.isPaused = false;
+    this._isPaused = false;
     this.callbacks.onStateChange?.();
   }
 
@@ -124,15 +126,14 @@ export class GameEngine {
     this.level = 1;
     this.linesCleared = 0;
     this.combo = 0;
-    this.isGameOver = false;
-    this.particles = [];
+    this._isGameOver = false;
     this.nextPieceType = this.pieceFactory.nextPieceType();
   }
 
   // ====== Movement ======
 
   private movePiece(command: any): void {
-    if (!this.currentPiece || !this.isRunning || this.isPaused) return;
+    if (!this.currentPiece || !this._isRunning || this._isPaused) return;
     const direction = command.payload?.direction;
     if (!direction) return;
 
@@ -142,11 +143,11 @@ export class GameEngine {
       case 'right': dx = 1; break;
       case 'down': dy = 1; break;
       case 'rotateCW': {
-        this.rotate(this.currentRotation.index, 1);
+        this.rotatePiece(this.currentRotation.index, 1);
         return;
       }
       case 'rotateCCW': {
-        this.rotate(this.currentRotation.index, -1);
+        this.rotatePiece(this.currentRotation.index, -1);
         return;
       }
     }
@@ -154,12 +155,20 @@ export class GameEngine {
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x + dx, y: this.currentPos.y + dy })) {
       this.currentPos.x += dx;
       this.currentPos.y += dy;
+    } else if (this.mode === GameMode.Hardcore) {
+      // Hardcore mode: any move into a wall/block is instant death.
+      this.hardcoreDeath();
     }
     this.callbacks.onStateChange?.();
   }
 
-  private rotate(rotationIndex: number, direction: number): void {
-    if (!this.currentPiece || !this.isRunning || this.isPaused) return;
+  private hardcoreDeath(): void {
+    this._isGameOver = true;
+    this.callbacks.onStateChange?.();
+  }
+
+  private rotatePiece(rotationIndex: number, direction: number): void {
+    if (!this.currentPiece || !this._isRunning || this._isPaused) return;
 
     const newRotation = ((rotationIndex + direction) % 4 + 4) % 4;
     const rotatedShape = PIECE_SHAPES[this.currentPiece.type][newRotation];
@@ -169,18 +178,27 @@ export class GameEngine {
       { x: 0, y: 0 }, { x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }
     ];
 
+    let rotated = false;
     for (const kick of kicks) {
       const testPos = { x: this.currentPos.x + kick.x, y: this.currentPos.y + kick.y };
       if (this.isValidPosition({ type: this.currentPiece.type, shape: rotatedShape, colors: this.currentPiece.colors }, testPos)) {
         this.currentRotation.index = newRotation;
         this.currentPos = testPos;
+        // Rebuild shape + matching colors for the active rotation.
+        this.currentPiece = buildPiece(this.currentPiece.type, rotatedShape);
+        rotated = true;
         return;
       }
+    }
+
+    // No valid position after all kicks → instant death in hardcore mode.
+    if (this.mode === GameMode.Hardcore) {
+      this.hardcoreDeath();
     }
   }
 
   private softDrop(_command: any): void {
-    if (!this.currentPiece || !this.isRunning || this.isPaused) return;
+    if (!this.currentPiece || !this._isRunning || this._isPaused) return;
     this.currentPos.y += 1;
     this.score += SCORING_CONFIG.softDrop;
     if (!this.isValidPosition(this.currentPiece, this.currentPos)) {
@@ -190,7 +208,7 @@ export class GameEngine {
   }
 
   private hardDrop(_command: any): void {
-    if (!this.currentPiece || !this.isRunning || this.isPaused) return;
+    if (!this.currentPiece || !this._isRunning || this._isPaused) return;
     let dropDist = 0;
     while (this.isValidPosition(this.currentPiece, { x: this.currentPos.x, y: this.currentPos.y + dropDist + 1 })) {
       dropDist++;
@@ -203,7 +221,7 @@ export class GameEngine {
   // ====== Game Tick ======
 
   private tick(): void {
-    if (!this.currentPiece || !this.isRunning || this.isPaused) return;
+    if (!this.currentPiece || !this._isRunning || this._isPaused) return;
 
     // Arcade mode: auto-drop
     if (this.mode === GameMode.Arcade) {
@@ -213,6 +231,7 @@ export class GameEngine {
   }
 
   private autoDrop(): void {
+    if (!this.currentPiece) return;
     const config = GAME_CONFIG.speedConfig;
     const interval = Math.max(config.minInterval, config.initialInterval - (this.level - 1) * config.intervalDecrease);
     // For tick-based, we just move down one row per tick
@@ -235,7 +254,7 @@ export class GameEngine {
 
     // Check game over
     if (!this.isValidPosition(piece, this.currentPos)) {
-      this.isGameOver = true;
+      this._isGameOver = true;
       this.callbacks.onGameOver?.(this.score);
       return;
     }
@@ -260,12 +279,10 @@ export class GameEngine {
         this.level = newLevel;
       }
 
-      // Spawn particles
-      this.spawnClearParticles(linesCleared);
-
       this.callbacks.onLineClear?.(linesCleared, this.combo);
     } else {
-      this.combo = Math.max(0, this.combo - SCORING_CONFIG.comboDecay);
+      // A gap without a line clear breaks the combo chain.
+      this.combo = 0;
     }
 
     // Next piece
@@ -297,10 +314,6 @@ export class GameEngine {
     return this.boardManager.hasCollision(piece, pos);
   }
 
-  getLowestEmptyY(piece: Piece, startX: number): number {
-    return this.boardManager.getLowestEmptyY(piece, startX);
-  }
-
   // ====== Getters ======
 
   getGameState(): GameState {
@@ -316,9 +329,9 @@ export class GameEngine {
       level: this.level,
       linesCleared: this.linesCleared,
       combo: this.combo,
-      isRunning: this.isRunning,
-      isPaused: this.isPaused,
-      isGameOver: this.isGameOver,
+      isRunning: this._isRunning,
+      isPaused: this._isPaused,
+      isGameOver: this._isGameOver,
       mode: this.mode,
     };
   }
@@ -360,49 +373,19 @@ export class GameEngine {
   }
 
   isRunning(): boolean {
-    return this.isRunning;
+    return this._isRunning;
   }
 
   isPaused(): boolean {
-    return this.isPaused;
+    return this._isPaused;
   }
 
   isGameOver(): boolean {
-    return this.isGameOver;
+    return this._isGameOver;
   }
 
   getMode(): GameMode {
     return this.mode;
-  }
-
-  // ====== Particles ======
-
-  spawnClearParticles(lines: number): void {
-    for (let i = 0; i < lines * 20; i++) {
-      this.particles.push({
-        x: Math.random() * this.width,
-        y: Math.random() * this.height,
-        vx: (Math.random() - 0.5) * 2,
-        vy: (Math.random() - 0.5) * 2,
-        life: 1,
-        maxLife: 1,
-        color: `hsl(${Math.random() * 360}, 100%, 60%)`,
-        size: 2 + Math.random() * 3,
-      });
-    }
-  }
-
-  updateParticles(dt: number): void {
-    this.particles = this.particles.filter(p => {
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.life -= dt * 0.5;
-      return p.life > 0;
-    });
-  }
-
-  getParticles(): Particle[] {
-    return this.particles;
   }
 
 }

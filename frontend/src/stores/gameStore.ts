@@ -3,7 +3,6 @@ import { ref } from 'vue'
 import { GameEngine } from '../shared/engine/game-engine'
 import { Cell, CellState, GameMode, GameConfig, GameState, Particle } from '../shared/domain/types'
 import { CommandType } from '../shared/cqrs/commands'
-import { QUERY_TYPE_MAP } from '../shared/cqrs/queries'
 import { GAME_CONFIG } from '../shared/config/game-config'
 
 const CELL_SIZE = 24
@@ -137,27 +136,25 @@ export const useGameStore = defineStore('game', () => {
   function getGhostY(state: GameState): number {
     if (!state.currentPiece || !state.currentPos) return -1
 
-    let ghostY = state.currentPos.y
     const piece = state.currentPiece
+    let y = state.currentPos.y
 
+    // Move the piece down one row at a time until it can no longer fall.
     while (true) {
-      let canGo = false
+      let canMoveDown = true
       for (let r = 0; r < piece.shape.length; r++) {
         for (let c = 0; c < piece.shape[r].length; c++) {
-          if (piece.shape[r][c]) {
-            const boardX = state.currentPos!.x + c
-            const boardY = ghostY + r + 1
-            if (boardY >= state.boardHeight || boardX < 0 || boardX >= state.boardWidth) { canGo = false; break }
-            if (boardY >= 0 && state.board[boardY]?.[boardX]?.value !== 0) { canGo = false; break }
-            canGo = true
-          }
+          if (!piece.shape[r][c]) continue
+          const boardX = state.currentPos!.x + c
+          const boardY = y + r + 1
+          if (boardY >= state.boardHeight || boardX < 0 || boardX >= state.boardWidth) { canMoveDown = false; break }
+          if (state.board[boardY]?.[boardX]?.value !== 0) { canMoveDown = false; break }
         }
-        if (!canGo) break
       }
-      if (canGo) ghostY++
-      else break
+      if (!canMoveDown) break
+      y++
     }
-    return ghostY - piece.shape.length
+    return y
   }
 
   function handleCommand(cmd: any) {
@@ -181,6 +178,7 @@ export const useGameStore = defineStore('game', () => {
       case 'a': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } }); break
       case 'ArrowRight':
       case 'd': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } }); break
+      case 'ArrowUp': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'rotateCW' } }); break
       case 'ArrowDown':
       case 's': handleCommand({ type: CommandType.SoftDrop }); break
       case ' ': handleCommand({ type: CommandType.HardDrop }); break
@@ -240,16 +238,16 @@ export const useGameStore = defineStore('game', () => {
   function togglePause() {
     if (!engineInstance || !engineInstance.isRunning()) return
     if (engineInstance.isPaused()) {
-      engineInstance.handleCommand({ type: 'ResumeGame' })
+      engineInstance.handleCommand({ type: CommandType.ResumeGame })
     } else {
-      engineInstance.handleCommand({ type: 'PauseGame' })
+      engineInstance.handleCommand({ type: CommandType.PauseGame })
     }
     updateState()
   }
 
   function resumeGame() {
     if (!engineInstance) return
-    engineInstance.handleCommand({ type: 'ResumeGame' })
+    engineInstance.handleCommand({ type: CommandType.ResumeGame })
     updateState()
   }
 

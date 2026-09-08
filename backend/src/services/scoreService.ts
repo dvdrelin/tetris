@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs'
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync } from 'fs'
 import { join } from 'path'
 
 const DB_DIR = join(__dirname, '..', '..', 'data')
@@ -12,13 +12,16 @@ function loadScores(): ScoreEntry[] {
   try {
     const data = readFileSync(DB_PATH, 'utf-8')
     return JSON.parse(data)
-  } catch {
+  } catch (err) {
+    console.warn('ScoreService: failed to load scores.json:', err)
     return []
   }
 }
 
 function saveScores(scores: ScoreEntry[]): void {
-  writeFileSync(DB_PATH, JSON.stringify(scores, null, 2))
+  const tmpPath = `${DB_PATH}.tmp`
+  writeFileSync(tmpPath, JSON.stringify(scores, null, 2))
+  renameSync(tmpPath, DB_PATH)
 }
 
 export interface ScoreEntry {
@@ -76,12 +79,14 @@ export class ScoreService {
         map.set(s.player_name, { player: s.player_name, totalScore: s.score, games: 1, highScore: s.score })
       }
     }
+
     return Array.from(map.values()).sort((a, b) => b.highScore - a.highScore)
   }
 
   getPlayerStats(playerName: string) {
     const p = this.scores.filter(s => s.player_name === playerName)
     if (p.length === 0) return { games: 0, highScore: 0, totalScore: 0, averageScore: 0 }
+
     const total = p.reduce((a, b) => a + b.score, 0)
     return {
       games: p.length,

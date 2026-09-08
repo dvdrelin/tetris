@@ -1,5 +1,5 @@
 <script lang="ts">
-import { defineComponent, computed, ref } from 'vue'
+import { defineComponent, computed } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import { CELL_COLORS } from '../stores/gameStore'
 import { PieceType } from '../shared/domain/types'
@@ -71,76 +71,71 @@ export default defineComponent({
       gameStore.resumeGame()
     }
 
-    return {
-      gameStore,
-      formatNumber,
-      renderNextPiece,
-      handlePause,
-      handleResume,
-    }
-  },
-  render() {
-    return `
-      <div class="hud">
-        <div class="hud-section">
-          <div class="hud-title">СЧЁТ</div>
-          <div class="hud-value" :style="{ color: this.gameStore.gameState.score > 10000 ? '#ff00ff' : '#00f5ff' }">
-            {{ this.formatNumber(this.gameStore.gameState.score) }}
-          </div>
-        </div>
-        <div class="hud-section">
-          <div class="hud-title">УРОВЕНЬ</div>
-          <div class="hud-value">{{ this.gameStore.gameState.level }}</div>
-        </div>
-        <div class="hud-section">
-          <div class="hud-title">ЛИНИИ</div>
-          <div class="hud-value">{{ this.gameStore.gameState.linesCleared }}</div>
-        </div>
-        <div class="hud-section">
-          <div class="hud-title">КОМБО</div>
-          <div class="hud-value" :style="{ color: this.gameStore.gameState.combo > 1 ? '#ffe600' : '#888' }">
-            x{{ this.gameStore.gameState.combo }}
-          </div>
-        </div>
-        <div class="hud-section next-piece-section">
-          <div class="hud-title">СЛЕДУЮЩИЙ</div>
-          <canvas ref="nextPieceCanvas" class="next-piece-canvas"></canvas>
-        </div>
-        <div class="hud-section controls-section">
-          <div class="hud-title">УПРАВЛЕНИЕ</div>
-          <div class="control-item"><span class="key">← →</span> Движение</div>
-          <div class="control-item"><span class="key">↑</span> Вращение</div>
-          <div class="control-item"><span class="key">↓</span> Soft Drop</div>
-          <div class="control-item"><span class="key">SPACE</span> Hard Drop</div>
-          <div class="control-item"><span class="key">P</span> Пауза</div>
-        </div>
-        <div class="hud-section pause-btn-section">
-          <button v-if="this.gameStore.gameState.isRunning && !this.gameStore.gameState.isGameOver" class="pause-btn" @click="this.handlePause()">
-            ⏸
-          </button>
-          <button v-if="this.gameStore.gameState.isPaused" class="pause-btn resume-btn" @click="this.handleResume()">
-            ▶
-          </button>
-        </div>
-      </div>
-    `
+    const nextPieceType = computed(() => gameStore.gameState.nextPieceType)
+
+    return { gameStore, formatNumber, renderNextPiece, handlePause, handleResume, nextPieceType }
   },
   mounted() {
     const canvas = this.$refs.nextPieceCanvas as HTMLCanvasElement
     this.$nextTick(() => {
-      this.renderNextPiece(canvas, this.gameStore.gameState.nextPieceType)
+      this.renderNextPiece(canvas, this.nextPieceType)
     })
   },
   watch: {
-    gameState() {
+    nextPieceType() {
       const canvas = this.$refs.nextPieceCanvas as HTMLCanvasElement
       this.$nextTick(() => {
-        this.renderNextPiece(canvas, this.gameStore.gameState.nextPieceType)
+        this.renderNextPiece(canvas, this.nextPieceType)
       })
     }
   },
 })
 </script>
+
+<template>
+  <div class="hud">
+    <div class="hud-section">
+      <div class="hud-title">СЧЁТ</div>
+      <div class="hud-value" :style="{ color: gameStore.gameState.score > 10000 ? '#ff00ff' : '#00f5ff' }">
+        {{ formatNumber(gameStore.gameState.score) }}
+      </div>
+    </div>
+    <div class="hud-section">
+      <div class="hud-title">УРОВЕНЬ</div>
+      <div class="hud-value">{{ gameStore.gameState.level }}</div>
+    </div>
+    <div class="hud-section">
+      <div class="hud-title">ЛИНИИ</div>
+      <div class="hud-value">{{ gameStore.gameState.linesCleared }}</div>
+    </div>
+    <div class="hud-section">
+      <div class="hud-title">КОМБО</div>
+      <div class="hud-value" :style="{ color: gameStore.gameState.combo > 1 ? '#ffe600' : '#888' }">
+        x{{ gameStore.gameState.combo }}
+      </div>
+    </div>
+    <div class="hud-section next-piece-section">
+      <div class="hud-title">СЛЕДУЮЩИЙ</div>
+      <canvas ref="nextPieceCanvas" class="next-piece-canvas"></canvas>
+    </div>
+    <div class="hud-section controls-section">
+      <div class="hud-title">УПРАВЛЕНИЕ</div>
+      <div class="control-item"><span class="key">← →</span> Движение</div>
+      <div class="control-item"><span class="key">↑</span> Вращение</div>
+      <div class="control-item"><span class="key">↓</span> Soft Drop</div>
+      <div class="control-item"><span class="key">SPACE</span> Hard Drop</div>
+      <div class="control-item"><span class="key">P</span> Пауза</div>
+    </div>
+    <div class="hud-section pause-btn-section">
+      <button v-if="gameStore.gameState.isRunning && !gameStore.gameState.isGameOver" class="pause-btn" @click="handlePause()">
+        ⏸
+      </button>
+      <button v-else-if="gameStore.gameState.isPaused" class="pause-btn resume-btn" @click="handleResume()">
+        ▶
+      </button>
+    </div>
+  </div>
+</template>
 
 <style scoped>
 .hud {

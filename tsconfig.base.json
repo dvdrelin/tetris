@@ -11,10 +11,7 @@
     "isolatedModules": true,
     "declaration": true,
     "sourceMap": true,
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["frontend/src/shared/*"]
-    }
+    "baseUrl": "."
   },
   "exclude": ["node_modules"]
 }

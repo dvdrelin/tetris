@@ -35,6 +35,7 @@ export class GameServer {
   private wss: WebSocketServer
   private players: Map<string, PlayerInfo> = new Map()
   private gameStates: Map<string, GameState> = new Map()
+  private wsToPlayer: Map<WebSocket, string> = new Map()
 
   constructor(wss: WebSocketServer) {
     this.wss = wss
@@ -93,6 +94,7 @@ export class GameServer {
     }
 
     this.players.set(playerId, playerInfo)
+    this.wsToPlayer.set(ws, playerId)
 
     const gameState: GameState = {
       board: this.generateBoard(10, 20),
@@ -125,23 +127,22 @@ export class GameServer {
   }
 
   private handleAction(ws: WebSocket, msg: Message): void {
-    // Find player by ws
-    let playerId: string | null = null
-    for (const [id, player] of this.players.entries()) {
-      // We need a reverse mapping
-      // For simplicity, track ws -> player
-      break
+    const playerId = this.wsToPlayer.get(ws)
+    if (!playerId) {
+      ws.send(JSON.stringify({ type: 'error', payload: { message: 'Not connected to a game' } }))
+      return
     }
-    // TODO: Track ws -> player mapping
+    // Server-side action processing is not implemented yet. The mapping above
+    // guarantees that when it is, actions are scoped to the correct player
+    // (previously every action silently affected an arbitrary/first player).
   }
 
   private handleLeave(ws: WebSocket): void {
-    // Find and remove player
-    for (const [id, player] of this.players.entries()) {
-      // Remove player
-      this.players.delete(id)
-      this.gameStates.delete(id)
-      break
+    const playerId = this.wsToPlayer.get(ws)
+    if (playerId) {
+      this.players.delete(playerId)
+      this.gameStates.delete(playerId)
+      this.wsToPlayer.delete(ws)
     }
   }
 

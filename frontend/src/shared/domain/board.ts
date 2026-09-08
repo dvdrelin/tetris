@@ -106,48 +106,6 @@ export class BoardManager {
     return linesCleared;
   }
 
-  // Find the lowest empty cell in a column (for ghost piece)
-  getLowestEmptyY(piece: Piece, startX: number): number {
-    let lowestY = 0;
-    for (let y = 0; y < this.height; y++) {
-      for (let r = 0; r < piece.shape.length; r++) {
-        for (let c = 0; c < piece.shape[r].length; c++) {
-          if (piece.shape[r][c]) {
-            const boardX = startX + c;
-            const boardY = y + r;
-            if (boardY >= 0 && boardY < this.height && boardX >= 0 && boardX < this.width) {
-              if (this.cells[boardY][boardX].locked) {
-                lowestY = y - 1;
-                break;
-              }
-            }
-            if (boardY >= this.height - 1) {
-              lowestY = y;
-            }
-          }
-        }
-      }
-    }
-    return lowestY;
-  }
-
-  // Check if game is over (piece placed on top row)
-  isGameOver(currentPiece: Piece | null, currentPos: Position | null): boolean {
-    if (!currentPiece || !currentPos) return false;
-    // Check if any part of the placed piece is on the top row
-    for (let r = 0; r < currentPiece.shape.length; r++) {
-      for (let c = 0; c < currentPiece.shape[r].length; c++) {
-        if (currentPiece.shape[r][c]) {
-          const boardY = currentPos.y + r;
-          if (boardY >= 0 && this.cells[boardY] && this.cells[boardY].every(cell => cell.locked)) {
-            return false; // This row is full but valid
-          }
-        }
-      }
-    }
-    return false;
-  }
-
   getSnapshot(): number[][] {
     return this.cells.map(row => row.map(cell => cell.value));
   }
