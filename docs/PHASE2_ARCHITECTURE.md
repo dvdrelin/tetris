@@ -1,7 +1,8 @@
 # Фаза 2: Архитектурное ревью + Тесты
 
 **Версия:** v1.4
-**Статус:** ✅ Завершено (все тесты: 51 frontend + 9 backend + 13 E2E = 73 тест, все прошли)
+**Статус:** ✅ Завершено (74 теста, все прошли)
+**Дата:** 2025-09-08
 
 ---
 
@@ -12,14 +13,14 @@
 | 2.1 | SRP рефакторинг: вынести renderer.ts | ✅ |
 | 2.2 | SRP рефакторинг: вынести piecePreview.ts | ✅ |
 | 2.3 | Unit-тесты frontend (jest) | ✅ |
-| 2.4 | Unit-тесты backend (jest) | ✅ (9 тестов, scoreService testable) |
-| 2.5 | E2E тесты (playwright) | ✅ (9 тестов, 2.2s) |
+| 2.4 | Unit-тесты backend (jest) | ✅ (9 тестов) |
+| 2.5 | E2E тесты (playwright) | ✅ (14 тестов) |
 | 2.6 | Исправлен isValidPosition (y<0) | ✅ |
 | 2.7 | Build проходит | ✅ |
 | 2.8 | Исправлен render loop (бесконечная рекурсия) | ✅ |
-| 2.9 | Unit-тесты renderer (8 тестов) | ✅ |
-| 2.10 | E2E: console error interception | ✅ |
-| 2.11 | E2E: keyboard controls (move, rotate, pause) | ✅ |
+| 2.9 | Unit-тесты renderer | ✅ (8 тестов) |
+| 2.10 | Console error interception | ✅ |
+| 2.11 | E2E keyboard controls | ✅ |
 
 ---
 
@@ -53,32 +54,36 @@
 - Исправление: вынесен DB_PATH в конструктор `ScoreService({ dbPath })` — тесты изолируют БД
 
 ### E2E (playwright)
-- `tests/e2e/game.test.ts` — 9 тестов (menu, start, board render, **console error detection**, HUD, game over, menu btn, **pause/resume**, **keyboard movement**, **rotation**)
+
+- `tests/e2e/game.test.ts` — 10 тестов (menu, start, board render, console error detection, HUD, game over, menu btn, pause/resume, keyboard movement, rotation)
 - `tests/e2e/leaderboard.test.ts` — 4 теста (navigate, table, tabs, back)
-- Итого: **13 тестов, все прошли** за 10.5 сек
+- Итого: **14 тестов, все прошли** за 20.8 сек
 - Конфиг: `tests/playwright.config.ts` — testDir: './e2e'
-- **Console error interception:** `main.ts` перехватывает `console.error` → `window.__consoleErrors` — E2E-тесты ловят ошибки
+- **Console error interception:** `main.ts` перехватывает `console.error` и `window.onerror` → `window.__consoleErrors` → E2E-тесты проверяют `toHaveLength(0)`
 
 ---
 
-## Исправления найденных багов
+## Исправления багов
 
 ### 2.6. isValidPosition не блокировал y<0
-**Файл:** `frontend/src/shared/domain/board.ts`
-**Исправление:** добавить `boardY < 0` в проверку границ
-**Проблема:** И-тетромино могло спавниться над доской
 
-### 2.11. E2E — console error interception
-**Файл:** `frontend/src/main.ts`, `tests/e2e/game.test.ts`
-**Проблема:** E2E тесты не ловили console errors — RangeError проходил мимо
-**Исправление:** `console.error` перехватывается → `window.__consoleErrors` → тесты проверяют `toHaveLength(0)`
-**Новые тесты:** pause/resume, keyboard movement, rotation — с проверкой console errors
+**Файл:** `frontend/src/shared/domain/board.ts`
+**Проблема:** И-тетромино могло спавниться над доской
+**Исправление:** добавлен `boardY < 0` в проверку границ
 
 ### 2.8. Render loop — бесконечная рекурсия
+
 **Файл:** `frontend/src/components/GameBoard.vue`
-**Проблема:** `watch(gameState, { deep: true })` + `requestAnimationFrame(gameLoop)` оба дергали `render()` → `RangeError: Maximum call stack size exceeded`
-**Исправление:** Убрать `watch(gameState)` — `gameLoop` уже рендерит каждый фрейм
-**Новые тесты:** `renderer.test.ts` — 8 тестов (render safe, no recursion, 100 calls)
+**Проблема:** локальная `function render()` перекрывала импорт `render` из `renderer.ts` → бесконечная рекурсия → `RangeError: Maximum call stack size exceeded`
+**Исправление:** переименован в `renderCanvas()`
+**Тесты:** `renderer.test.ts` — 8 тестов (render safe, no recursion, 100 calls)
+
+### 2.10. Console error interception
+
+**Файл:** `frontend/src/main.ts`, `tests/e2e/game.test.ts`
+**Проблема:** E2E тесты не ловили JS exceptions — RangeError проходил мимо
+**Исправление:** `window.onerror` + `console.error` перехватываются → `window.__consoleErrors`
+**Тесты:** все E2E-тесты проверяют `toHaveLength(0)`
 
 ---
 
@@ -97,5 +102,5 @@
 | v1.0 | 2025 | Начальная версия плана |
 | v1.1 | 2025 | Все тесты проходят, баг isValidPosition исправлен |
 | v1.2 | 2025 | Backend: ScoreService testable через dbPath опцию. E2E: 9 тестов, все прошли за 2.2s |
-| v1.3 | 2025 | render loop: убран watch(gameState), бесконечная рекурсия исправлена. +8 renderer тестов |
-| v1.4 | 2025 | E2E: console error interception, 13 тестов, все прошли |
+| v1.3 | 2025 | render loop: переименован в renderCanvas, бесконечная рекурсия исправлена. +8 renderer тестов |
+| v1.4 | 2025 | Console error interception (window.onerror + console.error), 14 E2E тестов |
