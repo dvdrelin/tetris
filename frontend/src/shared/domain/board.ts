@@ -54,8 +54,8 @@ export class BoardManager {
         if (piece.shape[r][c]) {
           const boardX = pos.x + c;
           const boardY = pos.y + r;
-          if (boardX < 0 || boardX >= this.width || boardY >= this.height) return false;
-          if (boardY >= 0 && this.cells[boardY][boardX].locked) return false;
+          if (boardX < 0 || boardX >= this.width || boardY < 0 || boardY >= this.height) return false;
+          if (boardY >= 0 && boardY < this.height && this.cells[boardY][boardX].locked) return false;
         }
       }
     }

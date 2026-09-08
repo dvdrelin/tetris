@@ -5,7 +5,7 @@ import { GameMode } from '../shared/domain/types'
 
 export default defineComponent({
   name: 'MenuView',
-  emits: ['start'],
+  emits: ['start', 'leaderboard'],
   setup(_, { emit }) {
     const gameStore = useGameStore()
     const selectedMode = ref<'arcade' | 'hardcore'>('arcade')
@@ -19,10 +19,15 @@ export default defineComponent({
       emit('start')
     }
 
+    function goToLeaderboard() {
+      emit('leaderboard')
+    }
+
     return {
       selectedMode,
       hoveredMode,
       startGame,
+      goToLeaderboard,
     }
   },
 })
@@ -79,6 +84,9 @@ export default defineComponent({
         <span class="action">Пауза</span>
       </div>
     </div>
+    <button class="leaderboard-btn" @click="goToLeaderboard">
+      <span>🏆 РЕКОРДЫ</span>
+    </button>
   </div>
 </template>
 
@@ -218,5 +226,24 @@ export default defineComponent({
 .action {
   color: #aaa;
   font-size: 14px;
+}
+
+.leaderboard-btn {
+  background: rgba(255, 230, 0, 0.1);
+  border: 2px solid #ffe600;
+  border-radius: 12px;
+  padding: 16px 40px;
+  font-size: 18px;
+  font-weight: 900;
+  color: #ffe600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  letter-spacing: 2px;
+}
+
+.leaderboard-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 40px rgba(255, 230, 0, 0.5);
+  background: rgba(255, 230, 0, 0.15);
 }
 </style>

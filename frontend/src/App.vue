@@ -1,25 +1,35 @@
 <script lang="ts">
-import { defineComponent, computed, ref, onMounted, onUnmounted } from 'vue'
+import { defineComponent, computed, ref, onMounted } from 'vue'
 import { useGameStore } from './stores/gameStore'
 import MenuView from './components/MenuView.vue'
 import GameView from './components/GameView.vue'
+import LeaderboardView from './components/LeaderboardView.vue'
 
 export default defineComponent({
   name: 'App',
   setup() {
     const gameStore = useGameStore()
-    const showMenu = ref(true)
+    const currentView = ref<'menu' | 'game' | 'leaderboard'>('menu')
 
-    const currentView = computed(() => {
-      return showMenu.value ? 'menu' : 'game'
+    const viewOrder = computed(() => {
+      return ['menu', 'game', 'leaderboard']
     })
 
     function showGame() {
-      showMenu.value = false
+      currentView.value = 'game'
     }
 
     function showMainMenu() {
-      showMenu.value = true
+      currentView.value = 'menu'
+    }
+
+    function goToLeaderboard() {
+      currentView.value = 'leaderboard'
+    }
+
+    function nextView() {
+      const idx = viewOrder.value.indexOf(currentView.value)
+      currentView.value = viewOrder.value[(idx + 1) % viewOrder.value.length]
     }
 
     onMounted(() => {
@@ -27,23 +37,26 @@ export default defineComponent({
     })
 
     return {
-      showMenu,
       currentView,
       showGame,
       showMainMenu,
+      goToLeaderboard,
+      nextView,
     }
   },
   components: {
     MenuView,
     GameView,
+    LeaderboardView,
   },
 })
 </script>
 
 <template>
   <div id="app-root">
-    <MenuView v-if="showMenu" @start="showGame" />
-    <GameView v-else @menu="showMainMenu" />
+    <MenuView v-if="currentView === 'menu'" @start="showGame" @leaderboard="goToLeaderboard" />
+    <GameView v-else-if="currentView === 'game'" @menu="showMainMenu" />
+    <LeaderboardView v-else @menu="showMainMenu" />
   </div>
 </template>
 

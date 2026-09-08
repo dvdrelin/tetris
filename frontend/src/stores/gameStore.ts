@@ -77,6 +77,7 @@ export const useGameStore = defineStore('game', () => {
   })
 
   const particles = ref<Particle[]>([])
+  const playerName = ref<string>('Игрок')
   let engineInstance: GameEngine | null = null
   let tickInterval: number | null = null
   let animFrame: number | null = null
@@ -88,8 +89,23 @@ export const useGameStore = defineStore('game', () => {
       onLineClear: (count, combo) => {
         spawnParticles(count, combo)
       },
-      onGameOver: (score) => {
-        console.log('Game Over! Score:', score)
+      onGameOver: async (score: number) => {
+        try {
+          const engine = engineInstance
+          await fetch('/api/score', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              playerName: playerName.value,
+              score,
+              mode: engine?.getMode() ?? 0,
+              level: engine?.getLevel() ?? 1,
+              linesCleared: engine?.getLinesCleared() ?? 0,
+            }),
+          })
+        } catch (e) {
+          console.error('Failed to save score:', e)
+        }
       },
     })
   }
@@ -170,6 +186,9 @@ export const useGameStore = defineStore('game', () => {
       engineInstance.handleCommand({ type: CommandType.StartGame, payload: { mode: engineInstance.getMode() } })
       return
     }
+
+    // Block all input after game over (unless handled above)
+    if (engineInstance.isGameOver()) return
 
     if (!engineInstance.isRunning() || engineInstance.isPaused()) return
 
@@ -254,6 +273,7 @@ export const useGameStore = defineStore('game', () => {
   return {
     gameState,
     particles,
+    playerName,
     init,
     startGame,
     handleCommand,

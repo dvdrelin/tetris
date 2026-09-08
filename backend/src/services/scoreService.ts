@@ -1,16 +1,23 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync } from 'fs'
 import { join } from 'path'
 
-const DB_DIR = join(__dirname, '..', '..', 'data')
-const DB_PATH = join(DB_DIR, 'scores.json')
-
-if (!existsSync(DB_DIR)) {
-  mkdirSync(DB_DIR, { recursive: true })
+export interface ScoreServiceOptions {
+  dbPath?: string
 }
 
-function loadScores(): ScoreEntry[] {
+const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'data', 'scores.json')
+
+function getDBDir(dbPath: string): string {
+  return join(dbPath, '..', '..')
+}
+
+function loadScores(dbPath: string): ScoreEntry[] {
   try {
-    const data = readFileSync(DB_PATH, 'utf-8')
+    const dir = getDBDir(dbPath)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    const data = readFileSync(dbPath, 'utf-8')
     return JSON.parse(data)
   } catch (err) {
     console.warn('ScoreService: failed to load scores.json:', err)
@@ -18,10 +25,10 @@ function loadScores(): ScoreEntry[] {
   }
 }
 
-function saveScores(scores: ScoreEntry[]): void {
-  const tmpPath = `${DB_PATH}.tmp`
+function saveScores(dbPath: string, scores: ScoreEntry[]): void {
+  const tmpPath = `${dbPath}.tmp`
   writeFileSync(tmpPath, JSON.stringify(scores, null, 2))
-  renameSync(tmpPath, DB_PATH)
+  renameSync(tmpPath, dbPath)
 }
 
 export interface ScoreEntry {
@@ -43,9 +50,11 @@ export interface LeaderboardEntry {
 
 export class ScoreService {
   private scores: ScoreEntry[]
+  private readonly dbPath: string
 
-  constructor() {
-    this.scores = loadScores()
+  constructor(options?: ScoreServiceOptions) {
+    this.dbPath = options?.dbPath ?? DEFAULT_DB_PATH
+    this.scores = loadScores(this.dbPath)
   }
 
   saveScore(playerName: string, score: number, mode: number, level: number, linesCleared: number): void {
@@ -58,7 +67,7 @@ export class ScoreService {
       lines_cleared: linesCleared,
       created_at: new Date().toISOString(),
     })
-    saveScores(this.scores)
+    saveScores(this.dbPath, this.scores)
   }
 
   getTopScores(mode: number = -1, limit: number = 10): ScoreEntry[] {

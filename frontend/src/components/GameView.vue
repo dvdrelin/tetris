@@ -12,6 +12,16 @@ export default defineComponent({
     const gameStore = useGameStore()
 
     function handleKeydown(e: KeyboardEvent) {
+      // Escape → exit to menu (unless paused, then toggle pause)
+      if (e.key === 'Escape') {
+        const gs = gameStore.gameState
+        if (gs.isPaused) {
+          gameStore.togglePause()
+        } else if (gs.isRunning || gs.isGameOver) {
+          emit('menu')
+        }
+        return
+      }
       gameStore.handleKey(e)
     }
 
@@ -22,7 +32,6 @@ export default defineComponent({
     return {
       gameStore,
       handleKeydown,
-      goMenu,
     }
   },
   mounted() {
@@ -36,6 +45,7 @@ export default defineComponent({
 
 <template>
   <div class="game-container">
+    <button class="menu-btn" @click="$emit('menu')" title="Выход в меню (Esc)">📋 Меню</button>
     <GameBoard />
     <HudView />
   </div>
@@ -47,5 +57,26 @@ export default defineComponent({
   gap: 20px;
   align-items: center;
   height: 100vh;
+}
+
+.menu-btn {
+  background: rgba(0, 245, 255, 0.1);
+  border: 2px solid #00f5ff;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #00f5ff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+}
+
+.menu-btn:hover {
+  background: rgba(0, 245, 255, 0.2);
+  box-shadow: 0 0 15px rgba(0, 245, 255, 0.3);
 }
 </style>

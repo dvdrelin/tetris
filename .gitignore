@@ -9,6 +9,7 @@ backend/dist/
 # Cache
 cache/
 *.cache/
+frontend/.npm/
 
 # Data files (local)
 data/*.db
@@ -47,9 +48,14 @@ coverage/
 
 # Testing
 .nyc_output/
+test-results/
+tests/playwright-report/
 
 # Pnpm
 .pnpm-store/
 
 # Editor
 .vscode/settings.json
+
+# Playwright
+playwright-report/
