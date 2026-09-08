@@ -129,8 +129,12 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   `SpeedConfig`) и enum'ы `CellState`, `PieceType`, `GameMode`.
 - **`board.ts`** — класс `BoardManager`: создание/сброс сетки, `setCells`, валидация
   позиции, коллизии, `clearLines` (удаление заполненных строк), ghost-расчёт. Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
-- **`pieces.ts`** — таблица форм всех 7 фигур (`PIECE_SHAPES`) + маппинг цветов; классы
-  `PieceFactory` (7-bag рандомизатор с Fisher–Yates) и `PieceFactoryProvider`.
+- **`pieces.ts`** — таблица форм всех 7 фигур (`PIECE_SHAPES`, каждая из 4 ориентаций =
+  корректный тетромино по 4 клетки, все — истинные 90°-повороты) + маппинг цветов; классы
+  `PieceFactory` (7-bag рандомизатор с Fisher–Yates), `PieceFactoryProvider`, и вспомогательная
+  функция **`buildPiece(type, shape)`** — собирает `{type, shape, colors}` под заданную ориентацию.
+  При повороте движок пересобирает фишку через `buildPiece` (раньше менялись только индекс
+  вращения и `shape`, но не цвета → «кривые» фигуры). Импортируется в `game-engine.ts`.
 - **`game-config.ts`** — три замороженных константы: `SCORING_CONFIG`, `SPEED_CONFIG`,
   `GAME_CONFIG` (10×20).
 
@@ -145,20 +149,25 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   RotatePiece (+ wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop, HardDrop, Tick (auto-drop в Arcade), Pause/Resume.
 - **Запросы** — `handleQuery()`: GetGameState / GetNextPiece / GetBoardState.
 - Вспомогательное: спавн фигур (`spawnNextPiece`, проверка game over), размещение и
-  подсчёт очков (`placePiece`, `calculateScore` с комбо-множителем). Система частиц в движке удалена (B6); визуальные эффекты — в хранилище/UI.
+  подсчёт очков (`placePiece`, `calculateScore` с комбо-множителем). **Поворот** — в
+  `rotatePiece`: пробует wall-kick'и SRS, а при успешном повороте пересобирает фишку через
+  `buildPiece(type, rotatedShape)` (форма + цвета остаются согласованными). Система частиц в
+  движке удалена (B6); визуальные эффекты — в хранилище/UI.
 
 ### 4.4 Pinia + UI
 - **`gameStore.ts`** — мост между UI и движком: держит `gameState` (DTO) и `particles`,
   инстанцирует один `GameEngine`, переводит результат запроса в DTO, вычисляет позицию
   «призрачной» фигуры (`getGhostY`), обрабатывает клавиатуру.
 - **Компоненты:**
-  - `App.vue` — переключатель между меню и игрой (реф `showMenu`).
+  - `App.vue` — переключатель между меню и игрой (`v-if="showMenu"` / `v-else`). Важно:
+    `showMenu` должен быть в `return {}` из `setup()` (иначе шаблон падает с «property not defined»).
   - `GameView.vue` — контейнер + глобальный слушатель `keydown`.
   - `GameBoard.vue` — canvas-рендер (сетка, уложенные ячейки, ghost, текущая фигура,
     частицы, оверлеи паузы/game over) и **игровой цикл** на `requestAnimationFrame` с
-    накопителем времени для авто-tick в Arcade.
+    накопителем времени для авто-tick в Arcade. Рисует текущую фигуру по `currentPiece.shape`.
   - `HudView.vue` — HUD (счёт/уровень/линии/комбо), превью следующей фигуры на canvas,
-    кнопки паузы; рендерится через **render function** (Options-API-стиль внутри setup).
+    кнопки паузы; рендерится через **`<template>`** (раньше был строковый `render()`, отдававший
+    HTML как текстовый узел → пустой экран; см. errors.md §H). Использует `gameStore.gameState`.
 
 ### 4.5 Backend
 - **`index.ts`** — Express + HTTP-сервер (порт `PORT || 3000`), роутинг `/api`,

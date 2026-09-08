@@ -438,3 +438,106 @@ esbuild — тот же движок, что использует Vite для б
 
 **Итог:** после фикса A1/A2/B7/C3–C5 проект **собирается и типизируется чисто** (frontend + backend, exit 0).
 Остались только дизайн-вопросы типа C1/C2 и ограничение окружения E1 — ни один из них не блокирует сборку или запуск игры.
+
+---
+
+## H. Рабочий журнал сессии — исправления frontend (рендер + вращение) 🟠✅
+
+Раздел дописан после запуска dev-сервера и отладки через браузер (DevTools Console). Все находки
+подтверждены **реальным запуском** игры, а не только статикой.
+
+### H1. `App.vue` — `showMenu` не возвращался из `setup()` → пустой экран при старте 🔴 [✅ исправлено]
+
+- **Файл:** `frontend/src/App.vue`, блок `return {}` в `setup()`.
+- **Причина.** В шаблоне `<template>` используется `v-if="showMenu"`, но `showMenu` (ref из setup) не
+  был добавлен в объект возврата → в template он = `undefined` → Vue: «Property "showMenu" was accessed
+  during render but is not defined» → рендер пустой. Меню рендерилось, потому что там `showMenu` не читался.
+- **Исправление.** Добавлен `showMenu` в `return { showMenu, currentView, showGame, showMainMenu }`.
+
+### H2. `HudView.vue` — строковый `render()` отдавал HTML как текстовый узел → пустой экран 🔴 [✅ исправлено]
+
+- **Файл:** `frontend/src/components/HudView.vue`, метод `render()`.
+- **Причина.** Компонент использовал Options-API-стиль с `render()` возвращающим строку HTML. Vue вставляет
+  строку как **один текстовый узел** → весь HUD выводится literal-текстом на экран (вместо элементов). Плюс
+  сломанный `watch: { gameState() {} }` — смотрел на несуществующее свойство.
+- **Исправление.** Заменён строковый `render()` на нормальный `<template>`; watcher переписан через
+  `computed(() => gameStore.gameState.nextPieceType)` (предыдущий getter не резолвился).
+
+### H3. Вращение не меняло форму — рендер игнорировал индекс поворота 🟠 [✅ исправлено]
+
+- **Файл:** `frontend/src/components/GameBoard.vue` (рисует `currentPiece.shape`) +
+  `game-engine.ts` (`rotatePiece`).
+- **Причина.** Рендер всегда читал `currentPiece.shape`, а движок при повороте менял только
+  `currentRotation.index`. Форма визуально не менялась.
+- **Исправление.** В `rotatePiece` после успешного wall-kick'а фишка пересобирается:
+  `this.currentPiece = buildPiece(this.currentPiece.type, rotatedShape)`.
+
+### H4. «Кривые» фигуры после поворота — цвета не совпадали с повернутой формой 🟠 [✅ исправлено]
+
+- **Файл:** `frontend/src/shared/domain/pieces.ts` (`buildPiece`) + `game-engine.ts`.
+- **Причина.** Массив `colors` строился под `shape[0]`; после поворота форма менялась, а цвета оставались
+  привязанными к старым позициям → заполнённые клетки рисовались тёмным фоном (цвет 0) → «ломаная» фигура.
+- **Исправление.** Вынесена функция `buildPiece(type, shape)` — собирает согласованные `{shape, colors}`;
+  при повороте фишка пересобирается целиком.
+
+### H5. `PIECE_SHAPES` — у T/J/L были ориентации по 3 клетки (не тетромино) 🟠 [✅ исправлено]
+
+- **Файл:** `frontend/src/shared/domain/pieces.ts`, константа `PIECE_SHAPES`.
+- **Причина.** У T, J и L одна из четырёх ориентаций содержала всего 3 заполнённые клетки вместо 4 — это
+  уже не тетромино, поэтому при повороте к ним фигура рвалась/искажалась. S/Z/I/O были корректны.
+- **Исправление.** Все 4 ориентации каждой из 7 фигур приведены к корректному тетромино (ровно 4 клетки),
+  являющимся истинными 90°-поворотами друг друга (проверено вручную).
+
+### H6. `ReferenceError: PIECE_SHAPES is not defined` — «перестало вращаться» 🔴 [✅ исправлено]
+
+- **Файл:** `frontend/src/shared/engine/game-engine.ts`, импорт из `../domain/pieces`.
+- **Причина.** При замене импорта (на `buildPiece`) случайно убрал `PIECE_SHAPES`, хотя `rotatePiece`
+  обращается к `PIECE_SHAPES[type][newRotation]`. Каждый поворот падал с ReferenceError, ловимым рендером →
+  визуально «вращение перестало работать».
+- **Исправление.** Возвращён импорт: `import { PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '../domain/pieces';`
+
+---
+
+## I. Как продолжить в другом чате / окружение 🔧
+
+### Итоговое состояние (на момент записи)
+- **Сборка/типы:** frontend + backend `tsc --noEmit` → exit 0, 0 ошибок; esbuild bundle движка → exit 0 (~16.7kb).
+- **Игра в браузере:** меню → «ИГРАТЬ» → поле с падающими фишками, HUD (счёт/уровень/линии/комбо),
+  превью следующей фигуры, ghost, авто-tick в Arcade, мгновенная смерть в Hardcore. Вращение работает для
+  всех фигур (клавиши `↑` / `x` / `z` / `c` / `w` — CW; `q` — CCW). Управление с клавиатуры отлажено через
+  реальный запуск.
+- **Backend:** REST `/api/score` валидирует ввод (400 на некорректный), persistence атомарная.
+
+### Как проверить после продолжения
+```bash
+# Типы (frontend; vue-tsc НЕ использовать — см. E1)
+npx tsc --noEmit -p frontend/tsconfig.json          # expect exit 0, 0 errors
+npx tsc --noEmit -p backend/tsconfig.json           # expect exit 0
+
+# Production-бандл (обход vue-tsc через vite напрямую)
+npx vite build                                       # → frontend/dist/
+
+# Dev для playtest
+npm run dev --workspace=frontend                     # http://localhost:3001
+
+# Backend — ВАЖНО: npm run start = node dist/index.js, нужен свежий dist!
+node <path-to-typescript>/bin/tsc -p backend/tsconfig.json   # пересобрать dist/
+npm run start                                         # перезапустить сервер (порт 3000)
+curl -s localhost:3000/api/scores                     # TestPlayer/5000
+curl -s -X POST localhost:3000/api/score -H 'Content-Type: application/json' \
+     -d '{"playerName":"Test","score":100}'           # {"success":true} + запись в scores.json
+```
+
+### Окружение / ловушки (важно при продолжении)
+- **E1 — `vue-tsc@1.8.27` vs Node v26:** падает с «Search string not found: "/supportedTSExtensions...". Это
+  ошибка окружения, не проекта. Типизируйте через обычный `tsc --noEmit`; для production-бандла используйте
+  `npx vite build` напрямую (esbuild сам разбирает `.vue`, vue-tsc не нужен).
+- **Stale dist:** `npm run start` запускает `node dist/index.js`. После правки backend'а пересоберите `tsc`
+  и перезапустите сервер, иначе валидный POST будет отклонён старым кодом.
+- **Sandbox EPERM:** esbuild/tsc как subprocess могут падать (`spawn EPERM`, `optimizeSafeRealPathSync`) —
+  ограничение песочницы, не ошибка кода. Типизацию проверяйте инпроцессно через API TypeScript; бандл — реальным
+  `esbuild`.
+- **Отладка через браузер:** открывайте dev-версию (`localhost:3001`), а не файл с диска (file:// блокируется CORS).
+  При пустом экране/ошибках вращения — снимайте скриншот вкладки Console; ошибки типа `ReferenceError`/
+  «property not defined» сразу указывают на строку.
+
