@@ -24,11 +24,44 @@
 | P / Esc | Пауза / Выход в меню |
 | Enter | Рестарт после Game Over |
 
-## 🚀 Запуск
+## 🚀 Запуск локально
 
 ```bash
 npm install
 npm run dev          # Frontend (:3001) + Backend (:3000)
+```
+
+## 🐳 Деплой с Docker
+
+### Docker Compose (с HTTPS)
+
+```bash
+# Запустить nginx-proxy + Let's Encrypt
+cd nginx-proxy && docker compose up -d
+
+# Запустить Neon Tetris
+cd .. && docker compose up -d
+```
+
+### Доступ
+
+- 🔒 **HTTPS:** https://ntetris.ddns.net (Let's Encrypt)
+- 🔀 **HTTP → HTTPS:** http://ntetris.ddns.net → https://ntetris.ddns.net
+
+### Docker (без прокси)
+
+```bash
+# Собрать образ
+docker build -t neon-tetris .
+
+# Запустить
+docker run -p 3000:3000 neon-tetris
+```
+
+### SSH-деплой (старый метод)
+
+```bash
+bash deploy.sh root 192.168.1.100 3000
 ```
 
 ## 📁 Структура проекта
@@ -44,6 +77,9 @@ tetris/
 │   ├── servers/           # GameServer, WebSocket handling
 │   ├── routes/            # API endpoints (score, leaderboard)
 │   └── services/          # ScoreService
+├── nginx-proxy/           # Nginx proxy + Let's Encrypt
+│   ├── docker-compose.yml
+│   └── README.md
 ├── tests/                 # E2E тесты (Playwright)
 ├── frontend/tests/        # Unit тесты (Jest)
 ├── backend/tests/         # Unit тесты (Jest)
@@ -54,11 +90,12 @@ tetris/
 
 | Документ | Описание | Статус |
 |----------|----------|--------|
-| [PLAN.md](docs/PLAN.md) | **Главный план обновлений** — три фазы: баг-фиксы, архитектура, мультиплеер. Критерии успеха для каждой фазы. | v1.4 |
-| [PHASE1_FIXES.md](docs/PHASE1_FIXES.md) | **Фаза 1: Исправление багов** — Game Over score bug, сохранение результатов, выход в меню, экран рекордов. Все 4 задачи выполнены. | ✅ Завершено |
-| [PHASE2_ARCHITECTURE.md](docs/PHASE2_ARCHITECTURE.md) | **Фаза 2: Архитектурное ревью + Тесты** — SRP рефакторинг, 74 unit/E2E теста, исправление render loop (бесконечная рекурсия), console error interception. | ✅ Завершено |
-| [PHASE3_MULTIPLAYER.md](docs/PHASE3_MULTIPLAYER.md) | **Фаза 3: Мультиплеер** — Lobby, Chat, PvP через WebSocket. Архитектура, WebSocket протокол, PvP flow. | ⬜ Не начато |
-| [SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md) | **Контекст сессии** — полное состояние проекта, рабочие окружения, известные файлы, план Phase 3. | актуально |
+| [PLAN.md](docs/PLAN.md) | **Главный план** — 4 фазы: баг-фиксы, архитектура, мультиплеер, Docker+HTTPS | v1.5 |
+| [PHASE1_FIXES.md](docs/PHASE1_FIXES.md) | **Фаза 1: Исправление багов** — Game Over, score, menu, leaderboard | ✅ Завершено |
+| [PHASE2_ARCHITECTURE.md](docs/PHASE2_ARCHITECTURE.md) | **Фаза 2: Архитектура + Тесты** — SRP, 74 теста, render loop fix | ✅ Завершено |
+| [PHASE3_MULTIPLAYER.md](docs/PHASE3_MULTIPLAYER.md) | **Фаза 3: Мультиплеер** — Lobby, Chat, PvP через WebSocket | ⬜ Не начато |
+| [architecture.md](docs/architecture.md) | **Архитектура** — детальное описание слоёв, потоков данных, решений | актуально |
+| [SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md) | **Контекст сессии** — полное состояние проекта | актуально |
 
 ## 🧪 Тестирование
 
@@ -71,35 +108,6 @@ npm run test:e2e        # Playwright E2E
 - Frontend unit: **51 тест** (engine, board, pieces, renderer)
 - Backend unit: **9 тестов** (scoreService)
 - E2E: **14 тестов** (game flow, keyboard controls, pause/resume, leaderboard)
-
-## 🐳 Деплой
-
-### Docker
-
-```bash
-# Собрать образ
-docker build -t neon-tetris .
-
-# Запустить
-docker run -p 3000:3000 neon-tetris
-```
-
-### SSH-деплой (автоматизированный)
-
-```bash
-# Запуск скрипта деплоя
-echo "ssh-keygen -t ed25520"   # если ключа нет
-bash deploy.sh root 192.168.1.100 3000
-```
-
-Скрипт:
-1. Подключается к серверу по SSH
-2. Устанавливает Node.js 20 и PM2
-3. Копирует все исходники
-4. Устанавливает зависимости и собирает проект
-5. Запускает приложение через PM2
-
-Смотрите [deploy.sh](deploy.sh) для подробностей.
 
 ## 🏗 Архитектура
 
