@@ -16,3 +16,8 @@ services:
       - ./backend/data:/app/backend/data:rw
     networks:
       - proxy
+
+networks:
+  proxy:
+    external: true
+    name: proxy
