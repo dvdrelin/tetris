@@ -65,10 +65,6 @@ playwright-mcp/
 *.key
 .ssh/
 
-# SSH MCP config (contains credentials)
-.ssh-mcp-config.json
-.ssh-mcp-config.local.json
-
 # Database files (backend data)
 backend/data/*.db
 backend/data/*.sqlite

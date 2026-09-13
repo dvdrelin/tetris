@@ -24,26 +24,6 @@
 | P / Esc | Пауза / Выход в меню |
 | Enter | Рестарт после Game Over |
 
-## 🔗 SSH MCP Server
-
-Проект подключён к SSH MCP Server на удалённом сервере:
-- **Host:** 144.31.195.51
-- **Port:** 22
-- **User:** root
-- **OS:** Ubuntu 24.04.4 LTS
-- **Config:** `.ssh-mcp-config.json`
-
-```bash
-# Подключиться к удалённому серверу
-ssh -i ~/.ssh/id_ed25519 root@144.31.195.51
-
-# Запустить SSH MCP Server
-cd C:/GIT/tetris
-npx -y ssh-mcp --host=144.31.195.51 --port=22 --user=root --key=/c/Users/dvdre/.ssh/id_ed25519
-```
-
-⚠️ **SSH MCP v2.8.1 limitation:** метод `tools/call` недоступен через stdio transport. Используйте SSH напрямую.
-
 ## 🚀 Запуск
 
 ```bash
