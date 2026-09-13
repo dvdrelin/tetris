@@ -25,7 +25,7 @@ services:
       - nginx-proxy-conf:/etc/nginx/conf.d:ro
       - nginx-proxy-certs:/etc/nginx/certs:rw
       - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
-      - nginx-proxy-html:/usr/share/nginx/html:ro
+      - nginx-proxy-html:/usr/share/nginx/html:rw
       - acme-data:/etc/acme.sh:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
