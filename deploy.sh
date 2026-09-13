@@ -174,12 +174,12 @@ $SSH_CMD "$USER@$HOST" "
     npm install &&
     echo '--- Installing frontend dependencies ---' &&
     (cd frontend && npm install) &&
-    echo '--- Building frontend ---' &&
-    (cd frontend && npm run build) &&
     echo '--- Installing backend dependencies ---' &&
     (cd backend && npm install) &&
+    echo '--- Building frontend (vite build only) ---' &&
+    (cd frontend && npx vite build) &&
     echo '--- Building backend ---' &&
-    (cd backend && npm run build) &&
+    (cd backend && npx tsc) &&
     echo '--- BUILD COMPLETE ---'
 "
 ok "Сборка завершена"
