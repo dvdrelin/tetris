@@ -2,6 +2,11 @@
 
 Эта директория содержит инфраструктуру для HTTPS-проксирования Neon Tetris через nginx-proxy с автоматическим получением сертификатов Let's Encrypt.
 
+## Компоненты
+
+- **nginx-proxy** (`nginxproxy/nginx-proxy:1.11`) — проксирует запросы к контейнерам
+- **acme-companion** (`nginxproxy/acme-companion`) — автоматически получает SSL-сертификаты Let's Encrypt
+
 ## Быстрый старт
 
 ```bash
@@ -10,9 +15,8 @@ docker compose up -d
 
 ## Как это работает
 
-**nginx-proxy-acme** объединяет в себе:
-- **nginx-proxy** — проксирует запросы к контейнерам, которым назначены переменные `VIRTUAL_HOST`
-- **acme.sh** — автоматически получает и обновляет SSL-сертификаты Let's Encrypt
+1. **nginx-proxy** — проксирует запросы к контейнерам, которым назначены переменные `VIRTUAL_HOST`
+2. **acme-companion** — автоматически получает и обновляет SSL-сертификаты Let's Encrypt
 
 ## Настройка новых сервисов
 
@@ -25,13 +29,12 @@ services:
     environment:
       - VIRTUAL_HOST=example.com
       - VIRTUAL_PORT=8080
-      - LETSENCRYPT_HOST=example.com
-      - LETSENCRYPT_EMAIL=dvdrelin@gmail.com
+      - ACME_HOST=example.com
 ```
 
 ## Файлы конфигурации
 
-- `docker-compose.yml` — определение сервиса
+- `docker-compose.yml` — определение сервисов
 - `conf/nginx-proxy/` — конфигурация nginx (генерируется автоматически)
 
 ## Переменные окружения
@@ -40,30 +43,15 @@ services:
 |-----------|----------|
 | `VIRTUAL_HOST` | Доменное имя для проксирования |
 | `VIRTUAL_PORT` | Порт внутреннего сервиса |
-| `LETSENCRYPT_HOST` | Домен для SSL-сертификата |
-| `LETSENCRYPT_EMAIL` | Email для Let's Encrypt |
+| `ACME_HOST` | Домен для SSL-сертификата |
 
 ## Обновление сертификатов
 
-Компаньон автоматически обновляет сертификаты. Для принудительного обновления:
-
-```bash
-docker exec nginx-proxy /bin/sh -c "python3 /app/acme.sh --force"
-```
+Компаньон автоматически обновляет сертификаты.
 
 ## Логи
 
 ```bash
 docker logs nginx-proxy
+docker logs nginx-proxy-letsencrypt
 ```
-
-## Запуск Neon Tetris
-
-После запуска nginx-proxy, перенесите docker-compose.yml из родительской директории в текущую и запустите:
-
-```bash
-cd /GIT/tetris
-docker compose up -d
-```
-
-Проект автоматически будет доступен по адресу `https://ntetris.ddns.net`.

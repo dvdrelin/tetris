@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   nginx-proxy:
-    image: nginxproxy/nginx-proxy:latest
+    image: nginxproxy/nginx-proxy:1.11
     container_name: nginx-proxy
     restart: unless-stopped
     ports:
@@ -12,25 +10,24 @@ services:
       - nginx-proxy-conf:/etc/nginx/conf.d:rw
       - nginx-proxy-certs:/etc/nginx/certs:ro
       - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
-      - nginx-proxy-static:/etc/nginx/static:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - nginx-proxy-html:/usr/share/nginx/html:rw
+      - /var/run/docker.sock:/tmp/docker.sock:ro
     networks:
       - proxy
 
   letsencrypt:
-    image: jcfrizon/docker-letsencrypt-nginx-proxy-companion:latest
+    image: nginxproxy/acme-companion:latest
     container_name: nginx-proxy-letsencrypt
     restart: unless-stopped
     volumes:
-      - nginx-proxy-conf:/etc/nginx/conf.d:rw
-      - nginx-proxy-certs:/etc/nginx/certs:ro:rw
+      - nginx-proxy-conf:/etc/nginx/conf.d:ro
+      - nginx-proxy-certs:/etc/nginx/certs:rw
       - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
-      - nginx-proxy-static:/etc/nginx/static:ro
+      - nginx-proxy-html:/usr/share/nginx/html:ro
+      - acme-data:/etc/acme.sh:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      - NGINX_PROXY_CONTAINER=nginx-proxy
-      - NGINX_PROXY_NETWORK=proxy
-      - EMAIL=dvdrelin@gmail.com
+      - DEFAULT_EMAIL=dvdrelin@gmail.com
     networks:
       - proxy
 
@@ -41,7 +38,9 @@ volumes:
     driver: local
   nginx-proxy-certs:
     driver: local
-  nginx-proxy-static:
+  nginx-proxy-html:
+    driver: local
+  acme-data:
     driver: local
 
 networks:
