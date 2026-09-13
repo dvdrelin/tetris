@@ -9,7 +9,7 @@ services:
     volumes:
       - nginx-proxy-conf:/etc/nginx/conf.d:rw
       - nginx-proxy-certs:/etc/nginx/certs:ro
-      - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
+      - nginx-proxy-dhparam:/etc/nginx/dhparam:rw
       - nginx-proxy-html:/usr/share/nginx/html:rw
       - /var/run/docker.sock:/tmp/docker.sock:ro
     networks:
