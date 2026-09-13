@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   neon-tetris:
     build:
@@ -13,17 +11,8 @@ services:
       - VIRTUAL_HOST=ntetris.ddns.net
       - VIRTUAL_PORT=3000
       - VIRTUAL_PATH=/
-      - LETSENCRYPT_HOST=ntetris.ddns.net
-      - LETSENCRYPT_EMAIL=dvdrelin@gmail.com
+      - ACME_HOST=ntetris.ddns.net
     volumes:
       - ./backend/data:/app/backend/data:rw
     networks:
       - proxy
-    labels:
-      - com.docker.compose.version=2
-      - com.nginx.proxy-manager=true
-
-networks:
-  proxy:
-    external: true
-    name: proxy
