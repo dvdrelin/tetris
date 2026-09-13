@@ -95,6 +95,19 @@
 
 ---
 
+## Reference: Rotation System Fix
+
+**См. также:** `docs/PHASE1_FIXES.md` — раздел 1.5
+
+Вращение фигур использует:
+- `SHAPES` — матрицы 3×3 (T,S,Z,J,L), 4×4 (I), 2×2 (O)
+- `GameEngine.rotate(dir)` — SRS-подобная система с wall kicks
+- `GameEngine.isValid(pos, rot)` — проверка пересечений и границ
+- `GameEngine.getGhostY()` — ghost piece с учётом текущей rotation
+- Расширенные wall kicks: 11 позиций (включая диагональные)
+
+---
+
 ## Changes Log
 
 | Версия | Дата | Изменения |
