@@ -24,7 +24,7 @@ RUN npm install
 
 # Copy frontend source and build
 COPY frontend/ ./frontend/
-COPY tsconfig.base.json ./frontend/
+COPY tsconfig.base.json ./tsconfig.base.json
 RUN cd frontend && npm install && npx vite build
 
 # Copy backend source and build
