@@ -2,7 +2,10 @@
   "name": "neon-tetris",
   "version": "1.0.0",
   "private": true,
-  "workspaces": ["frontend", "backend"],
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
     "dev:frontend": "cd frontend && npx vite --port 3001 --host",
@@ -14,8 +17,9 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "typescript": "^5.3.0",
+    "@playwright/test": "^1.63.0",
     "npm-run-all": "^4.1.1",
-    "@playwright/test": "^1.63.0"
+    "ssh-mcp": "^2.8.1",
+    "typescript": "^5.3.0"
   }
 }
