@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   nginx-proxy:
-    image: nginxproxy/nginx-proxy-acme:latest
+    image: nginxproxy/nginx-proxy:latest
     container_name: nginx-proxy
     restart: unless-stopped
     ports:
@@ -10,13 +10,26 @@ services:
       - "443:443"
     volumes:
       - nginx-proxy-conf:/etc/nginx/conf.d:rw
-      - nginx-proxy-certs:/etc/nginx/certs:rw
+      - nginx-proxy-certs:/etc/nginx/certs:ro
       - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
       - nginx-proxy-static:/etc/nginx/static:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /etc/resolv.conf:/etc/resolv.conf:ro
+    networks:
+      - proxy
+
+  letsencrypt:
+    image: jcfrizon/docker-letsencrypt-nginx-proxy-companion:latest
+    container_name: nginx-proxy-letsencrypt
+    restart: unless-stopped
+    volumes:
+      - nginx-proxy-conf:/etc/nginx/conf.d:rw
+      - nginx-proxy-certs:/etc/nginx/certs:ro:rw
+      - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
+      - nginx-proxy-static:/etc/nginx/static:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      - HTTPS=force
+      - NGINX_PROXY_CONTAINER=nginx-proxy
+      - NGINX_PROXY_NETWORK=proxy
       - EMAIL=dvdrelin@gmail.com
     networks:
       - proxy
