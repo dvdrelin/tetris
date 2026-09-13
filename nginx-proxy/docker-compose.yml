@@ -12,6 +12,8 @@ services:
       - nginx-proxy-dhparam:/etc/nginx/dhparam:rw
       - nginx-proxy-html:/usr/share/nginx/html:rw
       - /var/run/docker.sock:/tmp/docker.sock:ro
+    labels:
+      - com.github.nginx-proxy.nginx=true
     networks:
       - proxy
 
