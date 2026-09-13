@@ -10,7 +10,7 @@ services:
       - "443:443"
     volumes:
       - nginx-proxy-conf:/etc/nginx/conf.d:rw
-      - nginx-proxy-certs:/etc/nginx/certs:ro:rw
+      - nginx-proxy-certs:/etc/nginx/certs:rw
       - nginx-proxy-dhparam:/etc/nginx/dhparam:ro
       - nginx-proxy-static:/etc/nginx/static:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
