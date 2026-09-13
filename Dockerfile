@@ -24,7 +24,7 @@ RUN npm install
 
 # Copy frontend source and build
 COPY frontend/ ./frontend/
-RUN cd frontend && npm install && npm run build
+RUN cd frontend && npm install && npx vite build
 
 # Copy backend source and build
 COPY backend/ ./backend/
