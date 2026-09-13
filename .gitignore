@@ -59,6 +59,9 @@ playwright-mcp/
 .playwright-mcp/
 .mcp-*/
 
+# Nginx proxy directory (Docker volumes, certificates)
+nginx-proxy/volumes/
+
 # Secrets / SSH keys
 *.pem
 *.ppk

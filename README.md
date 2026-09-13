@@ -72,6 +72,35 @@ npm run test:e2e        # Playwright E2E
 - Backend unit: **9 тестов** (scoreService)
 - E2E: **14 тестов** (game flow, keyboard controls, pause/resume, leaderboard)
 
+## 🐳 Деплой
+
+### Docker
+
+```bash
+# Собрать образ
+docker build -t neon-tetris .
+
+# Запустить
+docker run -p 3000:3000 neon-tetris
+```
+
+### SSH-деплой (автоматизированный)
+
+```bash
+# Запуск скрипта деплоя
+echo "ssh-keygen -t ed25520"   # если ключа нет
+bash deploy.sh root 192.168.1.100 3000
+```
+
+Скрипт:
+1. Подключается к серверу по SSH
+2. Устанавливает Node.js 20 и PM2
+3. Копирует все исходники
+4. Устанавливает зависимости и собирает проект
+5. Запускает приложение через PM2
+
+Смотрите [deploy.sh](deploy.sh) для подробностей.
+
 ## 🏗 Архитектура
 
 - **CQRS** — Commands (Start, Move, Rotate, Drop) / Queries (GetState)
