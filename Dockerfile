@@ -20,7 +20,7 @@ COPY frontend/package*.json frontend/
 COPY backend/package*.json backend/
 
 # Install all dependencies (including dev dependencies needed for build)
-RUN npm ci
+RUN npm install
 
 # Copy frontend source and build
 COPY frontend/ ./frontend/
@@ -37,7 +37,7 @@ WORKDIR /app
 
 # Install only production dependencies for backend
 COPY backend/package*.json ./backend/
-RUN cd backend && npm ci --only=production
+RUN cd backend && npm install --omit=dev
 
 # Copy built frontend and backend dist
 COPY --from=builder /app/frontend/dist ./frontend/dist
