@@ -64,17 +64,7 @@ sequenceDiagram
     participant S as Сервер
 
     Z->>S: spectator_join { room_id }
-    S->>Z: spectator_welcome {
-        players: [
-            { id: "Neo#2312", score: 12, board_state: "base64...", active: true },
-            { id: "Z-Tet#819", score: 8, board_state: "base64...", active: true },
-            { id: "Block#001", score: 15, board_state: "base64...", active: true },
-            { id: "Ice#442", score: 5, board_state: "base64...", active: false, eliminated: true }
-        ],
-        chat_history: [ ... ],
-        game_phase: "in_progress",
-        time_remaining_sec: 154
-    }
+    S->>Z: spectator_welcome { players: [ Neo#2312 score=12, Z-Tet#819 score=8, Block#001 score=15, Ice#442 eliminated ], chat_history: [...], game_phase: in_progress, time_remaining_sec: 154 }
     Note over Z: После этого сервер шлёт те же события, что и игрокам,
     Note over Z: кроме piece_lock (зритель не может взаимодействовать).
     

@@ -273,22 +273,6 @@ sequenceDiagram
     S->>DB: upsert_player_stats(A)
     S->>DB: upsert_player_stats(B)
     
-    S->>A: match_result { 
-        winner: true, 
-        score: 124, 
-        exp_gained: 100,
-        mmr_delta: +28,
-        new_mmr: 1608,
-        tier: "silver_2",
-        stats: { games_played: 43, wins: 19 }
-    }
-    S->>B: match_result {
-        winner: false,
-        score: 87,
-        exp_gained: 60,
-        mmr_delta: -12,
-        new_mmr: 1568,
-        tier: "silver_1",
-        stats: { games_played: 87, wins: 34 }
-    }
+    S->>A: match_result { winner: true, score: 124, exp_gained: 100, mmr_delta: +28, new_mmr: 1608, tier: silver_2, stats: games_played=43 wins=19 }
+    S->>B: match_result { winner: false, score: 87, exp_gained: 60, mmr_delta: -12, new_mmr: 1568, tier: silver_1, stats: games_played=87 wins=34 }
 ```
