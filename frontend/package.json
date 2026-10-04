@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
+    "build:vue-tsc": "vue-tsc --noEmit && vite build",
     "test": "jest",
     "test:unit": "jest"
   },

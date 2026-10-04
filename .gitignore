@@ -40,6 +40,8 @@ docs/*.log
 *.temp
 tmp/
 temp/
+# Scratch logs of the audit runs (raw jest/vite/probe output); the scripts themselves are in audit-verify/
+tmp-audit/
 
 # Coverage
 coverage/

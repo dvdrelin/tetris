@@ -127,8 +127,11 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 - **`types.ts`** — все типы и enum'ы проекта: `Cell`, `Position`, `Piece`, `GameState`,
   `MoveAction`, `Action`, `TickResult`, `Particle`, конфиги (`GameConfig`, `ScoringConfig`,
   `SpeedConfig`) и enum'ы `CellState`, `PieceType`, `GameMode`.
-- **`board.ts`** — класс `BoardManager`: создание/сброс сетки, `setCells`, валидация
-  позиции, коллизии, `clearLines` (удаление заполненных строк), ghost-расчёт. Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
+- **`board.ts`** — класс `BoardManager`: создание/сброс сетки, `setCell`/`setCells`, валидация
+  позиции (`isValidPosition`), коллизии (`hasCollision`), `clearLines` (удаление заполненных строк),
+  `getSnapshot`/`getCells`. **Ghost-расчёта здесь нет** (в предыдущей редакции документа он был
+  приписан `board.ts` ошибочно): позиция ghost вычисляется в Pinia-сторе — `stores/gameStore.ts:152`
+  (`getGhostY`), а движок `ghostY` не заполняет. Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
 - **`pieces.ts`** — таблица форм всех 7 фигур (`PIECE_SHAPES`, каждая из 4 ориентаций =
   корректный тетромино по 4 клетки, все — истинные 90°-повороты) + маппинг цветов; классы
   `PieceFactory` (7-bag рандомизатор с Fisher–Yates), `PieceFactoryProvider`, и вспомогательная

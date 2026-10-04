@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createPinia, Pinia } from 'pinia'
 import App from './App.vue'
+import { useGameStore } from './stores/gameStore'
 
 // Capture ALL errors for E2E testing
 const _errors: string[] = []
@@ -38,3 +39,9 @@ const pinia: Pinia = createPinia()
 const app: ReturnType<typeof createApp> = createApp(App)
 app.use(pinia)
 app.mount('#app')
+
+// Dev/E2E hook: the Playwright suite reads the live store through window.__vueStores.
+// Kept out of production builds on purpose.
+if (import.meta.env.DEV) {
+  ;(window as any).__vueStores = { game: useGameStore() }
+}

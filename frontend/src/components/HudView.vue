@@ -3,17 +3,7 @@ import { defineComponent, computed } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import { CELL_COLORS } from '../stores/gameStore'
 import { PieceType } from '../shared/domain/types'
-
-// Piece shapes for preview
-const PREVIEW_SHAPES: Record<PieceType, number[][]> = {
-  [PieceType.I]: [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]],
-  [PieceType.O]: [[1,1], [1,1]],
-  [PieceType.T]: [[0,1,0], [1,1,1], [0,0,0]],
-  [PieceType.S]: [[0,1,1], [1,1,0], [0,0,0]],
-  [PieceType.Z]: [[1,1,0], [0,1,1], [0,0,0]],
-  [PieceType.J]: [[1,0,0], [1,1,1], [0,0,0]],
-  [PieceType.L]: [[0,0,1], [1,1,1], [0,0,0]],
-}
+import { PIECE_SHAPES } from '../shared/domain/pieces'
 
 export default defineComponent({
   name: 'HudView',
@@ -31,7 +21,8 @@ export default defineComponent({
       const ctx = previewCanvas.getContext('2d')
       if (!ctx) return
 
-      const shape = PREVIEW_SHAPES[nextPieceType as PieceType] || PREVIEW_SHAPES[PieceType.I]
+      // Single source of truth for piece geometry: the canonical rot0 state from PIECE_SHAPES.
+      const shape = PIECE_SHAPES[nextPieceType as PieceType]?.[0] ?? PIECE_SHAPES[PieceType.I][0]
       const cellSize = 18
 
       previewCanvas.width = shape[0].length * cellSize + 4

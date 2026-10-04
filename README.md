@@ -10,7 +10,11 @@
 - **Ghost piece** — предсказание места падения
 - **Комбо-система** — множитель за последовательные очистки
 - **Таблица рекордов** — сохранение лучших результатов на сервере
-- **Touch-управление** — свайпы на мобильных
+- **Канонические SRS wall kicks** — 8 направленных пар поворотов, отдельные таблицы для I и JLSTZ
+
+> **Управление только клавиатурное.** Touch-/swipe-обработчиков в `frontend/src` нет
+> (поиск по `touch|swipe|pointerdown|pointerup` → 0 совпадений); ввод читается одним
+> `keydown`-слушателем в `frontend/src/components/GameView.vue` → `gameStore.handleKey`.
 
 ## 🎮 Управление
 
@@ -70,7 +74,7 @@ bash deploy.sh root 192.168.1.100 3000
 tetris/
 ├── frontend/src/          # Vue 3 + Pinia + TypeScript
 │   ├── components/        # GameBoard, MenuView, GameView, LeaderboardView
-│   ├── engine/            # renderer.ts, piecePreview.ts
+│   ├── engine/            # renderer.ts (canvas-рендер по DTO из стора)
 │   ├── stores/            # gameStore, leaderboardStore
 │   └── shared/            # GameEngine, BoardManager, PieceFactory, types
 ├── backend/src/           # Express + WebSocket
@@ -83,7 +87,8 @@ tetris/
 ├── tests/                 # E2E тесты (Playwright)
 ├── frontend/tests/        # Unit тесты (Jest)
 ├── backend/tests/         # Unit тесты (Jest)
-└── docs/                  # Документация
+├── docs/                  # Документация
+└── app.js                 # legacy-версия игры: НЕ подключается к frontend/index.html и не участвует в сборке
 ```
 
 ## 📚 Документация
@@ -95,6 +100,9 @@ tetris/
 | [PHASE2_ARCHITECTURE.md](docs/PHASE2_ARCHITECTURE.md) | **Фаза 2: Архитектура + Тесты** — SRP, 74 теста, render loop fix | ✅ Завершено |
 | [PHASE3_MULTIPLAYER.md](docs/PHASE3_MULTIPLAYER.md) | **Фаза 3: Мультиплеер** — Lobby, Chat, PvP через WebSocket | ⬜ Не начато |
 | [architecture.md](docs/architecture.md) | **Архитектура** — детальное описание слоёв, потоков данных, решений | актуально |
+| [ROTATION_SYSTEM_REFERENCE.md](docs/ROTATION_SYSTEM_REFERENCE.md) | **Вращение фигур** — матрицы и SRS kick-таблицы боевого движка | актуально |
+| [errors.md](docs/errors.md) | **Реестр ошибок** A–H со статусами «исправлено» | перепроверен аудитом |
+| [AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | **Аудит**: противоречия доков ↔ кода, регрессия вращения, P0/P1/P3 и замеры после починки | актуально |
 | [SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md) | **Контекст сессии** — полное состояние проекта | актуально |
 
 ## 🧪 Тестирование
@@ -104,15 +112,25 @@ npm run test            # Jest (frontend + backend)
 npm run test:e2e        # Playwright E2E
 ```
 
-**Результаты:**
-- Frontend unit: **51 тест** (engine, board, pieces, renderer)
-- Backend unit: **9 тестов** (scoreService)
-- E2E: **14 тестов** (game flow, keyboard controls, pause/resume, leaderboard)
+**Результаты (проверено в аудите, HEAD `e570ee8` + рабочие изменения):**
+- Frontend unit: **109 тестов** в 6 сюитах (engine, board, pieces, renderer, `rotation-geometry`, `rotation-kicks`)
+- Backend unit: **21 тест** в 2 сюитах (scoreService, `gameRouter` — границы HTTP-API)
+- E2E (Playwright): **16 тестов** в 2 файлах (game flow, keyboard controls, пауза/рестарт, leaderboard,
+  реальный поворот и hard drop на канвасе)
+
+В PowerShell `npx` недоступен, поэтому напрямую:
+`node node_modules\jest\bin\jest.js --config frontend\jest.config.js`,
+`node node_modules\@playwright\test\cli.js test --config tests\playwright.config.ts`.
 
 ## 🏗 Архитектура
 
-- **CQRS** — Commands (Start, Move, Rotate, Drop) / Queries (GetState)
+- **CQRS** — Commands (Start, Move, Rotate, Drop) / Queries (GetState, GetNextPiece, GetBoardState);
+  query-путь реализован в движке, но UI им не пользуется (см. `docs/errors.md` C2)
 - **OOP** — GameEngine, BoardManager, PieceFactory
 - **SOLID** — каждая ответственность в отдельном классе
 - **Pinia** — state management (gameStore, leaderboardStore)
-- **Express + WebSocket** — backend API и real-time sync
+- **Express + WebSocket** — REST API (`/api/score`, `/api/scores`, `/api/leaderboard`, `/api/player/:name`)
+  работает; WebSocket-сервер (`backend/src/servers/gameServer.ts`) поднят и проксируется (`/ws`), но
+  **real-time синхронизации игры нет**: фронтенд не открывает ни одного сокета (0 упоминаний
+  `WebSocket|ws://|wss://` в `frontend/src`), а `GameServer.handleAction` — заглушка. Мультиплеер —
+  не начатая Фаза 3 (`docs/PHASE3_MULTIPLAYER.md`)

@@ -40,6 +40,8 @@ export class BoardManager {
           const boardX = pos.x + c;
           const boardY = pos.y + r;
           if (boardY >= 0 && boardY < this.height && boardX >= 0 && boardX < this.width) {
+            // A locked cell is never overwritten: a piece cannot delete already placed blocks.
+            if (this.cells[boardY][boardX].locked) continue;
             this.cells[boardY][boardX] = { value: piece.colors[r][c], locked: true };
           }
         }

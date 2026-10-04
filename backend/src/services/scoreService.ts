@@ -1,5 +1,5 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 
 export interface ScoreServiceOptions {
   dbPath?: string
@@ -7,18 +7,24 @@ export interface ScoreServiceOptions {
 
 const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'data', 'scores.json')
 
+// The directory that must exist for the scores file to be writable.
 function getDBDir(dbPath: string): string {
-  return join(dbPath, '..', '..')
+  return dirname(dbPath)
 }
 
 function loadScores(dbPath: string): ScoreEntry[] {
+  const dir = getDBDir(dbPath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  if (!existsSync(dbPath)) {
+    // A fresh install simply has no scores yet: not an error.
+    return []
+  }
   try {
-    const dir = getDBDir(dbPath)
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
-    }
     const data = readFileSync(dbPath, 'utf-8')
-    return JSON.parse(data)
+    const parsed = JSON.parse(data)
+    return Array.isArray(parsed) ? parsed : []
   } catch (err) {
     console.warn('ScoreService: failed to load scores.json:', err)
     return []
@@ -26,6 +32,10 @@ function loadScores(dbPath: string): ScoreEntry[] {
 }
 
 function saveScores(dbPath: string, scores: ScoreEntry[]): void {
+  const dir = getDBDir(dbPath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
   const tmpPath = `${dbPath}.tmp`
   writeFileSync(tmpPath, JSON.stringify(scores, null, 2))
   renameSync(tmpPath, dbPath)

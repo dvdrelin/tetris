@@ -15,13 +15,11 @@ async function getWarnings(page: Page): Promise<string[]> {
  * Helper: get game store state via evaluate
  */
 async function getGameState(page: Page): Promise<any> {
-  // We need to access the Pinia store
+  // The store is exposed in dev builds by frontend/src/main.ts (window.__vueStores.game)
   return await page.evaluate(() => {
-    // Access the game store via Vue DevTools or direct access
-    // Since Pinia stores are module-scope, we need to use the global
     const store = (window as any).__vueStores?.game;
-    if (store) return store.$state;
-    return null;
+    if (!store) return null;
+    return store.$state?.gameState ?? null;
   });
 }
 
@@ -206,5 +204,48 @@ test.describe('Tetris Game E2E', () => {
     // No errors
     const errors = await getErrors(page);
     expect(errors).toHaveLength(0);
+  });
+
+  test('ArrowUp actually rotates the active piece', async ({ page }) => {
+    await page.goto('http://localhost:3001');
+    await page.waitForLoadState('domcontentloaded');
+
+    await page.locator('.start-btn').first().click();
+    await expect(page.locator('.board-canvas')).toBeVisible();
+
+    const before = await getGameState(page);
+    expect(before).not.toBeNull();
+    expect(before.currentRotation).not.toBeNull();
+
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(150);
+
+    const after = await getGameState(page);
+    expect(after.currentRotation.index).not.toBe(before.currentRotation.index);
+    // A rotation must never change the number of cells the piece is made of.
+    expect(after.currentPiece.shape.flat().filter((v: number) => v === 1)).toHaveLength(4);
+    expect(await getErrors(page)).toHaveLength(0);
+  });
+
+  test('Space (hard drop) locks the whole piece and scores', async ({ page }) => {
+    await page.goto('http://localhost:3001');
+    await page.waitForLoadState('domcontentloaded');
+
+    await page.locator('.start-btn').first().click();
+    await expect(page.locator('.board-canvas')).toBeVisible();
+
+    const before = await getGameState(page);
+    expect(before).not.toBeNull();
+    const pieceCells = before.currentPiece.shape.flat().filter((v: number) => v === 1).length;
+    expect(pieceCells).toBe(4);
+
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(400);
+
+    const after = await getGameState(page);
+    const lockedCells = after.board.flat().filter((v: number) => v !== 0).length;
+    expect(lockedCells).toBeGreaterThanOrEqual(pieceCells);
+    expect(after.score).toBeGreaterThan(before.score);
+    expect(await getErrors(page)).toHaveLength(0);
   });
 });

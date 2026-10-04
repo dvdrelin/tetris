@@ -116,5 +116,4 @@ export interface ScoringConfig {
   readonly softDrop: number;
   readonly hardDrop: number;
   readonly comboMultiplier: number;
-  readonly comboDecay: number;
 }

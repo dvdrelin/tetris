@@ -7,7 +7,7 @@ const REAL_CONFIG = {
   boardWidth: 10,
   boardHeight: 20,
   speedConfig: { initialInterval: 800, intervalDecrease: 50, minInterval: 50 },
-  scoring: { single: 100, double: 300, triple: 500, tetris: 800, softDrop: 10, hardDrop: 20, comboMultiplier: 1.5, comboDecay: 0.5 },
+  scoring: { single: 100, double: 300, triple: 500, tetris: 800, softDrop: 10, hardDrop: 20, comboMultiplier: 1.5 },
 };
 
 function createEngine() {

@@ -4,7 +4,7 @@ import {
 } from '../domain/types';
 import { BoardManager } from '../domain/board';
 import { PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '../domain/pieces';
-import { CommandType, AnyCommand } from '../cqrs/commands';
+import { CommandType, AnyCommand, RotateCommand } from '../cqrs/commands';
 import { AnyQuery, QueryType } from '../cqrs/queries';
 import { GAME_CONFIG, SCORING_CONFIG } from '../config/game-config';
 
@@ -20,6 +20,48 @@ export interface GameEngineCallbacks {
   onStateChange?: () => void;
   onLineClear?: (count: number, combo: number) => void;
   onGameOver?: (score: number) => void;
+}
+
+// ===== SRS wall-kick tables =====
+// Rotation indices: 0 = spawn, 1 = R (CW from spawn), 2 = 180, 3 = L (CCW from spawn).
+// Offsets are in ENGINE coordinates: +x right, +y DOWN. The classic SRS tables use
+// +y up, so their y signs are inverted here. Tables are direction-specific: the CW and
+// CCW kick lists are different, and I-piece kicks differ from JLSTZ kicks.
+interface Kick { x: number; y: number }
+
+const KICKS_JLSTZ: Record<string, Kick[]> = {
+  '0>1': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: -1 }, { x: 0, y: 2 }, { x: -1, y: 2 }],
+  '1>0': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: -2 }, { x: 1, y: -2 }],
+  '1>2': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: -2 }, { x: 1, y: -2 }],
+  '2>1': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: -1 }, { x: 0, y: 2 }, { x: -1, y: 2 }],
+  '2>3': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: -1 }, { x: 0, y: 2 }, { x: -1, y: 2 }],
+  '3>2': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: -2 }, { x: 1, y: -2 }],
+  '3>0': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: -1 }, { x: 0, y: 2 }, { x: 1, y: 2 }],
+  '0>3': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: 1 }, { x: 0, y: -2 }, { x: -1, y: -2 }],
+};
+
+const KICKS_I: Record<string, Kick[]> = {
+  '0>1': [{ x: 0, y: 0 }, { x: -2, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 1 }, { x: 1, y: -2 }],
+  '1>0': [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: -1, y: 0 }, { x: 2, y: -1 }, { x: -1, y: 2 }],
+  '1>2': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: 2, y: 0 }, { x: -1, y: -2 }, { x: 2, y: 1 }],
+  '2>1': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 0 }, { x: 1, y: 2 }, { x: -2, y: -1 }],
+  '2>3': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 0 }, { x: 1, y: 2 }, { x: -2, y: -1 }],
+  '3>2': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: 2, y: 0 }, { x: -1, y: -2 }, { x: 2, y: 1 }],
+  '3>0': [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: -1, y: 0 }, { x: 2, y: -1 }, { x: -1, y: 2 }],
+  '0>3': [{ x: 0, y: 0 }, { x: -2, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 1 }, { x: 1, y: -2 }],
+};
+
+const KICKS_O: Record<string, Kick[]> = {
+  '0>1': [{ x: 0, y: 0 }], '1>0': [{ x: 0, y: 0 }],
+  '1>2': [{ x: 0, y: 0 }], '2>1': [{ x: 0, y: 0 }],
+  '2>3': [{ x: 0, y: 0 }], '3>2': [{ x: 0, y: 0 }],
+  '3>0': [{ x: 0, y: 0 }], '0>3': [{ x: 0, y: 0 }],
+};
+
+function kicksFor(type: PieceType, from: number, to: number): Kick[] {
+  const key = `${from}>${to}`;
+  const table = type === PieceType.I ? KICKS_I : type === PieceType.O ? KICKS_O : KICKS_JLSTZ;
+  return table[key] ?? [{ x: 0, y: 0 }];
 }
 
 export class GameEngine {
@@ -62,10 +104,18 @@ export class GameEngine {
   handleCommand(command: AnyCommand): void {
     if (!isCommandType(command.type)) return;
 
+    // Once the game is over (or before it starts) only StartGame may reach the engine.
+    if (command.type !== CommandType.StartGame && (this._isGameOver || !this._isRunning)) return;
+
     const handlerMap: Record<string, () => void> = {
       [CommandType.StartGame]: () => this.startGame(command),
       [CommandType.MovePiece]: () => this.movePiece(command),
-      [CommandType.RotatePiece]: () => this.rotatePiece(this.currentRotation.index, (command as any).payload?.direction === 'cw' ? 1 : -1),
+      [CommandType.RotatePiece]: () => {
+        // A malformed direction is ignored instead of silently turning counter-clockwise.
+        const direction = (command as RotateCommand).payload?.direction;
+        if (direction !== 'cw' && direction !== 'ccw') return;
+        this.rotatePiece(this.currentRotation.index, direction === 'cw' ? 1 : -1);
+      },
       [CommandType.SoftDrop]: () => this.softDrop(command),
       [CommandType.HardDrop]: () => this.hardDrop(command),
       [CommandType.Tick]: () => this.tick(),
@@ -97,12 +147,14 @@ export class GameEngine {
   // ====== Game Lifecycle ======
 
   private startGame(command: any): void {
-    this.mode = command.payload?.hardcore ? GameMode.Hardcore : GameMode.Arcade;
+    // The store sends payload.mode (GameMode); `payload.hardcore` is kept as a legacy alias.
+    const requested = command.payload?.mode ?? (command.payload?.hardcore ? GameMode.Hardcore : GameMode.Arcade);
+    this.mode = requested === GameMode.Hardcore ? GameMode.Hardcore : GameMode.Arcade;
     this.reset();
-    this.spawnNextPiece();
     this._isRunning = true;
     this._isPaused = false;
     this._isGameOver = false;
+    this.spawnNextPiece();
     this.callbacks.onStateChange?.();
   }
 
@@ -117,8 +169,8 @@ export class GameEngine {
   }
 
   reset(): void {
-    this.board = this.boardManager.getCells();
     this.boardManager.reset();
+    this.board = this.boardManager.getCells();
     this.currentPiece = null;
     this.currentPos = { x: 0, y: 0 };
     this.currentRotation = { index: 0 };
@@ -150,6 +202,9 @@ export class GameEngine {
         this.rotatePiece(this.currentRotation.index, -1);
         return;
       }
+      default:
+        // Unknown movement direction: ignore the command rather than treating it as a move.
+        return;
     }
 
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x + dx, y: this.currentPos.y + dy })) {
@@ -164,6 +219,8 @@ export class GameEngine {
 
   private hardcoreDeath(): void {
     this._isGameOver = true;
+    this._isRunning = false;
+    this.callbacks.onGameOver?.(this.score);
     this.callbacks.onStateChange?.();
   }
 
@@ -173,20 +230,19 @@ export class GameEngine {
     const newRotation = ((rotationIndex + direction) % 4 + 4) % 4;
     const rotatedShape = PIECE_SHAPES[this.currentPiece.type][newRotation];
 
-    // Wall kick offsets (SRS)
-    const kicks = [
-      { x: 0, y: 0 }, { x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }
-    ];
+    // Direction-specific SRS wall kicks for this piece and this rotation pair.
+    const kicks = kicksFor(this.currentPiece.type, rotationIndex, newRotation);
 
-    let rotated = false;
+    const rotatedPiece = buildPiece(this.currentPiece.type, rotatedShape);
+
     for (const kick of kicks) {
       const testPos = { x: this.currentPos.x + kick.x, y: this.currentPos.y + kick.y };
-      if (this.isValidPosition({ type: this.currentPiece.type, shape: rotatedShape, colors: this.currentPiece.colors }, testPos)) {
+      if (this.isValidPosition(rotatedPiece, testPos)) {
         this.currentRotation.index = newRotation;
         this.currentPos = testPos;
         // Rebuild shape + matching colors for the active rotation.
-        this.currentPiece = buildPiece(this.currentPiece.type, rotatedShape);
-        rotated = true;
+        this.currentPiece = rotatedPiece;
+        this.callbacks.onStateChange?.();
         return;
       }
     }
@@ -199,12 +255,15 @@ export class GameEngine {
 
   private softDrop(_command: any): void {
     if (!this.currentPiece || !this._isRunning || this._isPaused) return;
-    this.currentPos.y += 1;
-    this.score += SCORING_CONFIG.softDrop;
-    if (!this.isValidPosition(this.currentPiece, this.currentPos)) {
+    const nextPos = { x: this.currentPos.x, y: this.currentPos.y + 1 };
+    if (this.isValidPosition(this.currentPiece, nextPos)) {
+      this.currentPos = nextPos;
+      this.score += SCORING_CONFIG.softDrop;
+      this.callbacks.onStateChange?.();
+    } else {
+      // Cannot move down: lock the piece where it actually is (never below the floor).
       this.placePiece();
     }
-    this.callbacks.onStateChange?.();
   }
 
   private hardDrop(_command: any): void {
@@ -255,7 +314,9 @@ export class GameEngine {
     // Check game over
     if (!this.isValidPosition(piece, this.currentPos)) {
       this._isGameOver = true;
+      this._isRunning = false;
       this.callbacks.onGameOver?.(this.score);
+      this.callbacks.onStateChange?.();
       return;
     }
     this.callbacks.onStateChange?.();

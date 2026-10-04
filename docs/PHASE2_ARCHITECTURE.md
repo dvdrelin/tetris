@@ -1,7 +1,7 @@
 # Фаза 2: Архитектурное ревью + Тесты
 
 **Версия:** v1.4
-**Статус:** ✅ Завершено (74 теста, все прошли)
+**Статус:** ✅ Завершено (на момент фазы — 74 теста; на момент аудита: 109 frontend + 21 backend unit, 16 E2E — см. `docs/AUDIT_REPORT.md` §11)
 **Дата:** 2025-09-08
 
 ---
@@ -99,12 +99,15 @@
 
 **См. также:** `docs/PHASE1_FIXES.md` — раздел 1.5
 
-Вращение фигур использует:
-- `SHAPES` — матрицы 3×3 (T,S,Z,J,L), 4×4 (I), 2×2 (O)
-- `GameEngine.rotate(dir)` — SRS-подобная система с wall kicks
-- `GameEngine.isValid(pos, rot)` — проверка пересечений и границ
-- `GameEngine.getGhostY()` — ghost piece с учётом текущей rotation
-- Расширенные wall kicks: 11 позиций (включая диагональные)
+Вращение фигур (актуальный боевой код — `frontend/src/shared/**`):
+- `PIECE_SHAPES` (`shared/domain/pieces.ts`) — матрицы 3×3 (T,S,Z,J,L), 4×4 (I), 2×2 (O), по 4 клетки в каждой ориентации
+- `GameEngine.rotatePiece(rotationIndex, direction)` (`shared/engine/game-engine.ts:219-246`) — канонические SRS wall kicks
+- `isValidPosition(piece, pos)` (`game-engine.ts:362+`) — проверка только заполненных клеток и границ поля
+- ghost-фигура считается в Pinia-сторе (`stores/gameStore.ts:152` `getGhostY`), **не** в движке и **не** в `board.ts`
+- kick-таблицы: 8 направленных пар поворотов (`0>1`, `1>0`, `1>2`, `2>1`, `2>3`, `3>2`, `3>0`, `0>3`),
+  отдельные для I и JLSTZ, по 5 смещений; ось Y движка направлена вниз → знаки `y` инвертированы.
+  Формулировка «11 позиций (включая диагональные)» относилась к legacy `app.js` и боевому коду не соответствует.
+- Проверка: `frontend/tests/unit/rotation-geometry.test.ts`, `frontend/tests/unit/rotation-kicks.test.ts`
 
 ---
 

@@ -1,16 +1,12 @@
 module.exports = {
+  // Explicit rootDir so the suite can also be run from the repository root
+  // (`node node_modules/jest/bin/jest.js --config frontend/jest.config.js`).
+  rootDir: __dirname,
   testEnvironment: 'jsdom',
   transform: {
-    '^.+\\.ts$': 'ts-jest',
+    '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json', isolatedModules: true }],
   },
   moduleFileExtensions: ['ts', 'js'],
-  testMatch: ['**/tests/unit/**/*.test.ts'],
+  testMatch: ['<rootDir>/tests/unit/**/*.test.ts'],
   testPathIgnorePatterns: ['/node_modules/'],
-  preset: 'ts-jest',
-  globals: {
-    'ts-jest': {
-      tsconfig: './tsconfig.json',
-      isolatedModules: true,
-    },
-  },
 }

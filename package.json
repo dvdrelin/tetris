@@ -14,7 +14,10 @@
     "build:frontend": "cd frontend && npx vite build",
     "build:backend": "cd backend && npx tsc",
     "start": "cd backend && node dist/index.js",
-    "test:e2e": "playwright test"
+    "test": "npm-run-all test:unit test:backend",
+    "test:unit": "npm run test --workspace frontend",
+    "test:backend": "npm run test --workspace backend",
+    "test:e2e": "playwright test --config tests/playwright.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

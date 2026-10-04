@@ -8,7 +8,6 @@ export const SCORING_CONFIG: ScoringConfig = Object.freeze({
   softDrop: 10,
   hardDrop: 20,
   comboMultiplier: 1.5,
-  comboDecay: 0.5,
 });
 
 export const SPEED_CONFIG: SpeedConfig = Object.freeze({

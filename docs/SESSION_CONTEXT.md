@@ -4,7 +4,10 @@
 
 **Проект:** Neon Tetris — Vue 3 + Pinia + Express + TypeScript
 **Текущая ветка:** main
-**Последний коммит:** `bbecb19` — "Phase 2 completion: 74 tests (51 frontend unit + 9 backend unit + 14 E2E), render loop fix, console error interception, E2E coverage"
+**Последний коммит (проверено в аудите):** `e570ee8` — "Fix: deploy.sh — skip vue-tsc…", branch `main`,
+дата `2026-09-13`. Ранее здесь был указан `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный,
+но он на 24 коммита позади HEAD (от `2026-09-09`) и больше не последний. Рабочее дерево на момент
+аудита содержит незакоммиченные изменения P0/P1/P3; полный список — `docs/AUDIT_REPORT.md` §10.
 
 ## Что сделано
 
@@ -14,7 +17,11 @@
 
 ### Phase 2: ✅ Завершено
 - SRP рефакторинг (renderer.ts, piecePreview.ts)
-- **74 теста проходят:**
+  — **поправка аудита:** `frontend/src/engine/piecePreview.ts` удалён как мёртвый код
+  (`renderPiecePreview` нигде не импортировался); `renderer.ts` остался — его используют
+  `GameBoard.vue` и `renderer.test.ts`
+- **74 теста проходят** (историческая цифра фазы; актуально на момент аудита: **109** frontend unit,
+  **21** backend unit, **16** E2E — `docs/AUDIT_REPORT.md` §11):
   - Frontend unit: 51 тест (jest + ts-jest)
   - Backend unit: 9 тестов (jest + ts-jest)
   - E2E: 14 тестов (playwright)
@@ -30,10 +37,20 @@
 - Backend: `C:\GIT\tetris\backend` (Express, порт 3000)
 - Dev server: `npm run dev` (frontend на 3001, backend на 3000)
 
-### Важно
+### Важно (проверено в аудите)
 - Vite proxy: `/api` → `http://localhost:3000`, `/ws` → `ws://localhost:3000`
-- PowerShell: `npx` заблокирован, используем `node -e "require('child_process')..."`
-- npm: нужны `sandbox_permissions: "danger-full-access"` для записи в cache
+- PowerShell: `npx` заблокирован. Рабочие команды обхода:
+  - `node node_modules\typescript\bin\tsc --noEmit -p frontend\tsconfig.json`
+  - `node node_modules\jest\bin\jest.js --config frontend\jest.config.js --runInBand`
+  - `node node_modules\@playwright\test\cli.js test --config tests\playwright.config.ts`
+- PowerShell: `npm` как `npm.ps1` не запускается («running scripts is disabled») → использовать **`npm.cmd`**
+  (или `cmd /c npm ...`)
+- Зависимости workspace hoisted в корневой `node_modules`, поэтому из каталога `frontend` Vite запускается
+  как `node ..\node_modules\vite\bin\vite.js --port 3001 --host`
+- `vue-tsc@1.8.27` несовместим с установленным `typescript@5.9.3`
+  (`Search string not found: "/supportedTSExtensions = .*(?=;)/"`) → `npm run build` во frontend падал;
+  в `"build"` поставлен `tsc --noEmit && vite build`, `vue-tsc` требует обновления до ≥2.x
+- Сеть в среде аудита недоступна (npm registry → `ECONNREFUSED 127.0.0.1:1301`) → починки только офлайн
 - ts-node-dev: работает только без `--transpileOnly` (флаг не поддерживается)
 
 ### Известные файлы

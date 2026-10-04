@@ -21,7 +21,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"
 SSH_PORT="${SSH_PORT:-22}"
-REMOTE_PORT="${1:-3000}"
+# Порт приложения — ТРЕТИЙ аргумент (bash deploy.sh <USER> <HOST> [PORT]).
+# Ранее здесь было "${1:-3000}", то есть порт подставлялся из USER и молча ломал вывод.
+REMOTE_PORT="${3:-3000}"
 
 USER="${1:?Ошибка: укажите USER (например root)}"
 HOST="${2:?Ошибка: укажите HOST (например 192.168.1.100)}"
@@ -114,24 +116,32 @@ echo ""
 # ---------------------------------------------------------------------------
 log "Копирую исходники и package.json на сервер..."
 
-# Собираю список файлов для копирования (исключая node_modules, dist, и т.д.)
-FILES_TO_COPY=$(
-    git ls-files | grep -vE '(^node_modules/|^dist/|^frontend/dist/|^backend/dist/|^frontend/node_modules/|^backend/node_modules/|\.git/|\.dockerignore|Dockerfile|deploy\.sh|README\.md|\.md$)' || true
-)
+# Копируем package.json, tsconfig-и и точку входа фронтенда.
+# ВАЖНО: раньше все файлы шли одним scp в $REMOTE_DIR/ — frontend/package.json и
+# backend/package.json оказывались в одном каталоге и перезаписывали друг друга.
+$SSH_CMD "$USER@$HOST" "mkdir -p $REMOTE_DIR/frontend $REMOTE_DIR/backend $REMOTE_DIR/backend/data"
 
-# Копирую package.json, tsconfig, vite.config и исходники
-$SSH_CMD "$USER@$HOST" "mkdir -p $REMOTE_DIR/{frontend,backend}"
-
-# Копируем package.json файлы
+log "  root-файлы"
 scp -i "$SSH_KEY" -P "$SSH_PORT" \
     package.json \
+    package-lock.json \
+    tsconfig.base.json \
+    "$USER@$HOST:$REMOTE_DIR/"
+
+log "  frontend-конфиги"
+scp -i "$SSH_KEY" -P "$SSH_PORT" \
     frontend/package.json \
     frontend/tsconfig.json \
+    frontend/env.d.ts \
+    frontend/index.html \
     frontend/vite.config.ts \
+    "$USER@$HOST:$REMOTE_DIR/frontend/"
+
+log "  backend-конфиги"
+scp -i "$SSH_KEY" -P "$SSH_PORT" \
     backend/package.json \
     backend/tsconfig.json \
-    backend/jest.config.js \
-    "$USER@$HOST:$REMOTE_DIR/"
+    "$USER@$HOST:$REMOTE_DIR/backend/"
 
 # Копируем исходники бэкенда
 rsync -avz --delete \
@@ -155,10 +165,10 @@ scp -i "$SSH_KEY" -r -P "$SSH_PORT" \
     frontend/src/ \
     "$USER@$HOST:$REMOTE_DIR/frontend/src/"
 
-# Копируем данные (scores.json)
+# Копируем данные (scores.json) — каталог уже создан выше, иначе scp молча терял файл
 scp -i "$SSH_KEY" -P "$SSH_PORT" \
     backend/data/scores.json \
-    "$USER@$HOST:$REMOTE_DIR/backend/data/" 2>/dev/null || true
+    "$USER@$HOST:$REMOTE_DIR/backend/data/" 2>/dev/null || warn "backend/data/scores.json не скопирован (создастся при первом сохранении)"
 
 ok "Файлы скопированы"
 echo ""
@@ -170,16 +180,12 @@ log "Устанавливаю зависимости и собираю прое�
 
 $SSH_CMD "$USER@$HOST" "
     cd $REMOTE_DIR &&
-    echo '--- Installing root dependencies ---' &&
+    echo '--- Installing dependencies (npm workspaces) ---' &&
     npm install &&
-    echo '--- Installing frontend dependencies ---' &&
-    (cd frontend && npm install) &&
-    echo '--- Installing backend dependencies ---' &&
-    (cd backend && npm install) &&
-    echo '--- Building frontend (vite build only) ---' &&
-    (cd frontend && npx vite build) &&
+    echo '--- Building frontend ---' &&
+    (cd frontend && npm run build) &&
     echo '--- Building backend ---' &&
-    (cd backend && npx tsc) &&
+    (cd backend && npm run build) &&
     echo '--- BUILD COMPLETE ---'
 "
 ok "Сборка завершена"
@@ -193,19 +199,11 @@ log "Запускаю приложение на порту $PORT..."
 # Завершаем старый процесс, если он есть
 $SSH_CMD "$USER@$HOST" "pm2 stop neon-tetris 2>/dev/null; pm2 delete neon-tetris 2>/dev/null; echo done"
 
-# Запускаем через PM2
+# Запускаем через PM2 (один --name; если процесс уже есть — перезапускаем)
 $SSH_CMD "$USER@$HOST" "
     cd $REMOTE_DIR &&
-    pm2 start \
-        --name neon-tetris \
-        --interpreter node \
-        backend/dist/index.js \
-        --name neon-tetris \
-        -- 2>/dev/null || true
+    pm2 start backend/dist/index.js --name neon-tetris --cwd $REMOTE_DIR || pm2 restart neon-tetris
 "
-
-# На всякий случай — перезапускаем
-$SSH_CMD "$USER@$HOST" "pm2 restart neon-tetris"
 
 sleep 2
 
@@ -233,7 +231,4 @@ echo -e " Управление через PM2:"
 echo -e "   ssh $USER@$HOST \"pm2 list\""
 echo -e "   ssh $USER@$HOST \"pm2 logs neon-tetris\""
 echo -e "   ssh $USER@$HOST \"pm2 restart neon-tetris\""
-echo ""
-echo -e "${YELLOW}Теперь запустите deploy.sh с нужными параметрами:"
-echo -e "   bash deploy.sh root 192.168.1.100 3000${NC}"
 echo ""
