@@ -5,15 +5,30 @@ import MenuView from './components/MenuView.vue'
 import GameView from './components/GameView.vue'
 import LeaderboardView from './components/LeaderboardView.vue'
 
+type ViewName = 'menu' | 'game' | 'leaderboard'
+
+interface BgParticle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  size: number
+  phase: number
+  speed: number
+  alphaMin: number
+  alphaMax: number
+  hue: number
+}
+
 export default defineComponent({
   name: 'App',
   setup() {
     const gameStore = useGameStore()
-    const currentView = ref<'menu' | 'game' | 'leaderboard'>('menu')
+    const currentView = ref<ViewName>('menu')
     let bgCanvas: HTMLCanvasElement | null = null
     let bgAnimId: number | null = null
     let bgCtx: CanvasRenderingContext2D | null = null
-    let bgParticles: Array<{ x: number; y: number; vx: number; vy: number; size: number; baseAlpha: number; hue: number }> = []
+    let bgParticles: BgParticle[] = []
     let lastBgTime = 0
     let bgStartTime = 0
 
@@ -34,7 +49,7 @@ export default defineComponent({
       currentView.value = viewOrder.value[(idx + 1) % viewOrder.value.length]
     }
 
-    const viewOrder = computed(() => ['menu', 'game', 'leaderboard'])
+    const viewOrder = computed<ViewName[]>(() => ['menu', 'game', 'leaderboard'])
 
     // Cosmic breathing — gentle, dark, peaceful
     const COSMIC_CYCLE = 12000 // 12s full cycle (slow breathing)

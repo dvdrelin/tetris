@@ -33,6 +33,7 @@
 ```bash
 npm install
 npm run dev          # Frontend (:3001) + Backend (:3000)
+npm run build        # vue-tsc (типы, включая .vue) + vite build → frontend/dist
 ```
 
 ## 🐳 Деплой с Docker
@@ -122,6 +123,9 @@ npm run test:e2e        # Playwright E2E
 либо прямые бинарники:
 `node node_modules\jest\bin\jest.js --config frontend\jest.config.js`,
 `node node_modules\@playwright\test\cli.js test --config tests\playwright.config.ts`.
+Раньше весь npm ломался из-за `proxy`/`https-proxy` на мёртвый `127.0.0.1:1301` в пользовательском
+`%USERPROFILE%\.npmrc` (`ECONNREFUSED`); эти строки удалены — реестр доступен напрямую
+(подробности: `docs/AUDIT_REPORT.md` §12.5).
 
 ## 🏗 Архитектура
 

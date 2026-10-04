@@ -380,17 +380,19 @@ fallback в `[]`.
 
 ## E. Окружение / сборка 🔵
 
-### E1. `vue-tsc@1.8.27` несовместим с Node.js v26 🟡 [⚠️ окружение, не проект]
+### E1. `vue-tsc@1.8.27` несовместим с Node.js v26 🟡 [✅ исправлено — обновлён до 3.3.12]
 
 При запуске `vue-tsc --noEmit` в этой среде ошибка:
 ```
 Search string not found: "/supportedTSExtensions = ?(.=;)/"
 ```
-Старое регулярное выражение из vue-tsc 1.8 не совпадает с внутренностями Node v26. Это **ошибка
+Старое регулярное выражение из vue-tsc 1.8 не совпадает с внутренностями Node v26. Это была **ошибка
 окружения**, а не проекта (backend собирается `tsc` чисто).
 
-**Рекомендация.** Обновить `vue-tsc` до версии, совместимой с Node v26, или использовать более
-старый Node для CI.
+**Исправлено после аудита:** `vue-tsc` обновлён до `3.3.12` (peer `typescript >=5.0.0`, в проекте
+`typescript@5.9.3`); `vue-tsc --noEmit -p frontend/tsconfig.json` → exit 0, 0 ошибок. Типизация `.vue`
+вернулась в основной `npm run build`. Первая в истории проекта проверка `.vue` нашла **7 реальных ошибок
+типов в `App.vue`** — они исправлены (подробности: `docs/AUDIT_REPORT.md` §12.6).
 
 ---
 
@@ -412,7 +414,7 @@ esbuild — тот же движок, что использует Vite для б
 **Vite build в песочнице не запустился** (`spawn EPERM` в `optimizeSafeRealPathSync`) — ограничение окружения
 (песочница блокирует спавн subprocess'ов при работе с fs), а не ошибка кода. Для реального бандлинга используйте локальный `npm run build`.
 
-**vue-tsc@1.8.27 несовместим с Node v26** — см. E1 (окружение).
+**vue-tsc 3.3.12 + `vite build` → exit 0** (после обновления vue-tsc; история — E1 и `docs/AUDIT_REPORT.md` §12.6).
 
 ---
 
@@ -444,7 +446,10 @@ esbuild — тот же движок, что использует Vite для б
 - **Backend `tsc --noEmit -p backend/tsconfig.json` → exit 0, 0 ошибок.**
 - **esbuild bundle движка** (`--bundle game-engine.ts`) → exit 0, ~16.7kb, без ошибок. esbuild — тот же движок, что использует Vite; значит сборка frontend разблокирована и типизация чистая.
 
-> Замечание по среде: `esbuild`/`tsc` как subprocess не работали из-за sandbox EPERM на спавн воркера + PowerShell execution-policy (npx.ps1 blocked). Типизацию проверяли инпроцессно через API TypeScript против реальных опций tsconfig; esbuild-бандл — реальным `esbuild` напрямую.
+> Замечание по среде (уточнено после аудита): `npm.ps1`/`npx.ps1` блокируются PowerShell execution policy, но
+> `npm.cmd` и `npx.cmd` работают; сетевые сбои npm были вызваны `proxy`/`https-proxy` на мёртвый
+> `127.0.0.1:1301` в пользовательском `.npmrc` (см. `docs/AUDIT_REPORT.md` §12.5), а не отсутствием сети.
+> Штатные `tsc`, `vue-tsc`, `vite build`, `jest` и `playwright` в этой среде запускаются и проходят.
 
 ---
 
@@ -460,10 +465,10 @@ esbuild — тот же движок, что использует Vite для б
 | **P2** 🟡✅ | B3, B4, B6 — **ИСПРАВЛЕНО**: удалён мёртвый код, комбо сбрасывается на промахе, движковая система частиц убрана |
 | **P3** 🔵✅ | C3, C4, C5 — **ИСПРАВЛЕНО**: убранные deps, типизированный роутер с валидацией, удалён alias |
 | **P3** 🟡 | C1 (слабая типизация payload), C2 (`handleQuery` не вызывается) — дизайн-вопросы, не блокируют сборку/запуск |
-| **P3** 🔵 | E1 (`vue-tsc@1.8.27` vs Node v26) — ошибка окружения, не проекта; backend собирается `tsc` чисто |
+| **P3** 🔵✅ | E1 (`vue-tsc@1.8.27` vs Node v26) — **ИСПРАВЛЕНО**: `vue-tsc` обновлён до 3.3.12, типизация `.vue` снова в `npm run build` |
 
 **Итог:** после фикса A1/A2/B7/C3–C5 проект **собирается и типизируется чисто** (frontend + backend, exit 0).
-Остались только дизайн-вопросы типа C1/C2 и ограничение окружения E1 — ни один из них не блокирует сборку или запуск игры.
+Остались только дизайн-вопросы типа C1/C2 — ни один из них не блокирует сборку или запуск игры (E1 закрыт обновлением `vue-tsc`).
 
 ---
 
@@ -565,12 +570,12 @@ esbuild — тот же движок, что использует Vite для б
 
 ### Как проверить после продолжения
 ```bash
-# Типы (frontend; vue-tsc НЕ использовать — см. E1)
-npx.cmd tsc --noEmit -p frontend/tsconfig.json        # expect exit 0, 0 errors
-npx.cmd tsc --noEmit -p backend/tsconfig.json         # expect exit 0
+# Типы (frontend; vue-tsc 3.3.12 совместим с TS 5.9.3 — проверяет и .vue, см. E1)
+npx.cmd vue-tsc --noEmit -p frontend/tsconfig.json     # expect exit 0, 0 errors
+npx.cmd tsc --noEmit -p backend/tsconfig.json          # expect exit 0
 
-# Production-бандл (обход vue-tsc через vite напрямую)
-npm.cmd run build --workspace=frontend                 # → frontend/dist/
+# Production-бандл
+npm.cmd run build --workspace=frontend                  # vue-tsc --noEmit && vite build → frontend/dist/
 
 # Dev для playtest
 npm.cmd run dev --workspace=frontend                   # http://localhost:3001
@@ -584,9 +589,9 @@ curl -s -X POST localhost:3000/api/score -H 'Content-Type: application/json' \
 ```
 
 ### Окружение / ловушки (важно при продолжении)
-- **E1 — `vue-tsc@1.8.27` vs Node v26:** падает с «Search string not found: "/supportedTSExtensions...". Это
-  ошибка окружения, не проекта. Типизируйте через обычный `tsc --noEmit`; для production-бандла используйте
-  `npm.cmd run build` во frontend (esbuild сам разбирает `.vue`, vue-tsc не нужен).
+- **E1 — `vue-tsc@1.8.27` vs Node v26:** падал с «Search string not found: "/supportedTSExtensions...". Закрыто:
+  `vue-tsc` обновлён до 3.3.12 и работает. `npm run build` во frontend = `vue-tsc --noEmit && vite build`;
+  вариант без типизации `.vue` оставлен отдельной целью `build:tsc`.
 - **Stale dist:** `npm run start` запускает `node dist/index.js`. После правки backend'а пересоберите `tsc`
   и перезапустите сервер, иначе валидный POST будет отклонён старым кодом.
 - **Sandbox EPERM:** esbuild/tsc как subprocess могут падать (`spawn EPERM`, `optimizeSafeRealPathSync`) —

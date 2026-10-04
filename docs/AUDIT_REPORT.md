@@ -303,7 +303,7 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 
 | Файл | Изменение |
 |---|---|
-| `frontend/package.json` | `"build": "tsc --noEmit && vite build"` (было `vue-tsc --noEmit && vite build` — падало); отдельная цель `build:vue-tsc` оставлена на момент, когда `vue-tsc` обновят до ≥2.x (блокировка была в конфиге npm, а не в сети — см. §12.5) |
+| `frontend/package.json` | `"build": "tsc --noEmit && vite build"` (было `vue-tsc --noEmit && vite build` — падало из-за `vue-tsc@1.8.27`); после обновления `vue-tsc` до 3.3.12 основной `build` возвращён к `vue-tsc --noEmit && vite build`, вариант без типизации `.vue` перенесён в `build:tsc` — см. §12.6 |
 | `frontend/dist/**` | Пересобран штатной `npm run build`: `index.html` 0.58 kB · `assets/index-1GF7EUM4.js` 99.99 kB · `assets/index-DPHrKT2t.css` 6.77 kB (53 модуля) |
 | `deploy.sh` | `REMOTE_PORT="${3:-3000}"` (было `${1:-3000}` — порт брался из USER); scp разнесён по каталогам (прежде `frontend/package.json` и `backend/package.json` выгружались в один `$REMOTE_DIR/` и перезаписывали друг друга); копируются `package-lock.json`, `tsconfig.base.json`, `frontend/env.d.ts`, `frontend/index.html`; `mkdir -p backend/data` до scp; сборка через `npm run build` вместо `npx …`; PM2: один `--name`, `--cwd`, без безусловного `pm2 restart`; удалён неиспользуемый `FILES_TO_COPY` и бессмысленный финальный блок «Теперь запустите deploy.sh…»; `bash -n deploy.sh` → OK |
 | `backend/src/services/scoreService.ts` | `getDBDir = dirname(dbPath)` (было `join(dbPath, '..', '..')` → `ENOENT`); `loadScores` создаёт каталог и возвращает `[]` при отсутствии/битом файле; `saveScores` пишет во временный файл и делает `renameSync` |
@@ -316,8 +316,8 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 1. **C2** — query-путь (`GetNextPiece`, `GetBoardState`) жив и UI не используется: менять не стали, ложная отметка в `errors.md` снята.
 2. Приватные хендлеры движка по-прежнему принимают `command: any` (валидация есть только на входе `handleCommand` для `RotatePiece`/`MovePiece`).
 3. `@types/uuid` и `@types/better-sqlite3` в `backend/package.json:20–21` — мёртвые dev-зависимости.
-4. `vue-tsc` ≥2.x (типизация `.vue`) не установлен; реестр доступен (актуальная версия `3.3.12`), мешает только
-   конфиг npm с мёртвым proxy — см. §12.5.
+4. ~~`vue-tsc` ≥2.x (типизация `.vue`) не установлен~~ — **закрыто после аудита**: `vue-tsc` обновлён до
+   `3.3.12`, типизация `.vue` вернулась в `npm run build`; см. §12.6.
 5. `hasCollision` не вызывается; расхождение `isValidPosition` (`boardY < 0` запрещён) vs `hasCollision` (разрешён) не устранено.
 6. `SPEED_CONFIG.autoDropInterval` в движке вычисляется и не используется (tick живёт в `GameBoard.vue`) — C12.
 7. `GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры.
@@ -345,6 +345,25 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 | `npx.cmd --version` / `npx.cmd tsc --version` | `11.13.0` / `Version 5.9.3` |
 | `npm.cmd run test` из корня | 109 frontend + 21 backend — все проходят |
 
-Вывод: офлайн-ограничение снимается, пункт 4 (обновление `vue-tsc`) технически выполним. Правка
-`C:\Users\<user>\.npmrc` (удаление двух proxy-строк) в аудит не входила — это конфиг вне репозитория, решение за
-пользователем; обход через `--userconfig` проверен и ничего в репозитории не меняет.
+Вывод: офлайн-ограничение снимается, пункт 4 (обновление `vue-tsc`) технически выполним — что и сделано в §12.6.
+На момент аудита `C:\Users\<user>\.npmrc` не правили (конфиг вне репозитория), обход проверялся через
+`--userconfig`; позже обе proxy-строки из этого файла удалены.
+
+### 12.6 Обновление `vue-tsc` и первая проверка типов в `.vue`
+
+После снятия блокировки npm (`proxy` / `https-proxy` удалены из `C:\Users\<user>\.npmrc`) выполнено:
+
+| Шаг | Результат |
+|---|---|
+| `npm install vue-tsc@^3.3.12 --save-dev --workspace=frontend` | `vue-tsc 3.3.12` (peer `typescript >=5.0.0`, в проекте `typescript@5.9.3`); `npm.cmd ping` → `PONG 670ms` |
+| первый запуск `vue-tsc --noEmit -p frontend/tsconfig.json` | **7 ошибок типов в `frontend/src/App.vue`** — раньше `.vue` в проекте не типизировались никогда |
+| правки `App.vue` | добавлены `type ViewName` и `interface BgParticle`: поля `phase`, `speed`, `alphaMin`, `alphaMax` использовались в коде, но отсутствовали в типе массива частиц (TS2353/TS2339); мёртвое поле `baseAlpha` из типа убрано; `viewOrder` объявлен `computed<ViewName[]>` (был `string[]` → TS2322 при присваивании `currentView`) |
+| `vue-tsc --noEmit -p frontend/tsconfig.json` после правок | exit 0, 0 ошибок |
+| `frontend/package.json` | `"build": "vue-tsc --noEmit && vite build"`, `"build:tsc": "tsc --noEmit && vite build"` (цель `build:vue-tsc` удалена как дубль) |
+| корневой `package.json` | `build:frontend` → `npm run build --workspace frontend`, `build:backend` → `npm run build --workspace backend`: корневая сборка больше не обходит типизацию `.vue` (раньше было `cd frontend && npx vite build`) |
+| `npm.cmd run build` (корень) | exit 0: backend `tsc` + frontend `vue-tsc` + `vite build` → `dist/index.html` 0.58 kB · `assets/index-1GF7EUM4.js` 99.99 kB · `assets/index-DPHrKT2t.css` 6.77 kB (53 модуля; хэши не изменились — правки `App.vue` чисто типовые) |
+| `npm.cmd run test` | 109 frontend + 21 backend — все проходят |
+| `npm.cmd run test:e2e` | 16 Playwright-тестов — все проходят (26.1s) |
+
+Природа найденных ошибок: тип имени вьюшки и тип частиц фона писались «на глаз» и никогда не проверялись —
+сломанный `vue-tsc` не запускался, а обычный `tsc` не видит `.vue`.

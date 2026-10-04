@@ -3,11 +3,15 @@
 ## Текущее состояние
 
 **Проект:** Neon Tetris — Vue 3 + Pinia + Express + TypeScript
-**Текущая ветка:** main
-**Последний коммит (проверено в аудите):** `e570ee8` — "Fix: deploy.sh — skip vue-tsc…", branch `main`,
-дата `2026-09-13`. Ранее здесь был указан `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный,
-но он на 24 коммита позади HEAD (от `2026-09-09`) и больше не последний. Рабочее дерево на момент
-аудита содержит незакоммиченные изменения P0/P1/P3; полный список — `docs/AUDIT_REPORT.md` §10.
+**Ветка:** `main`, синхронизирована с `origin/main` (`https://github.com/dvdrelin/tetris.git`)
+**Коммиты после аудита:** `9dba4ea` (P0–P3: канонические матрицы SRS + направленные wall kicks, тесты, доки,
+сборка и деплой), `9db00a3` (внешний API-хост выведен из проекта: убран git-remote, `app.js` → same-origin
+`/api`), `b06f4fb` (уточнение утверждений об окружении) и последний — обновление `vue-tsc` до 3.3.12 с
+починкой найденных типов в `App.vue` (`docs/AUDIT_REPORT.md` §12.6).
+Историческая справка: до аудита HEAD был `e570ee8` («Fix: deploy.sh — skip vue-tsc…», дата `2026-09-13`);
+упоминавшийся ранее `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный, но он на 24 коммита позади
+того HEAD. Незакоммиченных изменений P0/P1/P3 больше нет; полный список правок — `docs/AUDIT_REPORT.md` §10
+и §12.
 
 ## Что сделано
 
@@ -48,14 +52,16 @@
   - `node node_modules\@playwright\test\cli.js test --config tests\playwright.config.ts`
 - Зависимости workspace hoisted в корневой `node_modules`, поэтому из каталога `frontend` Vite запускается
   как `node ..\node_modules\vite\bin\vite.js --port 3001 --host`
-- `vue-tsc@1.8.27` несовместим с установленным `typescript@5.9.3`
-  (`Search string not found: "/supportedTSExtensions = .*(?=;)/"`) → `npm run build` во frontend падал;
-  в `"build"` поставлен `tsc --noEmit && vite build`, `vue-tsc` требует обновления до ≥2.x
+- `vue-tsc@1.8.27` был несовместим с установленным `typescript@5.9.3`
+  (`Search string not found: "/supportedTSExtensions = .*(?=;)/"`) → `npm run build` во frontend падал.
+  **Решено:** `vue-tsc` обновлён до `3.3.12`, `"build"` снова `vue-tsc --noEmit && vite build`
+  (вариант без типизации `.vue` — `"build:tsc"`); проверка `.vue` нашла 7 реальных ошибок типов в `App.vue`,
+  они исправлены (см. `docs/AUDIT_REPORT.md` §12.6)
 - Сеть **есть**: `registry.npmjs.org:443` и `github.com:443` доступны (`Test-NetConnection` → `True`,
-  `git push` проходит). npm падал только из-за устаревших строк `proxy` / `https-proxy = http://127.0.0.1:1301`
-  в `C:\Users\<user>\.npmrc`, где никто не слушает (`Test-NetConnection 127.0.0.1:1301` → `TcpTestSucceeded=False`).
-  Обход без правки пользовательского конфига: `npm.cmd --userconfig <чистый .npmrc> …`
-  (проверено: `npm ping` → `PONG 558ms`, `npm view vue-tsc version` → `3.3.12`, прямой `fetch` реестра → HTTP 200)
+  `git push` проходит). npm падал из-за устаревших строк `proxy` / `https-proxy = http://127.0.0.1:1301`
+  в `C:\Users\<user>\.npmrc`, где никто не слушал (`Test-NetConnection 127.0.0.1:1301` → `TcpTestSucceeded=False`).
+  **Эти строки удалены** — `npm.cmd ping` → `PONG`, `npm.cmd view vue-tsc version` → `3.3.12`.
+  Если локальный прокси на :1301 снова появится, их надо вернуть (в файле оставлен комментарий).
 - ts-node-dev: работает только без `--transpileOnly` (флаг не поддерживается)
 
 ### Известные файлы
