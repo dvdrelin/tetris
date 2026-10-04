@@ -127,10 +127,11 @@ rm -rf /opt/neon-tetris-new
 cd /opt/neon-tetris && docker compose build && docker compose up -d
 ```
 
-⚠️ `deploy.sh` деплоит в PM2-контур (`pm2 start backend/dist/index.js`), а домен `ntetris.ddns.net`
-nginx-proxy маршрутизирует в Docker-контейнер. Поэтому `deploy.sh` не меняет то, что открывается
-в браузере. Подробности и таблица двух контуров: `docs/SESSION_CONTEXT.md`, раздел
-«Боевое окружение (действующий деплой)».
+`deploy.sh` работает в тот же Docker-контур, который обслуживает домен: клонирует репозиторий на сервер,
+синхронизирует его `rsync`-ом с теми же исключениями, выполняет `docker compose build && docker compose up -d`
+и проверяет ответ `https://<HOST>/`, JSON-запрос к API внутри контейнера и совпадение SHA-256 бандла
+«отдаётся через nginx» против «лежит в контейнере». PM2 в скрипте больше нет — PM2-контур удалён с сервера
+(см. `docs/SESSION_CONTEXT.md`, раздел «Один контур на сервере»).
 
 ### Управление на сервере
 ```bash

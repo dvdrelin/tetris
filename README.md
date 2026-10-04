@@ -63,11 +63,17 @@ docker build -t neon-tetris .
 docker run -p 3000:3000 neon-tetris
 ```
 
-### SSH-деплой (старый метод)
+### SSH-деплой одним скриптом
 
 ```bash
-bash deploy.sh root 192.168.1.100 3000
+bash deploy.sh root <HOST> 3000        # SSH key по умолчанию: ~/.ssh/id_ed25519
 ```
+
+`deploy.sh` работает только через Docker: клонирует репозиторий на сервер, синхронизирует
+`rsync`-ом (не трогая `backend/data` и `nginx-proxy`), выполняет `docker compose build && up -d`
+и сам проверяет ответ сайта, JSON API и совпадение хэша бандла «отдаётся / в образе».
+PM2 в скрипте больше нет — этого контура на сервере тоже нет. Процедура и проверки:
+`docs/SESSION_CONTEXT.md` → «Боевое окружение (действующий деплой)».
 
 ## 📁 Структура проекта
 

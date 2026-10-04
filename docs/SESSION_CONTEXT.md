@@ -94,7 +94,7 @@
 | TLS | Let's Encrypt, сертификат выдаёт `nginxproxy/acme-companion` |
 | Reverse proxy | `nginxproxy/nginx-proxy:1.11`, внешняя docker-сеть `proxy`, переменные `VIRTUAL_HOST` / `VIRTUAL_PORT` / `ACME_HOST` в `docker-compose.yml` |
 | Сервис | контейнер `neon-tetris`, внутренний порт 3000 (backend отдаёт `frontend/dist`), снаружи 80/443 через nginx-proxy |
-| Деплой | рабочий путь — **Docker** (процедура ниже). `deploy.sh` ведёт в PM2-контур, который домен не обслуживает |
+| Деплой | рабочий путь — **Docker** (процедура ниже). `deploy.sh` с коммита `fix(deploy): убрать PM2-контур…` ведёт именно в Docker-контур |
 | Данные | volume `./backend/data:/app/backend/data:rw` — туда пишется `scores.json` |
 
 ### Рабочая процедура деплоя (проверено 2026-10-04 на HEAD `061b71e`)
@@ -120,17 +120,42 @@ cd /opt/neon-tetris && docker compose build && docker compose up -d
 - хэши артефактов в контейнере должны совпадать с локальной сборкой: `frontend/dist/assets/index-B04z4d71.js` →
   `c84daf18…`, `backend/dist/index.js` → `1a45f215…` (совпали байт в байт)
 
-### Два контура на сервере — не путать
+### Один контур на сервере (PM2-контур удалён 2026-10-04)
 
 | Контур | Что исполняет | Как доступен |
 |---|---|---|
-| контейнер `neon-tetris` | `node backend/dist/index.js` | его отдаёт домен: nginx upstream `ntetris.ddns.net` → `172.18.0.4:3000` (сеть `proxy`) |
-| PM2 `neon-tetris` | `node /opt/neon-tetris/backend/dist/index.js` | слушает `*:3000` на хосте; nginx к нему не маршрутизирует |
+| контейнер `neon-tetris` | `node backend/dist/index.js` (сборка внутри образа) | единственный: nginx upstream `ntetris.ddns.net` → `172.18.0.4:3000` (сеть `proxy`), снаружи 80/443 |
 
-Это **один и тот же backend, запущенный дважды** (Express + статика `frontend/dist`), а не «фронт и бэк».
-Порт 3000 при этом доступен извне как `http://ntetris.ddns.net:3000` — то есть копия приложения работает
-в обход HTTPS/nginx. `deploy.sh` обновляет именно PM2-копию, поэтому после него сайт в браузере не меняется.
-Открытый вопрос: обновить PM2, остановить его или закрыть 3000 на фаерволе — решать владельцу.
+Раньше параллельно работал PM2-копия того же backend (`pm2 id 0 neon-tetris`,
+`node /opt/neon-tetris/backend/dist/index.js`, слушал `*:3000` на хосте). nginx к нему не маршрутизировал,
+но `http://ntetris.ddns.net:3000` был доступен извне и отдавал **старый** билд `index-mDXpicBE.js`
+от 13 сентября — то есть публично живала копия с неисправленной ротацией. Контур удалён:
+
+```bash
+ssh root@ntetris.ddns.net
+pm2 delete neon-tetris      # [PM2] [neon-tetris](0) ✓
+pm2 save --force            # Successfully saved in /root/.pm2/dump.pm2 (пустой список, 2 байта)
+pm2 unstartup systemd       # Removed "/etc/systemd/system/multi-user.target.wants/pm2-root.service"
+```
+
+Проверки после удаления (фактический вывод):
+
+| Проверка | Результат |
+|---|---|
+| `pm2 list` | пустая таблица (ни одного процесса) |
+| `systemctl list-unit-files \| grep 'pm2'` | `pm2-root.service` отсутствует |
+| `ls /etc/systemd/system/pm2-root.service` | `No such file or directory` |
+| `systemctl is-enabled pm2-root` | `not-found` (после ребута resurrect не вернёт процесс) |
+| `ss -ltnp \| grep ':3000'` | пусто — на хосте 3000 больше никто не слушает (контейнер наружу 3000 не публикует) |
+| `http://ntetris.ddns.net:3000` с локальной машины | `ECONNREFUSED 144.31.195.51:3000` (не 200) |
+| `https://ntetris.ddns.net/` | `200`, тот же новый бандл `assets/index-B04z4d71.js` + `assets/index-C_FNZJOZ.css` |
+| `docker ps` | `neon-tetris Up`, `nginx-proxy Up`, `nginx-proxy-letsencrypt Up` |
+
+Мёртвые артефакты PM2-контура с хоста удалены: `/opt/neon-tetris/node_modules` (87 МБ),
+`/opt/neon-tetris/frontend/dist`, `/opt/neon-tetris/backend/dist`. Не тронуты и обязательны к сохранению:
+`/opt/neon-tetris/backend/data/scores.json` (volume контейнера) и `/opt/neon-tetris/nginx-proxy/`
+(там `.env` с `DEFAULT_EMAIL`, которого нет в репозитории). `rsync --exclude=dist --exclude=node_modules`
+не пересоздаёт удалённое: контейнер собирает `dist` внутри образа.
 
 Замечание по сборке: `Dockerfile` использует `node:20-alpine` (20.20.2); при `npm install` появляются
 `EBADENGINE`-предупреждения (`abbrev@5.0.0`, `nopt@10.0.1` требуют `^22.22.2 || ^24.15.0 || >=26.0.0`).
