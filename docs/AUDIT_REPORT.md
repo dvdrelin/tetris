@@ -319,19 +319,30 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 ### 12.4 Что осталось открытым (осознанно)
 
 1. **C2** — query-путь (`GetNextPiece`, `GetBoardState`) жив и UI не используется: менять не стали, ложная отметка в `errors.md` снята.
-2. Приватные хендлеры движка по-прежнему принимают `command: any` (валидация есть только на входе `handleCommand` для `RotatePiece`/`MovePiece`).
+2. ~~Приватные хендлеры движка по-прежнему принимают `command: any` (валидация есть только на входе
+   `handleCommand` для `RotatePiece`/`MovePiece`)~~ — **закрыто (блок 1 сингла)**: `handleCommand` —
+   `switch` с сужением типа, хендлеры типизированы (`StartGameCommand`, `MoveCommand`),
+   `isCommandType` / `CommandHandler` / `QueryHandler` удалены; `MoveCommand.payload.direction`
+   сужен до `'left' | 'right' | 'down'` (`docs/SINGLE_PLAYER_DECISIONS.md`, E1/B4).
 3. ~~`@types/uuid` и `@types/better-sqlite3` в `backend/package.json:20–21` — мёртвые dev-зависимости~~ —
    **закрыто**: оба пакета удалены из `devDependencies` при обновлении зависимостей (§12.7).
 4. ~~`vue-tsc` ≥2.x (типизация `.vue`) не установлен~~ — **закрыто после аудита**: `vue-tsc` обновлён до
    `3.3.12`, типизация `.vue` вернулась в `npm run build`; см. §12.6.
-5. `hasCollision` не вызывается; расхождение `isValidPosition` (`boardY < 0` запрещён) vs `hasCollision` (разрешён) не устранено.
+5. ~~`hasCollision` не вызывается; расхождение `isValidPosition` (`boardY < 0` запрещён) vs `hasCollision`
+   (разрешён) не устранено~~ — **закрыто (блок 1 сингла)**: в `board.ts` `hasCollision(piece, pos)`
+   реализован как `!isValidPosition(piece, pos)` (одна коллизия — одно правило), обёртка `hasCollision`
+   из `GameEngine` удалена (`docs/SINGLE_PLAYER_DECISIONS.md`, A9).
 6. Мёртвый расчёт скорости в движке: в `GameEngine.autoDrop()` (`frontend/src/shared/engine/game-engine.ts:294–295`)
    вычисляется локальная `interval` из `GAME_CONFIG.speedConfig` и **не используется** (комментарий: «tick-based,
    move down one row per tick»), а реальный тик живёт в `GameBoard.vue` (`tickAccumulator`, `:60–65`) — C12.
    Уточнение к исходной формулировке: поля `SPEED_CONFIG.autoDropInterval` в коде больше нет —
    `SpeedConfig` = `initialInterval` / `intervalDecrease` / `minInterval` (`game-config.ts:13–17`).
-7. `GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры.
-8. `docs/tsc-frontend.log` — нечитаемый бинарный артефакт, упоминается как результат проверки типов.
+7. ~~`GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры~~ —
+   **закрыто (блок 1 сингла)**: `GameStateSnapshot` вместе с `CellState`, `MoveAction`, `Action`,
+   `TickResult`, `GhostPiece` удалён из `types.ts` как неиспользуемый (`docs/SINGLE_PLAYER_DECISIONS.md`, E2).
+8. ~~`docs/tsc-frontend.log` — нечитаемый бинарный артефакт, упоминается как результат проверки типов~~ —
+   **закрыто (блок 1 сингла)**: файл удалён из рабочего каталога (он был gitignored, в истории не попадал);
+   проверка типов фиксируется выводом `npx.cmd vue-tsc --noEmit` (`exit 0`).
 9. Фаза 3 (мультиплеер) не начата: WebSocket-сервер поднят и проксируется, но `GameServer.handleAction` — заглушка, фронтенд сокет не открывает.
 10. ~~Эндпоинта самодиагностики не было: `GET /api/health` не являлся маршрутом, SPA catch-all
     отдавал на него HTML~~ — **закрыто**: добавлен `backend/src/routes/healthRouter.ts`
@@ -435,3 +446,39 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
    `jest.fn()` (`frontend/tests/unit/renderer.test.ts`), таймеры в тестах не мокются.
 5. Бандл фронтенда пересобран vite 8: `99.13 kB` JS / `6.62 kB` CSS против `99.99 kB` / `6.77 kB` на vite 5
    (53 → 54 модуля). Хэши файлов изменились только из-за версии сборщика.
+
+### 12.8 Программа «сингл — полностью»: блок 1 (типы и расчистка)
+
+Рамки работы заданы пользователем: мультиплеер вынесен за скобки, решается только одиночная игра
+(«MP (старый и новый дизайн) — отдельная тема, будет решаться на старте MP»). Решение-лист и
+принятые по нему решения зафиксированы в `docs/SINGLE_PLAYER_DECISIONS.md`.
+
+Блок 1 — E1, E2, E3, E4, A9, B4 (механику A1–A8, UI C1–C6, бэкенд D1–D2 блоки 2–7 не трогали):
+
+| Файл | Изменение |
+|---|---|
+| `frontend/src/shared/engine/game-engine.ts` | `handleCommand` вместо сборки `handlerMap` — `switch` с сужением типа (`StartGame → startGame(command)`, `MovePiece → movePiece(command)`, `RotatePiece` с проверкой `payload.direction`, `SoftDrop`/`HardDrop`/`Tick`/`PauseGame`/`ResumeGame`, неизвестное — игнор). Удалены `isCommandType()`, `export type CommandHandler`, `export type QueryHandler` и обёртка `hasCollision`. `startGame` принимает `StartGameCommand` (старый `payload.hardcore` поддержан явным кастом), `movePiece` — `MoveCommand` без псевдо-направлений `rotateCW`/`rotateCCW`, `softDrop()`/`hardDrop()` — без параметров. Guard «после Game Over» остался первым |
+| `frontend/src/shared/domain/board.ts` | `hasCollision(piece, pos) = !isValidPosition(piece, pos)`; проверка `locked` в `isValidPosition` упрощена до `if (this.cells[boardY][boardX].locked) return false`; импорт — только `Cell, Piece, Position` |
+| `frontend/src/shared/domain/types.ts` | удалены неиспользуемые `CellState`, `GameStateSnapshot`, `MoveAction`, `Action`, `TickResult`, `GhostPiece` (119 → 79 строк) |
+| `frontend/src/shared/cqrs/commands.ts` | `MoveCommand.payload.direction`: `string` → `'left' \| 'right' \| 'down'` |
+| `frontend/src/stores/gameStore.ts` | `handleCommand(cmd: any)` → `handleCommand(cmd: AnyCommand)`; удалены `CellDTO`, `KeyHandler`, `tickInterval`/`animFrame`/`lastTime`; `↑`/`x`/`w` → `RotatePiece{cw}`, `z`/`q` → `RotatePiece{ccw}` (было: `MovePiece{direction:'rotateCW'}`); недостижимая ветка `Escape` убрана — `Esc` обрабатывает `GameView.vue`; импорт `CellState`/`Cell`/`GameConfig` убран |
+| `frontend/src/components/GameBoard.vue` | `{ type: 'Tick' }` → `{ type: CommandType.Tick }` (после типизации `handleCommand` строковый литерал больше не проходит `vue-tsc`) |
+| `frontend/src/App.vue` | удалены мёртвые `nextView()` и `viewOrder` + неиспользуемый импорт `computed` |
+| `frontend/tests/unit/engine.test.ts`, `frontend/tests/unit/rotation-kicks.test.ts` | команды отправляются через `CommandType.*` вместо строковых литералов; в `engine.test.ts` убран неиспользуемый импорт `GameState` |
+| `docs/tsc-frontend.log` | удалён (gitignored артефакт, в истории git не был) |
+| `docs/SINGLE_PLAYER_DECISIONS.md` | **добавлен**: решение-лист A1–A11 / B1–B4 / C1–C7 / D1–D2 / E1–E5 со статусами и выводом проверок |
+
+Проверки блока 1 (фактический вывод):
+
+| Команда | Результат |
+|---|---|
+| `npx.cmd vue-tsc --noEmit` (`frontend/`) | пустой вывод, `exit 0` |
+| `npx.cmd jest --runInBand` (`frontend/`) | `Test Suites: 6 passed, 6 total` · `Tests: 109 passed, 109 total` |
+| `npx.cmd tsc --noEmit` (`backend/`) | `exit 0` |
+| `npx.cmd jest --runInBand` (`backend/`) | `Test Suites: 3 passed, 3 total` · `Tests: 36 passed, 36 total` |
+| grep удалённых идентификаторов по `frontend/**.{ts,vue}` | `No matches found` |
+
+Ограничение среды, выявленное при проверке: `npm.cmd test` в песочнице падает с `Error: spawn EPERM`
+(`jest-worker` не может создать воркеров) — юнит-тесты запускаются `npx.cmd jest --runInBand`.
+Тесты фронтенда при этом **не типизируются** (`ts-jest` с `isolatedModules: true`, тесты вне
+`include` в `frontend/tsconfig.json`), поэтому типизация проверяется отдельно — `npx.cmd vue-tsc --noEmit`.

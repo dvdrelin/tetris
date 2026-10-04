@@ -16,7 +16,8 @@ export interface Command {
 
 export interface MoveCommand extends Command {
   type: CommandType.MovePiece;
-  payload: { direction: string };
+  // Rotation is not a movement direction: it has its own RotatePiece command.
+  payload: { direction: 'left' | 'right' | 'down' };
 }
 
 export interface RotateCommand extends Command {

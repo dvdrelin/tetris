@@ -1,20 +1,14 @@
 import {
-  GameState, Position, RotationState, GameMode, GameConfig,
-  Cell, CellState, Piece, PieceType, TickResult
+  GameState, Position, RotationState, GameMode,
+  Cell, Piece, PieceType
 } from '../domain/types';
 import { BoardManager } from '../domain/board';
 import { PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '../domain/pieces';
-import { CommandType, AnyCommand, RotateCommand } from '../cqrs/commands';
+import {
+  AnyCommand, CommandType, MoveCommand, StartGameCommand
+} from '../cqrs/commands';
 import { AnyQuery, QueryType } from '../cqrs/queries';
 import { GAME_CONFIG, SCORING_CONFIG } from '../config/game-config';
-
-// Type guard for command types
-function isCommandType(type: string): type is CommandType {
-  return Object.values(CommandType).includes(type as CommandType);
-}
-
-export type CommandHandler = (command: AnyCommand) => void;
-export type QueryHandler = (query: AnyQuery) => unknown;
 
 export interface GameEngineCallbacks {
   onStateChange?: () => void;
@@ -102,30 +96,43 @@ export class GameEngine {
   // ====== CQRS Command Handlers ======
 
   handleCommand(command: AnyCommand): void {
-    if (!isCommandType(command.type)) return;
-
     // Once the game is over (or before it starts) only StartGame may reach the engine.
     if (command.type !== CommandType.StartGame && (this._isGameOver || !this._isRunning)) return;
 
-    const handlerMap: Record<string, () => void> = {
-      [CommandType.StartGame]: () => this.startGame(command),
-      [CommandType.MovePiece]: () => this.movePiece(command),
-      [CommandType.RotatePiece]: () => {
+    // One switch instead of a string-keyed handler map: TypeScript narrows `command`
+    // to its concrete command type in every branch, so handlers get real parameter types.
+    switch (command.type) {
+      case CommandType.StartGame:
+        this.startGame(command);
+        return;
+      case CommandType.MovePiece:
+        this.movePiece(command);
+        return;
+      case CommandType.RotatePiece: {
         // A malformed direction is ignored instead of silently turning counter-clockwise.
-        const direction = (command as RotateCommand).payload?.direction;
+        const direction = command.payload?.direction;
         if (direction !== 'cw' && direction !== 'ccw') return;
         this.rotatePiece(this.currentRotation.index, direction === 'cw' ? 1 : -1);
-      },
-      [CommandType.SoftDrop]: () => this.softDrop(command),
-      [CommandType.HardDrop]: () => this.hardDrop(command),
-      [CommandType.Tick]: () => this.tick(),
-      [CommandType.PauseGame]: () => this.pauseGame(),
-      [CommandType.ResumeGame]: () => this.resumeGame(),
-    };
-
-    const handler = handlerMap[command.type];
-    if (handler) {
-      handler();
+        return;
+      }
+      case CommandType.SoftDrop:
+        this.softDrop();
+        return;
+      case CommandType.HardDrop:
+        this.hardDrop();
+        return;
+      case CommandType.Tick:
+        this.tick();
+        return;
+      case CommandType.PauseGame:
+        this.pauseGame();
+        return;
+      case CommandType.ResumeGame:
+        this.resumeGame();
+        return;
+      default:
+        // Unknown command type: ignore it.
+        return;
     }
   }
 
@@ -146,9 +153,10 @@ export class GameEngine {
 
   // ====== Game Lifecycle ======
 
-  private startGame(command: any): void {
+  private startGame(command: StartGameCommand): void {
     // The store sends payload.mode (GameMode); `payload.hardcore` is kept as a legacy alias.
-    const requested = command.payload?.mode ?? (command.payload?.hardcore ? GameMode.Hardcore : GameMode.Arcade);
+    const payload = command.payload as { mode?: number; hardcore?: boolean } | undefined;
+    const requested = payload?.mode ?? (payload?.hardcore ? GameMode.Hardcore : GameMode.Arcade);
     this.mode = requested === GameMode.Hardcore ? GameMode.Hardcore : GameMode.Arcade;
     this.reset();
     this._isRunning = true;
@@ -184,7 +192,7 @@ export class GameEngine {
 
   // ====== Movement ======
 
-  private movePiece(command: any): void {
+  private movePiece(command: MoveCommand): void {
     if (!this.currentPiece || !this._isRunning || this._isPaused) return;
     const direction = command.payload?.direction;
     if (!direction) return;
@@ -194,16 +202,9 @@ export class GameEngine {
       case 'left': dx = -1; break;
       case 'right': dx = 1; break;
       case 'down': dy = 1; break;
-      case 'rotateCW': {
-        this.rotatePiece(this.currentRotation.index, 1);
-        return;
-      }
-      case 'rotateCCW': {
-        this.rotatePiece(this.currentRotation.index, -1);
-        return;
-      }
       default:
         // Unknown movement direction: ignore the command rather than treating it as a move.
+        // Rotation is not a movement alias any more — it arrives as RotatePiece.
         return;
     }
 
@@ -253,7 +254,7 @@ export class GameEngine {
     }
   }
 
-  private softDrop(_command: any): void {
+  private softDrop(): void {
     if (!this.currentPiece || !this._isRunning || this._isPaused) return;
     const nextPos = { x: this.currentPos.x, y: this.currentPos.y + 1 };
     if (this.isValidPosition(this.currentPiece, nextPos)) {
@@ -266,7 +267,7 @@ export class GameEngine {
     }
   }
 
-  private hardDrop(_command: any): void {
+  private hardDrop(): void {
     if (!this.currentPiece || !this._isRunning || this._isPaused) return;
     let dropDist = 0;
     while (this.isValidPosition(this.currentPiece, { x: this.currentPos.x, y: this.currentPos.y + dropDist + 1 })) {
@@ -369,10 +370,6 @@ export class GameEngine {
 
   isValidPosition(piece: Piece, pos: Position): boolean {
     return this.boardManager.isValidPosition(piece, pos);
-  }
-
-  hasCollision(piece: Piece, pos: Position): boolean {
-    return this.boardManager.hasCollision(piece, pos);
   }
 
   // ====== Getters ======

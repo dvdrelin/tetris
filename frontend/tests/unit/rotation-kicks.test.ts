@@ -2,6 +2,7 @@ import { GameEngine } from '../../src/shared/engine/game-engine';
 import { BoardManager } from '../../src/shared/domain/board';
 import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
 import { GameMode, PieceType } from '../../src/shared/domain/types';
+import { CommandType } from '../../src/shared/cqrs/commands';
 
 // Published SRS wall-kick tables, written in the classic form where +y is UP.
 // The engine uses +y DOWN, so the reference y is negated when comparing.
@@ -42,7 +43,7 @@ function createEngine(mode: GameMode = GameMode.Arcade) {
   (engine as any).pieceFactory = new PieceFactoryProvider();
   (engine as any).width = W;
   (engine as any).height = H;
-  engine.handleCommand({ type: 'StartGame', payload: { mode } });
+  engine.handleCommand({ type: CommandType.StartGame, payload: { mode } });
   return engine;
 }
 
@@ -92,7 +93,7 @@ describe('SRS wall kicks (engine vs published tables)', () => {
               if (!engine.isValidPosition(buildPiece(type, shape), { x, y })) continue;
               forceState(engine, type, from, x, y);
               const expected = reference(engine, type, from, dir, x, y);
-              engine.handleCommand({ type: 'RotatePiece', payload: { direction: dir === 1 ? 'cw' : 'ccw' } });
+              engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: dir === 1 ? 'cw' : 'ccw' } });
               const got = { rot: engine.getCurrentRotation().index, pos: engine.getCurrentPos() };
               const moved = got.rot !== from || got.pos.x !== x || got.pos.y !== y;
               checked++;
@@ -118,8 +119,8 @@ describe('SRS wall kicks (engine vs published tables)', () => {
       for (let r = 0; r < 4; r++) {
         const engine = createEngine();
         forceState(engine, type, r, 4, 5);
-        engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
-        engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'ccw' } });
+        engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
+        engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'ccw' } });
         expect(engine.getCurrentRotation().index).toBe(r);
         expect(engine.getCurrentPos()).toEqual({ x: 4, y: 5 });
         expect(cellsOf(engine)).toEqual(cellsOf((() => {
@@ -134,7 +135,7 @@ describe('SRS wall kicks (engine vs published tables)', () => {
   test('I against the right wall uses the SRS -1 kick (1 -> 2)', () => {
     const engine = createEngine();
     forceState(engine, PieceType.I, 1, 7, 3); // vertical I occupying column 9
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
     expect(engine.getCurrentRotation().index).toBe(2);
     expect(engine.getCurrentPos()).toEqual({ x: 6, y: 3 });
     expect(cellsOf(engine)).toEqual(['5,6', '5,7', '5,8', '5,9']);
@@ -143,7 +144,7 @@ describe('SRS wall kicks (engine vs published tables)', () => {
   test('I against the right wall uses the SRS -1 kick (1 -> 0)', () => {
     const engine = createEngine();
     forceState(engine, PieceType.I, 1, 7, 3);
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'ccw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'ccw' } });
     expect(engine.getCurrentRotation().index).toBe(0);
     expect(engine.getCurrentPos()).toEqual({ x: 6, y: 3 });
     expect(cellsOf(engine)).toEqual(['4,6', '4,7', '4,8', '4,9']);
@@ -152,7 +153,7 @@ describe('SRS wall kicks (engine vs published tables)', () => {
   test('T on the floor uses the SRS (-1,+1) kick (0 -> 1)', () => {
     const engine = createEngine();
     forceState(engine, PieceType.T, 0, 5, 18); // bar on the last row
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
     expect(engine.getCurrentRotation().index).toBe(1);
     expect(engine.getCurrentPos()).toEqual({ x: 4, y: 17 });
     expect(cellsOf(engine)).toEqual(['17,5', '18,5', '18,6', '19,5']);
@@ -162,7 +163,7 @@ describe('SRS wall kicks (engine vs published tables)', () => {
     const engine = createEngine();
     (engine as any).boardManager.setCell(0, 17, 1, true); // blocks the only kick that would fit
     forceState(engine, PieceType.T, 0, 0, 18); // left wall + floor
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
     expect(engine.getCurrentRotation().index).toBe(0);
     expect(engine.getCurrentPos()).toEqual({ x: 0, y: 18 });
     expect(engine.isGameOver()).toBe(false); // Arcade: refusal is not fatal
@@ -175,7 +176,7 @@ describe('SRS wall kicks (engine vs published tables)', () => {
         forceState(engine, type, r, 3, 5);
         for (let i = 0; i < 4; i++) {
           expect((engine as any).currentPiece.shape.flat().filter((v: number) => v === 1)).toHaveLength(4);
-          engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
+          engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
         }
       }
     }
@@ -190,7 +191,7 @@ describe('soft drop and locking', () => {
     board.setCell(4, 4, 5, true);
     board.setCell(5, 4, 5, true);
     const before = engine.getScore();
-    engine.handleCommand({ type: 'SoftDrop' }); // blocked: piece already rests on the blocks
+    engine.handleCommand({ type: CommandType.SoftDrop }); // blocked: piece already rests on the blocks
     expect(engine.getScore()).toBe(before);
     const cells = board.getCells();
     expect(cells[4][4].value).toBe(5);
@@ -200,7 +201,7 @@ describe('soft drop and locking', () => {
   test('soft drop to the floor locks the whole piece, not a truncated one', () => {
     const engine = createEngine();
     forceState(engine, PieceType.I, 1, 3, 0); // vertical I
-    for (let i = 0; i < 30; i++) engine.handleCommand({ type: 'SoftDrop' });
+    for (let i = 0; i < 30; i++) engine.handleCommand({ type: CommandType.SoftDrop });
     const cells = (engine as any).boardManager.getCells() as any[][];
     const locked = cells.flatMap((row, y) => row.map((c, x) => (c.locked ? `${y},${x}` : null)).filter(Boolean));
     expect(locked).toEqual(['16,5', '17,5', '18,5', '19,5']);
@@ -221,7 +222,7 @@ describe('soft drop and locking', () => {
 describe('game over handling', () => {
   test('StartGame honours payload.mode (Hardcore actually activates)', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: GameMode.Hardcore } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Hardcore } });
     expect(engine.getGameState().mode).toBe(GameMode.Hardcore);
   });
 
@@ -229,7 +230,7 @@ describe('game over handling', () => {
     const engine = createEngine(GameMode.Hardcore);
     (engine as any).boardManager.setCell(0, 17, 1, true);
     forceState(engine, PieceType.T, 0, 0, 18);
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
     expect(engine.isGameOver()).toBe(true);
     expect(engine.isRunning()).toBe(false);
   });
@@ -238,12 +239,12 @@ describe('game over handling', () => {
     const engine = createEngine(GameMode.Hardcore);
     (engine as any).boardManager.setCell(0, 17, 1, true);
     forceState(engine, PieceType.T, 0, 0, 18);
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'cw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
     const score = engine.getScore();
-    engine.handleCommand({ type: 'SoftDrop' });
-    engine.handleCommand({ type: 'HardDrop' });
-    engine.handleCommand({ type: 'Tick' });
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'right' } });
+    engine.handleCommand({ type: CommandType.SoftDrop });
+    engine.handleCommand({ type: CommandType.HardDrop });
+    engine.handleCommand({ type: CommandType.Tick });
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } });
     expect(engine.getScore()).toBe(score);
     expect(engine.getCurrentPos()).toEqual({ x: 0, y: 18 });
     expect(engine.getCurrentRotation().index).toBe(0);
@@ -253,17 +254,17 @@ describe('game over handling', () => {
     const engine = createEngine(GameMode.Arcade);
     forceState(engine, PieceType.T, 0, 4, 5);
 
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'nonsense' } } as any);
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'nonsense' } } as any);
     expect(engine.getCurrentRotation().index).toBe(0);
 
-    engine.handleCommand({ type: 'RotatePiece', payload: {} } as any);
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: {} } as any);
     expect(engine.getCurrentRotation().index).toBe(0);
 
-    engine.handleCommand({ type: 'RotatePiece', payload: { direction: 'ccw' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'ccw' } });
     expect(engine.getCurrentRotation().index).toBe(3);
 
     // An unknown MovePiece direction must not move the piece either.
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'sideways' } } as any);
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'sideways' } } as any);
     expect(engine.getCurrentPos()).toEqual({ x: 4, y: 5 });
   });
 });

@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { GameEngine } from '../shared/engine/game-engine'
-import { Cell, CellState, GameMode, GameConfig, GameState, Particle } from '../shared/domain/types'
-import { CommandType } from '../shared/cqrs/commands'
+import { GameMode, GameState, Particle } from '../shared/domain/types'
+import { AnyCommand, CommandType } from '../shared/cqrs/commands'
 import { GAME_CONFIG } from '../shared/config/game-config'
 
 const CELL_SIZE = 24
@@ -28,11 +28,6 @@ export interface GameStateDTO {
   ghostY: number
 }
 
-export interface CellDTO {
-  value: number
-  locked: boolean
-}
-
 export interface CellStyle {
   backgroundColor: string
   borderColor: string
@@ -49,11 +44,6 @@ export const CELL_COLORS: Record<number, CellStyle> = {
   5: { backgroundColor: '#ff4444', borderColor: '#cc0000', boxShadow: '0 0 10px #ff4444, inset 0 0 4px rgba(255,255,255,0.3)', color: '#fff' },
   6: { backgroundColor: '#4444ff', borderColor: '#0000cc', boxShadow: '0 0 10px #4444ff, inset 0 0 4px rgba(255,255,255,0.3)', color: '#fff' },
   7: { backgroundColor: '#ff8800', borderColor: '#cc6600', boxShadow: '0 0 10px #ff8800, inset 0 0 4px rgba(255,255,255,0.3)', color: '#fff' },
-}
-
-export interface KeyHandler {
-  keyDown?: (e: KeyboardEvent) => void
-  keyUp?: (e: KeyboardEvent) => void
 }
 
 export const useGameStore = defineStore('game', () => {
@@ -79,9 +69,6 @@ export const useGameStore = defineStore('game', () => {
   const particles = ref<Particle[]>([])
   const playerName = ref<string>('Игрок')
   let engineInstance: GameEngine | null = null
-  let tickInterval: number | null = null
-  let animFrame: number | null = null
-  let lastTime: number = 0
 
   function init() {
     engineInstance = new GameEngine({
@@ -173,7 +160,7 @@ export const useGameStore = defineStore('game', () => {
     return y
   }
 
-  function handleCommand(cmd: any) {
+  function handleCommand(cmd: AnyCommand) {
     if (!engineInstance) return
     engineInstance.handleCommand(cmd)
     updateState()
@@ -197,17 +184,15 @@ export const useGameStore = defineStore('game', () => {
       case 'a': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } }); break
       case 'ArrowRight':
       case 'd': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } }); break
-      case 'ArrowUp': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'rotateCW' } }); break
+      case 'ArrowUp':
+      case 'x':
+      case 'w': handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } }); break
       case 'ArrowDown':
       case 's': handleCommand({ type: CommandType.SoftDrop }); break
       case ' ': handleCommand({ type: CommandType.HardDrop }); break
-      case 'x':
       case 'z':
-      case 'c':
-      case 'w': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'rotateCW' } }); break
       case 'q': handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'ccw' } }); break
       case 'p':
-      case 'Escape':
         togglePause()
         break
     }

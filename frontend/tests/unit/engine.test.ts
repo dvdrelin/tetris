@@ -1,7 +1,8 @@
 import { GameEngine } from '../../src/shared/engine/game-engine';
 import { BoardManager } from '../../src/shared/domain/board';
 import { PieceFactoryProvider } from '../../src/shared/domain/pieces';
-import { GameState, PieceType } from '../../src/shared/domain/types';
+import { PieceType } from '../../src/shared/domain/types';
+import { CommandType } from '../../src/shared/cqrs/commands';
 
 const REAL_CONFIG = {
   boardWidth: 10,
@@ -29,13 +30,13 @@ describe('GameEngine', () => {
     const engine = createEngine();
     (engine as any)._isGameOver = true;
     (engine as any)._isRunning = true;
-    engine.handleCommand({ type: 'SoftDrop' });
+    engine.handleCommand({ type: CommandType.SoftDrop });
     expect(engine.getScore()).toBe(0);
   });
 
   test('should start game and spawn piece', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     const state = engine.getGameState();
     expect(state.isRunning).toBe(true);
     expect(state.isGameOver).toBe(false);
@@ -44,9 +45,9 @@ describe('GameEngine', () => {
 
   test('should move piece right from center', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     const initialPos = engine.getCurrentPos();
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'right' } });
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } });
     const newPos = engine.getCurrentPos();
     // Move right: x advances by 1 or stays same (if blocked by wall)
     // The piece spawns centered, so moving right from center should work
@@ -55,11 +56,11 @@ describe('GameEngine', () => {
 
   test('should move piece right twice and reach edge', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     const initialPos = engine.getCurrentPos();
     // Move right twice
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'right' } });
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'right' } });
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } });
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } });
     const newPos = engine.getCurrentPos();
     // Should have moved at least 2 positions right (or to the wall)
     expect(newPos.x).toBeGreaterThanOrEqual(initialPos.x);
@@ -67,28 +68,28 @@ describe('GameEngine', () => {
 
   test('should not move piece left from left edge', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     const initialPos = engine.getCurrentPos();
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'left' } });
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
     const newPos = engine.getCurrentPos();
     expect(newPos.x).toBe(initialPos.x); // blocked by wall
   });
 
   test('should pause and resume game', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
-    engine.handleCommand({ type: 'PauseGame' });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.PauseGame });
     expect(engine.isPaused()).toBe(true);
-    engine.handleCommand({ type: 'ResumeGame' });
+    engine.handleCommand({ type: CommandType.ResumeGame });
     expect(engine.isPaused()).toBe(false);
   });
 
   test('should not move piece while paused', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
-    engine.handleCommand({ type: 'PauseGame' });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.PauseGame });
     const initialPos = engine.getCurrentPos();
-    engine.handleCommand({ type: 'MovePiece', payload: { direction: 'right' } });
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } });
     const newPos = engine.getCurrentPos();
     expect(newPos.x).toBe(initialPos.x);
   });
@@ -101,34 +102,34 @@ describe('GameEngine', () => {
 
   test('should increment score on soft drop', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     const initialScore = engine.getScore();
-    engine.handleCommand({ type: 'SoftDrop' });
+    engine.handleCommand({ type: CommandType.SoftDrop });
     const newScore = engine.getScore();
     expect(newScore).toBeGreaterThanOrEqual(initialScore + 10);
   });
 
   test('should track level', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     expect(engine.getLevel()).toBe(1);
   });
 
   test('should track lines cleared', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     expect(engine.getLinesCleared()).toBe(0);
   });
 
   test('should track combo', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     expect(engine.getCombo()).toBe(0);
   });
 
   test('should return valid game state', () => {
     const engine = createEngine();
-    engine.handleCommand({ type: 'StartGame', payload: { mode: 0 } });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: 0 } });
     const state = engine.getGameState();
     expect(state).toHaveProperty('board');
     expect(state).toHaveProperty('score');

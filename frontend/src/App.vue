@@ -1,5 +1,5 @@
 <script lang="ts">
-import { defineComponent, computed, ref, onMounted, onUnmounted } from 'vue'
+import { defineComponent, ref, onMounted, onUnmounted } from 'vue'
 import { useGameStore } from './stores/gameStore'
 import MenuView from './components/MenuView.vue'
 import GameView from './components/GameView.vue'
@@ -43,13 +43,6 @@ export default defineComponent({
     function goToLeaderboard() {
       currentView.value = 'leaderboard'
     }
-
-    function nextView() {
-      const idx = viewOrder.value.indexOf(currentView.value)
-      currentView.value = viewOrder.value[(idx + 1) % viewOrder.value.length]
-    }
-
-    const viewOrder = computed<ViewName[]>(() => ['menu', 'game', 'leaderboard'])
 
     // Cosmic breathing — gentle, dark, peaceful
     const COSMIC_CYCLE = 12000 // 12s full cycle (slow breathing)
@@ -159,7 +152,6 @@ export default defineComponent({
       showGame,
       showMainMenu,
       goToLeaderboard,
-      nextView,
     }
   },
   components: {

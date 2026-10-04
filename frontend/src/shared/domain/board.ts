@@ -1,4 +1,4 @@
-import { Cell, CellState, GameState, Piece, Position } from './types';
+import { Cell, Piece, Position } from './types';
 
 const INITIAL_BOARD = (width: number, height: number): Cell[][] =>
   Array.from({ length: height }, () =>
@@ -49,7 +49,9 @@ export class BoardManager {
     }
   }
 
-  // Check if piece placement is valid (not overlapping, within bounds)
+  // Check if piece placement is valid (not overlapping, within bounds).
+  // Cells above the visible board (boardY < 0) are not allowed: a piece spawns at y = 0
+  // and never enters the hidden rows.
   isValidPosition(piece: Piece, pos: Position): boolean {
     for (let r = 0; r < piece.shape.length; r++) {
       for (let c = 0; c < piece.shape[r].length; c++) {
@@ -57,29 +59,16 @@ export class BoardManager {
           const boardX = pos.x + c;
           const boardY = pos.y + r;
           if (boardX < 0 || boardX >= this.width || boardY < 0 || boardY >= this.height) return false;
-          if (boardY >= 0 && boardY < this.height && this.cells[boardY][boardX].locked) return false;
+          if (this.cells[boardY][boardX].locked) return false;
         }
       }
     }
     return true;
   }
 
-  // Check collision with current piece
+  // Collision is exactly "this placement is not valid" — one rule, one implementation.
   hasCollision(piece: Piece, pos: Position): boolean {
-    for (let r = 0; r < piece.shape.length; r++) {
-      for (let c = 0; c < piece.shape[r].length; c++) {
-        if (piece.shape[r][c]) {
-          const boardX = pos.x + c;
-          const boardY = pos.y + r;
-          if (boardY >= 0 && boardY < this.height && boardX >= 0 && boardX < this.width) {
-            if (this.cells[boardY][boardX].locked) return true;
-          }
-          if (boardY < 0) continue; // above board is fine
-          if (boardX < 0 || boardX >= this.width || boardY >= this.height) return true;
-        }
-      }
-    }
-    return false;
+    return !this.isValidPosition(piece, pos);
   }
 
   // Count and lock full rows

@@ -125,10 +125,12 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 ### 4.1 Доменный слой (`frontend/src/shared`)
 Чистая, без-UI логика игры:
 - **`types.ts`** — все типы и enum'ы проекта: `Cell`, `Position`, `Piece`, `GameState`,
-  `MoveAction`, `Action`, `TickResult`, `Particle`, конфиги (`GameConfig`, `ScoringConfig`,
-  `SpeedConfig`) и enum'ы `CellState`, `PieceType`, `GameMode`.
+  `Particle`, конфиги (`GameConfig`, `ScoringConfig`, `SpeedConfig`) и enum'ы `PieceType`, `GameMode`.
+  Мёртвые `CellState`, `GameStateSnapshot`, `MoveAction`, `Action`, `TickResult`, `GhostPiece`
+  удалены (блок 1 сингла, `docs/SINGLE_PLAYER_DECISIONS.md` E2).
 - **`board.ts`** — класс `BoardManager`: создание/сброс сетки, `setCell`/`setCells`, валидация
-  позиции (`isValidPosition`), коллизии (`hasCollision`), `clearLines` (удаление заполненных строк),
+  позиции (`isValidPosition`), коллизии (`hasCollision` = `!isValidPosition`, одно правило —
+  одна реализация), `clearLines` (удаление заполненных строк),
   `getSnapshot`/`getCells`. **Ghost-расчёта здесь нет** (в предыдущей редакции документа он был
   приписан `board.ts` ошибочно): позиция ghost вычисляется в Pinia-сторе — `stores/gameStore.ts:152`
   (`getGhostY`), а движок `ghostY` не заполняет. Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
@@ -148,8 +150,10 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 ### 4.3 Игровой движок (`GameEngine`, `game-engine.ts`)
 Сердце логики. Хранит приватное состояние (сетка, текущая фигура, позицию, вращение,
 счёт, уровень, линии, комбо, флаги) и exposes его через:
-- **Команды** — `handleCommand()` dispatch по `handlerMap`: StartGame, MovePiece,
-  RotatePiece (+ wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop, HardDrop, Tick (auto-drop в Arcade), Pause/Resume.
+- **Команды** — `handleCommand()` = `switch` с сужением типа (не `handlerMap`): StartGame, MovePiece
+  (`left`/`right`/`down`), RotatePiece (+ wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop,
+  HardDrop, Tick (auto-drop в Arcade), Pause/Resume. Вращение больше не проходит через `MovePiece`
+  (блок 1 сингла, B4).
 - **Запросы** — `handleQuery()`: GetGameState / GetNextPiece / GetBoardState.
 - Вспомогательное: спавн фигур (`spawnNextPiece`, проверка game over), размещение и
   подсчёт очков (`placePiece`, `calculateScore` с комбо-множителем). **Поворот** — в

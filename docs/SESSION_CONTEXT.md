@@ -8,7 +8,10 @@
 сборка и деплой), `9db00a3` (внешний API-хост выведен из проекта: убран git-remote, `app.js` → same-origin
 `/api`), `b06f4fb` (уточнение утверждений об окружении), обновление `vue-tsc` до 3.3.12 с починкой
 найденных типов в `App.vue` (`docs/AUDIT_REPORT.md` §12.6) и обновление зависимостей с устранением всех
-уязвимостей `npm audit` (§12.7).
+уязвимостей `npm audit` (§12.7). Далее: `ea56fc7` (PM2-контур удалён, `deploy.sh` переведён на
+`git clone` + `rsync` + `docker compose`), `b0b7ac9` (`node:20-alpine` → `node:22-alpine`),
+`5b9418a` (реальный `GET /api/health`, JSON 200/503), `4344f3d` (исключения `.dockerignore` +
+build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих деплоях в документах).
 Историческая справка: до аудита HEAD был `e570ee8` («Fix: deploy.sh — skip vue-tsc…», дата `2026-09-13`);
 упоминавшийся ранее `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный, но он на 24 коммита позади
 того HEAD. Незакоммиченных изменений P0/P1/P3 больше нет; полный список правок — `docs/AUDIT_REPORT.md` §10
@@ -264,25 +267,41 @@ pm2 unstartup systemd       # Removed "/etc/systemd/system/multi-user.target.wan
 Ранее использовавшийся Amvera-хостинг выведен полностью: упоминаний в репозитории нет (проверено по
 всем файлам, исключая `node_modules/`, `.git/`, `dist/`).
 
+## Программа «сингл — полностью» (фаза 5)
+
+Рамки заданы пользователем: «оставь MP за скобками. сейчас надо решить с синглом — полностью.
+MP (старый и новый дизайн) — отдельная тема, будет решаться на старте MP». Решение-лист и принятые
+решения — `docs/SINGLE_PLAYER_DECISIONS.md`, план блоков — `docs/PLAN.md` (Фаза 5), закрытое из аудита —
+`docs/AUDIT_REPORT.md` §12.8.
+
+**Блок 1 (коммит этого блока): типы и расчистка.** Изменены `game-engine.ts`, `board.ts`, `types.ts`,
+`commands.ts`, `gameStore.ts`, `App.vue`, `GameBoard.vue`, `tests/unit/engine.test.ts`,
+`tests/unit/rotation-kicks.test.ts`; удалён gitignored артефакт `docs/tsc-frontend.log`.
+Фронтенд и бэкенд после правок: `npx.cmd vue-tsc --noEmit` → exit 0 (пустой вывод),
+`npx.cmd jest --runInBand` во `frontend/` → `6 suites / 109 tests passed`,
+`npx.cmd tsc --noEmit` в `backend/` → exit 0, `npx.cmd jest --runInBand` в `backend/` → `3 suites / 36 tests passed`.
+Бэкенд в этом блоке не менялся, прод не пересобирается.
+
+**Особенность среды (важно для следующих проверок):** `npm.cmd test` в песочнице падает с
+`Error: spawn EPERM` в `jest-worker/ChildProcessWorker.initialize` — воркеры jest не создаются.
+Юнит-тесты запускаются `npx.cmd jest --runInBand`. Кроме того, тесты фронтенда не типизируются
+(`frontend/jest.config.js`: `ts-jest` с `isolatedModules: true`; `frontend/tsconfig.json` `include`
+не покрывает `tests/`), поэтому типизация проверяется отдельно: `npx.cmd vue-tsc --noEmit` (frontend)
+и `npx.cmd tsc --noEmit` (backend). Отдельного npm-скрипта `typecheck` в проекте нет.
+
 ## Следующий шаг
 
-### Phase 3: Мультиплеер
+### Блок 2: тайминг и гравитация (A1, A2, A8)
 
-Пользователь запросил мультиплеер через multi-agent подход.
+1. `frontend/src/shared/config/game-config.ts` — общая функция `dropInterval(level, mode)`
+   (+ `HARDCORE_SPEED_MULTIPLIER`), чтобы интервал знал только движок.
+2. `Tick` получает `payload: { dt: number }`; в движке — `elapsedMs` / `gravityAccumulator` и
+   цикл `while (acc >= interval)`; `autoDrop()` без неиспользуемого параметра `interval`
+   (остаток §12.4 п.6).
+3. `GameBoard.vue` — каждый кадр передаёт `dt` и больше не считает ни интервалы, ни аккумулятор.
+4. `tick()` делает автопадение в **обоих** режимах; `MovePiece{down}` = soft drop (не смерть),
+   смерть в Hardcore — только от блокировки лево/право/поворот.
+5. Тесты на новое поведение — в том же коммите; затем `git commit` + `git push origin main`.
 
-**Архитектура:**
-- Lobby (lobbyStore.ts, LobbyView.vue) — список игроков, выбор, ready
-- Chat (chatStore.ts, ChatView.vue) — чат до начала PvP
-- Multiplayer game (multiplayerStore.ts, MultiplayerGameView.vue) — PvP с двумя board'ами
-- Backend room logic — broadcast actions, chat messages, room endpoints
-
-**План реализации:**
-1. Добавить WebSocket room логику в backend
-2. Создать frontend stores для lobby, chat, multiplayer
-3. Создать Vue компоненты: LobbyView, ChatView, MultiplayerGameView
-4. Интегрировать в App.vue
-
-**Рекомендуемый подход:** Multi-agent orchestration — разделить на подзадачи для бэкенда и фронтенда
-
-## Команда для начала
-Сначала проверь `npm run dev` и убедись что фронтенд и бэкенд запущены. Потом начни Phase 3.
+Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) — отдельная тема,
+решается на старте MP.
