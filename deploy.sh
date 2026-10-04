@@ -31,8 +31,13 @@
 #   rsync -a --delete --exclude=.git --exclude=node_modules --exclude=dist \
 #         --exclude=backend/data --exclude=nginx-proxy \
 #         /opt/neon-tetris-new/ /opt/neon-tetris/
+#   APP_VERSION="1.<YYMMDD>.<git short hash>"  (из клонированного репозитория)
 #   rm -rf /opt/neon-tetris-new
-#   cd /opt/neon-tetris && docker compose build && docker compose up -d
+#   cd /opt/neon-tetris && APP_VERSION=$APP_VERSION docker compose build && docker compose up -d
+#
+# APP_VERSION — build-арг Dockerfile, он попадает в ENV контейнера и отдаётся в
+# GET /api/health как "version" (формат 1.261004.317de99). Скрипт сверяет его с
+# реальным ответом /api/health: несовпадение = собран не тот коммит.
 #
 # `--exclude=backend/data` сохраняет scores.json (он примонтирован в контейнер),
 # `--exclude=nginx-proxy` сохраняет nginx-proxy/.env с EMAIL (адрес для Let's Encrypt),
@@ -133,6 +138,17 @@ run "mkdir -p $REMOTE_DIR && rsync -a --delete \
     --exclude=.git --exclude=node_modules --exclude=dist \
     --exclude=backend/data --exclude=nginx-proxy \
     $CLONE_DIR/ $REMOTE_DIR/"
+
+# APP_VERSION вычисляется из клонированного репозитория (в $REMOTE_DIR нет .git —
+# rsync исключает .git), поэтому читаем git-хэш до удаления $CLONE_DIR.
+log "Вычисляю APP_VERSION (формат 1.<YYMMDD>.<git short hash>)..."
+APP_VERSION=$(run "cd $CLONE_DIR && printf '1.%s.%s' \"\$(date -u +%y%m%d)\" \"\$(git rev-parse --short HEAD)\"" || echo "")
+if [[ -z "$APP_VERSION" ]]; then
+    warn "APP_VERSION не вычислен — health возьмёт version из backend/package.json"
+else
+    ok "APP_VERSION = $APP_VERSION"
+fi
+
 run "rm -rf $CLONE_DIR"
 ok "Файлы синхронизированы (backend/data и nginx-proxy не тронуты)"
 echo ""
@@ -141,7 +157,7 @@ echo ""
 # Шаг 3: Сборка и запуск контейнера
 # ---------------------------------------------------------------------------
 log "Собираю docker-образ и поднимаю контейнер..."
-run "cd $REMOTE_DIR && docker compose build && docker compose up -d"
+run "cd $REMOTE_DIR && APP_VERSION=$APP_VERSION docker compose build && docker compose up -d"
 ok "Контейнер поднят"
 echo ""
 
@@ -172,6 +188,15 @@ if [[ "$HEALTH_CODE" != "200" ]]; then
     err "GET /api/health вернул $HEALTH_CODE — ожидался 200 со статусом ok"
 fi
 ok "https://$HOST/api/health → 200: $(echo "$HEALTH_BODY" | tr -d '\n' | cut -c1-160)"
+
+HEALTH_VERSION=$(echo "$HEALTH_BODY" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4)
+if [[ -n "$APP_VERSION" && "$HEALTH_VERSION" == "$APP_VERSION" ]]; then
+    ok "version в /api/health = $HEALTH_VERSION — образ собран из этого коммита"
+elif [[ -n "$APP_VERSION" ]]; then
+    err "version в /api/health = '$HEALTH_VERSION', ожидался $APP_VERSION — контейнер собран не из того коммита"
+else
+    warn "version в /api/health = '$HEALTH_VERSION' (APP_VERSION не был передан)"
+fi
 echo ""
 
 log "Проверяю логи контейнера..."
@@ -179,7 +204,7 @@ run "docker logs --tail 15 $APP_CONTAINER"
 echo ""
 
 log "Проверяю внутренний порт приложения ($PORT) изнутри контейнера..."
-if ! run "docker exec $APP_CONTAINER node -e 'fetch(\"http://127.0.0.1:$PORT/api/health\").then(r=>r.json().then(b=>{console.log(\"api/health\", r.status, r.headers.get(\"content-type\"), b.status, JSON.stringify(b.checks)); if(r.status!==200){process.exit(1)}})).catch(e=>{console.error(e.message);process.exit(1)})'"; then
+if ! run "docker exec $APP_CONTAINER node -e 'fetch(\"http://127.0.0.1:$PORT/api/health\").then(r=>r.json().then(b=>{console.log(\"api/health\", r.status, r.headers.get(\"content-type\"), b.status, b.version, JSON.stringify(b.checks)); if(r.status!==200){process.exit(1)}})).catch(e=>{console.error(e.message);process.exit(1)})'"; then
     err "GET /api/health внутри контейнера не вернул 200 ok — приложение на порту $PORT нездорово"
 fi
 echo ""
@@ -212,6 +237,8 @@ echo -e " Приложение доступно по адресу:"
 echo -e "   ${GREEN}https://${HOST}/${NC}  (HTTP → HTTPS редирект)"
 echo -e "   ${GREEN}https://${HOST}/api/health${NC}  (JSON: статус, db, статика, websocket, runtime)"
 echo -e "   ${GREEN}https://${HOST}/api/scores${NC}  (JSON рекордов)"
+echo ""
+echo -e " Версия образа (GET /api/health -> \"version\"): ${GREEN}${HEALTH_VERSION}${NC}"
 echo ""
 echo -e " Управление (всё через Docker, PM2 на сервере нет):"
 echo -e "   ssh $USER@$HOST \"cd $REMOTE_DIR && docker compose ps\""

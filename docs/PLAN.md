@@ -13,7 +13,7 @@
 | Фаза 4: Docker + HTTPS деплой | ✅ Завершено |
 
 > **Поправка аудита (HEAD `e570ee8` + рабочие изменения).** Цифры фазы 2 исторические: актуально
-> 109 frontend unit + 34 backend unit (3 сюиты: `scoreService`, `gameRouter`, `health`) + 19 E2E
+> 109 frontend unit + 36 backend unit (3 сюиты: `scoreService`, `gameRouter`, `health`) + 19 E2E
 > (`docs/AUDIT_REPORT.md` §11, §12.1). Фазы 1–2 **не** включали
 > починку вращения боевого фронтенда: «финальная» система вращения из
 > `docs/ROTATION_SYSTEM_REFERENCE.md` была закоммичена только в legacy `app.js` (`04be72a`), тогда как
@@ -124,14 +124,18 @@ git clone --depth 1 https://github.com/dvdrelin/tetris.git /opt/neon-tetris-new
 rsync -a --delete --exclude=.git --exclude=node_modules --exclude=dist \
   --exclude=backend/data --exclude=nginx-proxy \
   /opt/neon-tetris-new/ /opt/neon-tetris/
+APP_VERSION="1.$(date -u +%y%m%d).$(git -C /opt/neon-tetris-new rev-parse --short HEAD)"
 rm -rf /opt/neon-tetris-new
-cd /opt/neon-tetris && docker compose build && docker compose up -d
+cd /opt/neon-tetris && APP_VERSION=$APP_VERSION docker compose build && docker compose up -d
 ```
 
 `deploy.sh` работает в тот же Docker-контур, который обслуживает домен: клонирует репозиторий на сервер,
-синхронизирует его `rsync`-ом с теми же исключениями, выполняет `docker compose build && docker compose up -d`
-и проверяет ответ `https://<HOST>/`, `GET https://<HOST>/api/health` (снаружи и изнутри контейнера),
-JSON-запрос к API и совпадение SHA-256 бандла «отдаётся через nginx» против «лежит в контейнере».
+синхронизирует его `rsync`-ом с теми же исключениями, вычисляет `APP_VERSION` в формате
+`1.<YYMMDD>.<git short hash>` (например `1.261004.317de99`), передаёт её build-аргом в
+`docker compose build && docker compose up -d` и проверяет ответ `https://<HOST>/`,
+`GET https://<HOST>/api/health` (снаружи и изнутри контейнера), совпадение `version` из health
+с вычисленной `APP_VERSION`, JSON-запрос к API и совпадение SHA-256 бандла «отдаётся через nginx»
+против «лежит в контейнере».
 PM2 в скрипте больше нет — PM2-контур удалён с сервера (см. `docs/SESSION_CONTEXT.md`, раздел «Один контур на сервере»).
 
 ### Что проверять после деплоя
@@ -141,6 +145,7 @@ PM2 в скрипте больше нет — PM2-контур удалён с �
 | `docker ps` | `neon-tetris`, `nginx-proxy`, `nginx-proxy-letsencrypt` — все `Up` |
 | `curl -s -o /dev/null -w '%{http_code}' https://ntetris.ddns.net/` | `200` |
 | `curl -s https://ntetris.ddns.net/api/health` | `200` + JSON `"status":"ok"` и `checks.db/static/websocket/runtime/api` со `"ok":true` (при проблеме — `503` + `"status":"degraded"`, тоже JSON) |
+| `"version"` в ответе `/api/health` | `1.<YYMMDD>.<git short hash>` деплояемого коммита (например `1.261004.317de99`); `1.0.0` означает, что образ собран без build-арга `APP_VERSION` |
 | `curl -s https://ntetris.ddns.net \| grep -o 'assets/[^"]*'` | хэши бандла, собранные этим деплоем |
 | `curl -s https://ntetris.ddns.net/api/scores` | JSON сохранённых рекордов (`/opt/neon-tetris/backend/data/scores.json` деплоем не перезаписывается) |
 | `wss://ntetris.ddns.net/ws` | успешный WebSocket handshake |

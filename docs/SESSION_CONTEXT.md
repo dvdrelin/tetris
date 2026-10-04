@@ -73,8 +73,8 @@
   неиспользуемый `ssh-mcp`. Конфиг Vite — `frontend/vite.config.mts` (ESM, alias через `import.meta.url`).
   Проверено после обновления: `npm run build` → exit 0, `npm run test` → 109 + 21, `npm run test:e2e` → 16/16
   (подробности: `docs/AUDIT_REPORT.md` §12.7)
-- **Актуальные цифры тестов (после добавления `GET /api/health`):** `npm.cmd run test` →
-  **109 frontend + 34 backend** (backend: `scoreService`, `gameRouter`, `health`), `npm.cmd run test:e2e` →
+- **Актуальные цифры тестов (после добавления `GET /api/health` и резолва `APP_VERSION`):** `npm.cmd run test` →
+  **109 frontend + 36 backend** (backend: `scoreService`, `gameRouter`, `health`), `npm.cmd run test:e2e` →
   **19/19** (добавлен `tests/e2e/health.test.ts`), `npm.cmd run build` → exit 0, `npm.cmd audit` → 0 уязвимостей
 
 ### Эндпоинт самодиагностики `GET /api/health`
@@ -86,6 +86,15 @@
   `.health-probe`, удаляемый в `finally`), `static` (`frontend/dist/index.html` + файлы в `assets/`),
   `websocket` (`wss.clients.size`, путь `/ws`), `runtime` (Node, uptime, RSS, `NODE_ENV`, `PORT`),
   `api` (самопроверка `/api/scores` и `/api/leaderboard` через тот же `ScoreService`).
+- Поле `version`: `APP_VERSION` → `backend/package.json` → `unknown`. `APP_VERSION` задаётся
+  build-аргом `Dockerfile` (`ARG APP_VERSION` → `ENV APP_VERSION`), значение считает `deploy.sh`
+  как `1.<YYMMDD>.<git short hash>`. Проверено на локальном образе
+  (`docker build --build-arg APP_VERSION=1.261004.localcheck` + `docker run`): `docker inspect` →
+  `APP_VERSION=1.261004.localcheck`, `GET /api/health` → `"version":"1.261004.localcheck"`.
+  Тесты резолва — `backend/tests/unit/health.test.ts` (в т.ч. пустой `APP_VERSION` → `1.0.0`).
+- `.dockerignore` исключает из build-контекста `audit-verify/` (он остаётся в git) и `tmp-audit/`
+  (он в `.gitignore`, живёт только локально). Проверено размером передаваемого контекста:
+  `transferring context: 687.01kB` → `171.68kB`; `docker run --rm <image> ls /app` → `backend`, `frontend`.
 - Проверено на реальном образе (`docker build` + `docker run`, `node:22-alpine`): `GET /api/health` →
   `200 application/json`, `"status":"ok"`, `"version":"1.0.0"`, `static.assetCount: 2`, `runtime.node: v22.23.3`;
   после `mv /app/frontend/dist/index.html` → `503` + `"status":"degraded"` с `static.error`; после возврата файла → `200`.
@@ -123,9 +132,19 @@ rsync -a --delete \
   --exclude=.git --exclude=node_modules --exclude=dist \
   --exclude=backend/data --exclude=nginx-proxy \
   /opt/neon-tetris-new/ /opt/neon-tetris/
+APP_VERSION="1.$(date -u +%y%m%d).$(git -C /opt/neon-tetris-new rev-parse --short HEAD)"
 rm -rf /opt/neon-tetris-new
-cd /opt/neon-tetris && docker compose build && docker compose up -d
+cd /opt/neon-tetris && APP_VERSION=$APP_VERSION docker compose build && docker compose up -d
 ```
+
+`APP_VERSION` — build-арг `Dockerfile` (`ARG APP_VERSION` → `ENV APP_VERSION`), он же поле
+`version` в `GET /api/health`. Формат: `1.<YYMMDD>.<git short hash>`, например `1.261004.317de99`.
+Хэш берётся из `/opt/neon-tetris-new` **до** его удаления: в `/opt/neon-tetris` нет `.git`
+(rsync исключает `.git`), поэтому там `git rev-parse` невозможен. `docker-compose.yml`
+подставляет его как `build.args.APP_VERSION: ${APP_VERSION:-}`; обычный `docker compose build`
+без переменной даёт пустой `APP_VERSION`, а пустой значение `resolveVersion()` считает
+незаданным → `version` берётся из `backend/package.json` (`1.0.0`). Деплои до этой
+правки собирали образ именно без build-арга, поэтому в health был `1.0.0`.
 
 `--exclude=backend/data` и `--exclude=nginx-proxy` обязательны: первый сохраняет `scores.json`
 (он же примонтирован в контейнер), второй сохраняет `nginx-proxy/.env` с `EMAIL` (адрес для Let's Encrypt),
@@ -135,7 +154,8 @@ cd /opt/neon-tetris && docker compose build && docker compose up -d
 Что проверять после `up -d`:
 - `docker ps` → `neon-tetris  neon-tetris-neon-tetris  Up`; `docker logs --tail 15 neon-tetris` → `Neon Tetris server running on port 3000`
 - `curl -s https://ntetris.ddns.net/api/health` → `200` и JSON вида
-  `{"status":"ok","uptimeSec":…,"version":"1.0.0","checks":{"db":{"ok":true,"writable":true,"count":…},"static":{"ok":true,"indexHtml":"present","assetCount":2},"websocket":{"ok":true,"clients":0,"path":"/ws"},"runtime":{"ok":true,"node":"v22…"},"api":{"ok":true,…}}}`.
+  `{"status":"ok","uptimeSec":…,"version":"1.261004.317de99","checks":{"db":{"ok":true,"writable":true,"count":…},"static":{"ok":true,"indexHtml":"present","assetCount":2},"websocket":{"ok":true,"clients":0,"path":"/ws"},"runtime":{"ok":true,"node":"v22…"},"api":{"ok":true,…}}}`.
+  `version` — вычисленная при деплое `APP_VERSION`; `1.0.0` вместо неё означает, что образ собран без build-арга.
   `503` + `"status":"degraded"` означает реальную проблему (хранилище, собранный SPA или websocket),
   а не HTML-заглушку. Эндпоинт добавлен коммитом `feat(backend): GET /api/health…`; до него
   `/api/health` не был маршрутом и SPA catch-all возвращал HTML.
@@ -145,8 +165,9 @@ cd /opt/neon-tetris && docker compose build && docker compose up -d
   `c84daf18…`, `backend/dist/index.js` → `1a45f215…` (совпали байт в байт)
 
 `deploy.sh` повторяет эти проверки сам: `https://$HOST/` → 200, `https://$HOST/api/health` → 200,
-`GET /api/health` изнутри контейнера (`docker exec … node -e fetch`), и сравнение хэша бандла
-«отдаётся / в образе».
+`GET /api/health` изнутри контейнера (`docker exec … node -e fetch`, печатает и `version`),
+сравнение `version` из health с вычисленной `APP_VERSION` (несовпадение = собран не тот коммит),
+и сравнение хэша бандла «отдаётся / в образе».
 
 ### Один контур на сервере (PM2-контур удалён 2026-10-04)
 

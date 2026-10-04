@@ -202,8 +202,11 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   - `runtime` — версия Node, uptime, RSS, `NODE_ENV`, `PORT`;
   - `api` — самопроверка `/api/scores` и `/api/leaderboard` через тот же `ScoreService`
     (без HTTP-запроса к самому себе), с числом записей.
-  Версия берётся из `APP_VERSION` (если задан), иначе из `backend/package.json`,
-  иначе `unknown`. Каждая проверка обёрнута в `try/catch`: упавшая проверка делает
+  Версия берётся из `APP_VERSION` (build-arg Dockerfile: `docker-compose.yml` →
+  `build.args.APP_VERSION`, значение вычисляет `deploy.sh` из клонированного репозитория
+  в формате `1.<YYMMDD>.<git short hash>`), иначе из `backend/package.json`,
+  иначе `unknown`. Пустой `APP_VERSION` (обычный `docker compose build` без аргумента)
+  считается незаданным — срабатывает фолбэк на `package.json`. Каждая проверка обёрнута в `try/catch`: упавшая проверка делает
   отчёт degraded, но никогда не роняет эндпоинт; в payload нет ни абсолютных путей,
   ни секретов.
 

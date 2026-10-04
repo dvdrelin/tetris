@@ -35,6 +35,12 @@ yarn-error.log*
 *.temp
 tmp/
 temp/
+# Локальный scratch: логи прогонов аудита и разовые probe-скрипты (tmp-audit/ gitignored)
+tmp-audit/
+tmp-*.mjs
+
+# Audit scratch: JS-клон движка и probe-скрипты — в образ не нужны
+audit-verify/
 
 # Coverage
 coverage/

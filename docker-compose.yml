@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # 1.{YYMMDD}.{git short hash} — задаёт deploy.sh (APP_VERSION=... docker compose build).
+        # Пусто => в образе APP_VERSION пустой, health берёт version из backend/package.json.
+        APP_VERSION: ${APP_VERSION:-}
     container_name: neon-tetris
     restart: unless-stopped
     environment:

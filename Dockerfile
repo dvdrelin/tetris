@@ -53,6 +53,13 @@ RUN mkdir -p /app/backend/data
 ENV NODE_ENV=production
 ENV PORT=3000
 
+# Версия для GET /api/health: формат 1.{YYMMDD}.{git short hash}, например 1.261004.317de99.
+# Значение передаётся build-аргом (docker-compose.yml -> build.args.APP_VERSION, вычисляет
+# deploy.sh из клонированного репозитория). Если arg не передан, APP_VERSION остаётся пустым
+# и health берёт version из backend/package.json (он скопирован выше).
+ARG APP_VERSION=""
+ENV APP_VERSION=$APP_VERSION
+
 EXPOSE 3000
 
 CMD ["node", "backend/dist/index.js"]

@@ -223,6 +223,34 @@ describe('GET /api/health', () => {
     expect(typeof res.body.checks.runtime.env).toBe('string')
   })
 
+  test('version comes from APP_VERSION when the build arg is set (deploy.sh format 1.<YYMMDD>.<sha>)', async () => {
+    process.env.APP_VERSION = '1.261004.abc1234'
+    try {
+      const service = new ScoreService({ dbPath: join(dir, 'data', 'scores.json') })
+      const app = buildApp({ scoreService: service, distPath: makeDist(dir) })
+
+      const res = await request(app).get('/api/health')
+      expect(res.status).toBe(200)
+      expect(res.body.version).toBe('1.261004.abc1234')
+    } finally {
+      delete process.env.APP_VERSION
+    }
+  })
+
+  test('empty APP_VERSION (docker-compose passes ${APP_VERSION:-}) falls back to package.json', async () => {
+    process.env.APP_VERSION = ''
+    try {
+      const service = new ScoreService({ dbPath: join(dir, 'data', 'scores.json') })
+      const app = buildApp({ scoreService: service, distPath: makeDist(dir) })
+
+      const res = await request(app).get('/api/health')
+      expect(res.status).toBe(200)
+      expect(res.body.version).toBe('1.0.0')
+    } finally {
+      delete process.env.APP_VERSION
+    }
+  })
+
   test('the report contains no absolute paths and no secrets', async () => {
     const service = new ScoreService({ dbPath: join(dir, 'data', 'scores.json') })
     const app = buildApp({ scoreService: service, distPath: makeDist(dir) })

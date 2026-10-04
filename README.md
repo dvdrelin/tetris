@@ -70,9 +70,11 @@ bash deploy.sh root <HOST> 3000        # SSH key по умолчанию: ~/.ssh
 ```
 
 `deploy.sh` работает только через Docker: клонирует репозиторий на сервер, синхронизирует
-`rsync`-ом (не трогая `backend/data` и `nginx-proxy`), выполняет `docker compose build && up -d`
-и сам проверяет ответ сайта, `GET /api/health` (снаружи и изнутри контейнера), JSON API
-и совпадение хэша бандла «отдаётся / в образе».
+`rsync`-ом (не трогая `backend/data` и `nginx-proxy`), вычисляет `APP_VERSION` в формате
+`1.<YYMMDD>.<git short hash>` (например `1.261004.317de99`), передаёт её build-аргом в
+`docker compose build` и сам проверяет ответ сайта, `GET /api/health` (снаружи и изнутри
+контейнера), JSON API, совпадение `version` из health с вычисленной и совпадение хэша бандла
+«отдаётся / в образе».
 PM2 в скрипте больше нет — этого контура на сервере тоже нет. Процедура и проверки:
 `docs/SESSION_CONTEXT.md` → «Боевое окружение (действующий деплой)».
 
@@ -122,8 +124,9 @@ npm run test:e2e        # Playwright E2E
 
 **Результаты (перепроверено после обновления зависимостей — jest 30 / vite 8 / tsx):**
 - Frontend unit: **109 тестов** в 6 сюитах (engine, board, pieces, renderer, `rotation-geometry`, `rotation-kicks`)
-- Backend unit: **34 теста** в 3 сюитах (scoreService, `gameRouter` — границы HTTP-API,
-  `health` — `GET /api/health`: ok/degraded, отсутствие HTML, неизменяемость `scores.json`)
+- Backend unit: **36 тестов** в 3 сюитах (scoreService, `gameRouter` — границы HTTP-API,
+  `health` — `GET /api/health` (15 тестов): ok/degraded, отсутствие HTML, неизменяемость `scores.json`,
+  резолв `version` из `APP_VERSION` и фолбэк на `backend/package.json`)
 - E2E (Playwright): **19 тестов** в 3 файлах (game flow, keyboard controls, пауза/рестарт, leaderboard,
   реальный поворот и hard drop на канвасе, smoke-проверка `GET /api/health`) — webServer поднимает backend через `tsx watch`, frontend через `vite 8`
 
