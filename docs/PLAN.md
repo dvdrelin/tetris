@@ -116,6 +116,22 @@
 └── start.sh              # Скрипт быстрого запуска
 ```
 
+### Деплой из репозитория (проверено 2026-10-04)
+
+```bash
+git clone --depth 1 https://github.com/dvdrelin/tetris.git /opt/neon-tetris-new
+rsync -a --delete --exclude=.git --exclude=node_modules --exclude=dist \
+  --exclude=backend/data --exclude=nginx-proxy \
+  /opt/neon-tetris-new/ /opt/neon-tetris/
+rm -rf /opt/neon-tetris-new
+cd /opt/neon-tetris && docker compose build && docker compose up -d
+```
+
+⚠️ `deploy.sh` деплоит в PM2-контур (`pm2 start backend/dist/index.js`), а домен `ntetris.ddns.net`
+nginx-proxy маршрутизирует в Docker-контейнер. Поэтому `deploy.sh` не меняет то, что открывается
+в браузере. Подробности и таблица двух контуров: `docs/SESSION_CONTEXT.md`, раздел
+«Боевое окружение (действующий деплой)».
+
 ### Управление на сервере
 ```bash
 # Подключиться к серверу

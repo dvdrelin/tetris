@@ -94,8 +94,47 @@
 | TLS | Let's Encrypt, сертификат выдаёт `nginxproxy/acme-companion` |
 | Reverse proxy | `nginxproxy/nginx-proxy:1.11`, внешняя docker-сеть `proxy`, переменные `VIRTUAL_HOST` / `VIRTUAL_PORT` / `ACME_HOST` в `docker-compose.yml` |
 | Сервис | контейнер `neon-tetris`, внутренний порт 3000 (backend отдаёт `frontend/dist`), снаружи 80/443 через nginx-proxy |
-| Деплой | `bash deploy.sh <USER> <HOST> [PORT]` (порт по умолчанию 3000) либо на сервере `docker compose build && docker compose up -d` |
+| Деплой | рабочий путь — **Docker** (процедура ниже). `deploy.sh` ведёт в PM2-контур, который домен не обслуживает |
 | Данные | volume `./backend/data:/app/backend/data:rw` — туда пишется `scores.json` |
+
+### Рабочая процедура деплоя (проверено 2026-10-04 на HEAD `061b71e`)
+
+```bash
+# на сервере (root@ntetris.ddns.net)
+git clone --depth 1 https://github.com/dvdrelin/tetris.git /opt/neon-tetris-new
+rsync -a --delete \
+  --exclude=.git --exclude=node_modules --exclude=dist \
+  --exclude=backend/data --exclude=nginx-proxy \
+  /opt/neon-tetris-new/ /opt/neon-tetris/
+rm -rf /opt/neon-tetris-new
+cd /opt/neon-tetris && docker compose build && docker compose up -d
+```
+
+`--exclude=backend/data` и `--exclude=nginx-proxy` обязательны: первый сохраняет `scores.json`
+(он же примонтирован в контейнер), второй сохраняет `nginx-proxy/.env` с `DEFAULT_EMAIL`, которого нет в репозитории.
+
+Что проверять после `up -d`:
+- `docker ps` → `neon-tetris  neon-tetris-neon-tetris  Up`; `docker logs --tail 15 neon-tetris` → `Neon Tetris server running on port 3000`
+- `curl -s https://ntetris.ddns.net | grep -o 'assets/[^"]*'` → новые хэши бандла
+- `/api/scores` и `/api/leaderboard` → JSON сохранных рекордов; `wss://ntetris.ddns.net/ws` → успешный handshake
+- хэши артефактов в контейнере должны совпадать с локальной сборкой: `frontend/dist/assets/index-B04z4d71.js` →
+  `c84daf18…`, `backend/dist/index.js` → `1a45f215…` (совпали байт в байт)
+
+### Два контура на сервере — не путать
+
+| Контур | Что исполняет | Как доступен |
+|---|---|---|
+| контейнер `neon-tetris` | `node backend/dist/index.js` | его отдаёт домен: nginx upstream `ntetris.ddns.net` → `172.18.0.4:3000` (сеть `proxy`) |
+| PM2 `neon-tetris` | `node /opt/neon-tetris/backend/dist/index.js` | слушает `*:3000` на хосте; nginx к нему не маршрутизирует |
+
+Это **один и тот же backend, запущенный дважды** (Express + статика `frontend/dist`), а не «фронт и бэк».
+Порт 3000 при этом доступен извне как `http://ntetris.ddns.net:3000` — то есть копия приложения работает
+в обход HTTPS/nginx. `deploy.sh` обновляет именно PM2-копию, поэтому после него сайт в браузере не меняется.
+Открытый вопрос: обновить PM2, остановить его или закрыть 3000 на фаерволе — решать владельцу.
+
+Замечание по сборке: `Dockerfile` использует `node:20-alpine` (20.20.2); при `npm install` появляются
+`EBADENGINE`-предупреждения (`abbrev@5.0.0`, `nopt@10.0.1` требуют `^22.22.2 || ^24.15.0 || >=26.0.0`).
+Сборка проходит, `found 0 vulnerabilities`, но это кандидат на переход на `node:22-alpine`.
 
 Ранее использовавшийся Amvera-хостинг выведен полностью: упоминаний в репозитории нет (проверено по
 всем файлам, исключая `node_modules/`, `.git/`, `dist/`).
