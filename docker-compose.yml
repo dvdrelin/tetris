@@ -8,6 +8,8 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Действующий прод-контур: хостинг hshp + динамический DNS No-IP (ddns.net),
+      # сертификат Let's Encrypt выдаёт acme-companion из nginx-proxy/. Домен не менять.
       - VIRTUAL_HOST=ntetris.ddns.net
       - VIRTUAL_PORT=3000
       - VIRTUAL_PATH=/

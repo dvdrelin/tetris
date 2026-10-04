@@ -2,6 +2,13 @@
 
 Эта директория содержит инфраструктуру для HTTPS-проксирования Neon Tetris через nginx-proxy с автоматическим получением сертификатов Let's Encrypt.
 
+## Действующее окружение
+
+Этот контур **используется сейчас**: хостинг — **hshp**, DNS — **No-IP** (динамический DNS, зона `ddns.net`),
+домен — `ntetris.ddns.net`, сертификат — Let's Encrypt. Значения `VIRTUAL_HOST` / `ACME_HOST` в
+`docker-compose.yml` менять нельзя без смены домена. Сводка по деплою: `docs/SESSION_CONTEXT.md`
+(раздел «Боевое окружение») и `docs/PLAN.md` (раздел «Деплой: Nginx Proxy + Let's Encrypt»).
+
 ## Компоненты
 
 - **nginx-proxy** (`nginxproxy/nginx-proxy:1.11`) — проксирует запросы к контейнерам

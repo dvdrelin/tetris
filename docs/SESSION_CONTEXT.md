@@ -80,6 +80,26 @@
 - `docs/PHASE2_ARCHITECTURE.md` — v1.4, завершено
 - `docs/PHASE3_MULTIPLAYER.md` — v1.0, не начато
 
+## Боевое окружение (действующий деплой) — не удалять
+
+Упоминания `ntetris.ddns.net` в `README.md`, `docs/PLAN.md`, `docker-compose.yml`, `start.sh` и
+`nginx-proxy/` описывают **живое** окружение проекта. Из проекта был выведен только внешний API-хост
+(`9db00a3`); домен, DNS и хостинг остаются действующими, их правки/удаление — ошибка.
+
+| Параметр | Значение |
+|---|---|
+| Домен | `ntetris.ddns.net` (HTTP → HTTPS редирект) |
+| DNS | **No-IP** — динамический DNS, зона `ddns.net` |
+| Хостинг | **hshp** (значение от владельца проекта; SSH-доступ `ssh root@ntetris.ddns.net`, путь `/opt/neon-tetris`) |
+| TLS | Let's Encrypt, сертификат выдаёт `nginxproxy/acme-companion` |
+| Reverse proxy | `nginxproxy/nginx-proxy:1.11`, внешняя docker-сеть `proxy`, переменные `VIRTUAL_HOST` / `VIRTUAL_PORT` / `ACME_HOST` в `docker-compose.yml` |
+| Сервис | контейнер `neon-tetris`, внутренний порт 3000 (backend отдаёт `frontend/dist`), снаружи 80/443 через nginx-proxy |
+| Деплой | `bash deploy.sh <USER> <HOST> [PORT]` (порт по умолчанию 3000) либо на сервере `docker compose build && docker compose up -d` |
+| Данные | volume `./backend/data:/app/backend/data:rw` — туда пишется `scores.json` |
+
+Ранее использовавшийся Amvera-хостинг выведен полностью: упоминаний в репозитории нет (проверено по
+всем файлам, исключая `node_modules/`, `.git/`, `dist/`).
+
 ## Следующий шаг
 
 ### Phase 3: Мультиплеер
