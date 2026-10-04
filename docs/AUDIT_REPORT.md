@@ -115,7 +115,7 @@
 | C9 | `README.md:118` «Express + WebSocket — real-time sync» | `frontend/src` **не открывает WebSocket** (только `fetch` в `gameStore.ts:95`, `leaderboardStore.ts:31,45`); серверный `action` — пустая заглушка (`gameServer.ts:135–137`), broadcast только на join (`:126`) |
 | C10 | `README.md:13` touch | См. D10 |
 | C11 | `architecture.md:159` «gameStore … вычисляет позицию ghost» | Утверждение по сути верно: ghost считается **только** в сторе (`gameStore.ts:152 getGhostY`, судит по `value !== 0`). **Поправка к аудиту:** в `board.ts` никакого `calculateGhost` нет (в нём только `reset/getCell/setCell/setCells/isValidPosition/hasCollision/clearLines/getSnapshot/getCells/getWidth/getHeight`), а движок `ghostY` не заполняет вовсе — то есть «двух источников истины» по `locked` не существует; в `architecture.md:130–131` ghost ошибочно был приписан `BoardManager` (исправлено в P2) |
-| C12 | `architecture.md:149` «Tick (auto-drop в Arcade)» | Скорость падения фактически живёт в `GameBoard.vue` (`tickAccumulator`), а `SCORING_CONFIG`/`SPEED_CONFIG.autoDropInterval` в движке вычисляется и **не используется** |
+| C12 | `architecture.md:149` «Tick (auto-drop в Arcade)» | Скорость падения фактически живёт в `GameBoard.vue` (`tickAccumulator`), а `SCORING_CONFIG`/`SPEED_CONFIG.autoDropInterval` в движке вычисляется и **не используется**. **Поправка к аудиту:** поля `autoDropInterval` в текущем коде нет; неиспользуемым остался локальный `interval` в `GameEngine.autoDrop()` — см. §12.4 п.6 |
 | C13 | `PHASE2_ARCHITECTURE.md:58` — E2E-тест «rotation» | `tests/e2e/game.test.ts:83` нажимает `ArrowUp`, но **ничего не проверяет**, кроме отсутствия ошибок консоли |
 | C14 | `PHASE2_ARCHITECTURE.md` / `README.md:108`: «51 frontend = 15+14+14+8» | Файлы дают 17 (`engine`) и 12 (`pieces`); сумма 51 совпадает, разбивка — нет |
 | C15 | `Dockerfile:28` / корневой `build:frontend` — `vite build` | `frontend/package.json:7` — `vue-tsc --noEmit && vite build`. Штатная команда `npm run build` **падает** (vue-tsc 1.8.27 несовместим с TypeScript 5.9.3: `Search string not found: "/supportedTSExtensions = .*(?=;)/"`) → `.vue`-файлы в проекте **никогда не типизируются** |
@@ -323,7 +323,11 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 4. ~~`vue-tsc` ≥2.x (типизация `.vue`) не установлен~~ — **закрыто после аудита**: `vue-tsc` обновлён до
    `3.3.12`, типизация `.vue` вернулась в `npm run build`; см. §12.6.
 5. `hasCollision` не вызывается; расхождение `isValidPosition` (`boardY < 0` запрещён) vs `hasCollision` (разрешён) не устранено.
-6. `SPEED_CONFIG.autoDropInterval` в движке вычисляется и не используется (tick живёт в `GameBoard.vue`) — C12.
+6. Мёртвый расчёт скорости в движке: в `GameEngine.autoDrop()` (`frontend/src/shared/engine/game-engine.ts:294–295`)
+   вычисляется локальная `interval` из `GAME_CONFIG.speedConfig` и **не используется** (комментарий: «tick-based,
+   move down one row per tick»), а реальный тик живёт в `GameBoard.vue` (`tickAccumulator`, `:60–65`) — C12.
+   Уточнение к исходной формулировке: поля `SPEED_CONFIG.autoDropInterval` в коде больше нет —
+   `SpeedConfig` = `initialInterval` / `intervalDecrease` / `minInterval` (`game-config.ts:13–17`).
 7. `GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры.
 8. `docs/tsc-frontend.log` — нечитаемый бинарный артефакт, упоминается как результат проверки типов.
 9. Фаза 3 (мультиплеер) не начата: WebSocket-сервер поднят и проксируется, но `GameServer.handleAction` — заглушка, фронтенд сокет не открывает.
