@@ -343,7 +343,7 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
     зависимостей (§12.7), `ea56fc7` (`deploy.sh` переведён на Docker, PM2-контур удалён),
     `b0b7ac9` (`node:22-alpine` — `EBADENGINE` при сборке больше нет), `5b9418a`
     (`GET /api/health` + тесты + docs), `7a30e48` (протокол деплоя и исправление `DEFAULT_EMAIL` → `EMAIL`),
-     правка build-арга `APP_VERSION` (поле `version` в health, формат `1.<YYMMDD>.<git short hash>`)
+     правка build-арга `APP_VERSION` `4344f3d` (поле `version` в health, формат `1.<YYMMDD>.<git short hash>`)
      и исключения `.dockerignore` для `audit-verify/` и `tmp-audit/` —
     `main` синхронизирован с `origin/main`, прод-контейнер пересобирается из текущего `main`
      (`docker compose build && docker compose up -d`; откат — `git revert` + пересборка).

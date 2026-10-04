@@ -230,6 +230,33 @@ pm2 unstartup systemd       # Removed "/etc/systemd/system/multi-user.target.wan
 - откат: предыдущий образ (`8cdd94157c95`, `node:20-alpine`) после пересборки на сервере отсутствует
   (`docker images --filter dangling=true` → пусто). Откат = `git revert` + `docker compose build && docker compose up -d`.
 
+Деплой коммита `4344f3d` (`bash deploy.sh root ntetris.ddns.net 3000`, 2026-10-04) — `APP_VERSION` в проде:
+- `deploy.sh` вычислил `APP_VERSION = 1.261004.4344f3d` из клонированного репозитория
+  (`date -u +%y%m%d` + `git rev-parse --short HEAD`, хэш читается до `rm -rf /opt/neon-tetris-new`);
+- `docker inspect neon-tetris` → `APP_VERSION=1.261004.4344f3d` в окружении контейнера;
+- `https://ntetris.ddns.net/api/health` → `200` + `application/json`: `"status":"ok"`,
+  `"version":"1.261004.4344f3d"`, `db {ok:true, writable:true, count:31, bytes:6486}`,
+  `static {indexHtml:"present", assetCount:2}`, `websocket {clients:0, path:"/ws"}`,
+  `runtime {node:"v22.23.3", env:"production", port:"3000"}`, `api {scoreRecords:10, leaderboardEntries:17}`;
+  изнутри контейнера — тот же `200` и та же `version`;
+- самопроверка скрипта подтвердила: `version в /api/health = 1.261004.4344f3d — образ собран из этого коммита`;
+- `.dockerignore` на сервере применён (`load .dockerignore` → `transferring context: 963B`),
+  `docker run --rm neon-tetris-neon-tetris ls /app` → `backend`, `frontend`: каталог `audit-verify`
+  остался в `/opt/neon-tetris` (он в git), но в образ не попал; `tmp-audit/` на сервере нет вообще (`.gitignore`);
+- данные целы: `/opt/neon-tetris/backend/data/` → `scores.json` (`count:31`, `bytes:6486`,
+  `mtimeMs:1791118254080.153`), `.health-probe` отсутствует; `nginx-proxy` не тронут;
+- хэш бандла совпал: `assets/index-B04z4d71.js` → `c84daf18…` наружу и в образе.
+
+Локальные проверки перед этим деплоем: `tsc --noEmit -p backend/tsconfig.json` и
+`vue-tsc --noEmit -p frontend/tsconfig.json` → exit 0; `npm run build` → exit 0; `npm run test` → 109 + 36;
+`npm run test:e2e` → 19 passed; `npm audit` → 0; `bash -n deploy.sh` → exit 0.
+Сборка с build-аргом: `docker build --build-arg APP_VERSION=1.261004.localcheck` → `docker inspect` c
+`APP_VERSION=1.261004.localcheck` и health `"version":"1.261004.localcheck"`; размер передаваемого
+контекста `687.01kB` → `171.68kB` (исключения `audit-verify/` и `tmp-audit/`).
+`docker compose config`: с переменной → `APP_VERSION: 1.261004.testsha`, без неё → `APP_VERSION: ""`.
+Локальные проверочные образы (`neon-tetris:health-check`, `neon-tetris:node22-check`,
+`neon-tetris:appver-check`) удалены — прод-образ только на сервере.
+
 Ранее использовавшийся Amvera-хостинг выведен полностью: упоминаний в репозитории нет (проверено по
 всем файлам, исключая `node_modules/`, `.git/`, `dist/`).
 
