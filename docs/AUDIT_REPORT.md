@@ -312,7 +312,7 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 | `backend/src/routes/gameRouter.ts` | Фабрика `createGameRouter(scoreService = new ScoreService())`; `LIMITS` (имя ≤ 32, score ≤ 1e6, level ≤ 999, lines ≤ 1000, limit ≤ 100); пропущенные поля → дефолты, невалидные → 400; `GET /scores` клампит `limit` в `[1, 100]` |
 | Мёртвый код | `frontend/src/engine/piecePreview.ts` удалён (нигде не импортировался); `HudView.vue` рендерит превью из `PIECE_SHAPES` вместо собственной 4-й копии таблиц |
 | `game-engine.ts` (P1-остаток) | `RotatePiece` валидирует `payload.direction` через типизированный `RotateCommand`; `movePiece` получил `default: return` (неизвестное направление больше не «двигает в никуда») |
-| `backend/src/routes/healthRouter.ts` (**добавлено позже**, коммит `feat(backend): GET /api/health…`) | Реальный `GET /api/health`: раньше такого маршрута не было, и SPA catch-all возвращал на него HTML. Роутер подключён в `index.ts` до `express.static` и catch-all; всегда JSON, `200` при `ok` и `503` при `degraded`; проверки `db` (`ScoreService.health()`), `static` (`frontend/dist/index.html` + файлы в `assets/`), `websocket` (`wss.clients.size`, `/ws`), `runtime` (Node, uptime, RSS, `NODE_ENV`, `PORT`), `api` (самопроверка `/api/scores` и `/api/leaderboard` через тот же сервис). В payload нет абсолютных путей и секретов; `scores.json` не пишется — проверка записи использует `.health-probe`, удаляемый в `finally` |
+| `backend/src/routes/healthRouter.ts` (**добавлено позже**, коммит `5b9418a`) | Реальный `GET /api/health`: раньше такого маршрута не было, и SPA catch-all возвращал на него HTML. Роутер подключён в `index.ts` до `express.static` и catch-all; всегда JSON, `200` при `ok` и `503` при `degraded`; проверки `db` (`ScoreService.health()`), `static` (`frontend/dist/index.html` + файлы в `assets/`), `websocket` (`wss.clients.size`, `/ws`), `runtime` (Node, uptime, RSS, `NODE_ENV`, `PORT`), `api` (самопроверка `/api/scores` и `/api/leaderboard` через тот же сервис). В payload нет абсолютных путей и секретов; `scores.json` не пишется — проверка записи использует `.health-probe`, удаляемый в `finally`. Проверено на проде (`5b9418a`): `200 application/json`, `"status":"ok"`, `runtime.node: v22.23.3`; при удалённом `dist/index.html` — `503` + `"status":"degraded"` |
 
 ### 12.4 Что осталось открытым (осознанно)
 
@@ -335,8 +335,9 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 11. Все правки закоммичены и запушены: `9dba4ea` (P0–P3), `9db00a3` (удаление внешнего API-хоста),
     `b06f4fb` (уточнение утверждений об окружении), `37ba308` (`vue-tsc` 3.3.12), коммит с обновлением
     зависимостей (§12.7), `ea56fc7` (`deploy.sh` переведён на Docker, PM2-контур удалён),
-    `b0b7ac9` (`node:22-alpine` — `EBADENGINE` при сборке больше нет) и коммит
-    `feat(backend): GET /api/health…` — `main` синхронизирован с `origin/main`.
+    `b0b7ac9` (`node:22-alpine` — `EBADENGINE` при сборке больше нет), `5b9418a`
+    (`GET /api/health` + тесты + docs) и `7a30e48` (протокол деплоя и исправление `DEFAULT_EMAIL` → `EMAIL`) —
+    `main` синхронизирован с `origin/main`, прод-контейнер пересобран из `5b9418a`.
 
 ### 12.5 Повторная проверка сетевых утверждений (после аудита)
 
