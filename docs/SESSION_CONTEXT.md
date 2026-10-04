@@ -11,7 +11,9 @@
 уязвимостей `npm audit` (§12.7). Далее: `ea56fc7` (PM2-контур удалён, `deploy.sh` переведён на
 `git clone` + `rsync` + `docker compose`), `b0b7ac9` (`node:20-alpine` → `node:22-alpine`),
 `5b9418a` (реальный `GET /api/health`, JSON 200/503), `4344f3d` (исключения `.dockerignore` +
-build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих деплоях в документах).
+build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих деплоях в документах), `96af5cd`
+(дизайн-документы), `2613360` (фаза 5, блок 1: типы и расчистка). Коммит этого блока — блок 2
+(тайминг и гравитация).
 Историческая справка: до аудита HEAD был `e570ee8` («Fix: deploy.sh — skip vue-tsc…», дата `2026-09-13`);
 упоминавшийся ранее `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный, но он на 24 коммита позади
 того HEAD. Незакоммиченных изменений P0/P1/P3 больше нет; полный список правок — `docs/AUDIT_REPORT.md` §10
@@ -29,7 +31,8 @@ build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих д�
   (`renderPiecePreview` нигде не импортировался); `renderer.ts` остался — его используют
   `GameBoard.vue` и `renderer.test.ts`
 - **74 теста проходят** (историческая цифра фазы; актуально на момент аудита: **109** frontend unit,
-  **21** backend unit, **16** E2E — `docs/AUDIT_REPORT.md` §11):
+  **21** backend unit, **16** E2E — `docs/AUDIT_REPORT.md` §11; после блоков 1–2 фазы 5:
+  **125** frontend unit, **36** backend unit, **19** E2E):
   - Frontend unit: 51 тест (jest + ts-jest)
   - Backend unit: 9 тестов (jest + ts-jest)
   - E2E: 14 тестов (playwright)
@@ -288,19 +291,31 @@ MP (старый и новый дизайн) — отдельная тема, б
 (`frontend/jest.config.js`: `ts-jest` с `isolatedModules: true`; `frontend/tsconfig.json` `include`
 не покрывает `tests/`), поэтому типизация проверяется отдельно: `npx.cmd vue-tsc --noEmit` (frontend)
 и `npx.cmd tsc --noEmit` (backend). Отдельного npm-скрипта `typecheck` в проекте нет.
+`npx.cmd playwright test` в песочнице падает так же (`Error: spawn EPERM` на запуске dev-серверов и
+браузера) — E2E выполняется с расширенным доступом к песочнице.
+
+**Блок 2 (коммит этого блока): тайминг и гравитация.** Изменены `game-config.ts`
+(`dropInterval(level, mode)`, `HARDCORE_SPEED_MULTIPLIER = 0.5`), `commands.ts`
+(`TickCommand.payload: { dt: number }`), `game-engine.ts` (`gravityAccumulator`, `elapsedMs`,
+`tick(dtMs)` с `while (accumulator >= interval)`, автопадение в обоих режимах, `MAX_TICK_DELTA_MS = 250`,
+`MovePiece{down}` = soft drop, `autoDrop()` без мёртвой `interval`), `GameBoard.vue` (цикл только
+передаёт `dt`); добавлен `frontend/tests/unit/gravity.test.ts` (16 тестов). Закрыт §12.4 п.6 (C12).
+Проверки: `npx.cmd vue-tsc --noEmit` → exit 0 (пустой вывод), `npx.cmd jest --runInBand` во `frontend/`
+→ `7 suites / 125 tests passed` (exit 0), `npx.cmd playwright test --config tests/playwright.config.ts`
+→ `19 passed`, `LASTEXITCODE=0`. Бэкенд не менялся, прод не пересобирается.
 
 ## Следующий шаг
 
-### Блок 2: тайминг и гравитация (A1, A2, A8)
+### Блок 3: механика (A3, A4, A5, A6)
 
-1. `frontend/src/shared/config/game-config.ts` — общая функция `dropInterval(level, mode)`
-   (+ `HARDCORE_SPEED_MULTIPLIER`), чтобы интервал знал только движок.
-2. `Tick` получает `payload: { dt: number }`; в движке — `elapsedMs` / `gravityAccumulator` и
-   цикл `while (acc >= interval)`; `autoDrop()` без неиспользуемого параметра `interval`
-   (остаток §12.4 п.6).
-3. `GameBoard.vue` — каждый кадр передаёт `dt` и больше не считает ни интервалы, ни аккумулятор.
-4. `tick()` делает автопадение в **обоих** режимах; `MovePiece{down}` = soft drop (не смерть),
-   смерть в Hardcore — только от блокировки лево/право/поворот.
+1. **Lock delay 500 мс + 15 сбросов таймера** на `dt`-логике движка (без `Date.now()`): приземление
+   по гравитации запускает таймер фиксации, перемещение/поворот сбрасывают его (не более 15 раз);
+   soft drop на пол и hard drop фиксируют сразу.
+2. **Hold**: новая команда `HoldPiece` (клавиши `C` / `Shift`), не более одного hold на фигуру,
+   слот в HUD.
+3. **Поворот на 180°**: клавиша `R`, отдельный небольшой набор киков.
+4. **Очередь из 3 фигур**: `nextQueue: PieceType[]` в движке и DTO; в HUD прозрачность по удалённости
+   (≈ 1.0 / 0.6 / 0.35 — «чем дальше фигура в очереди от текущей, тем прозрачнее»).
 5. Тесты на новое поведение — в том же коммите; затем `git commit` + `git push origin main`.
 
 Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) — отдельная тема,

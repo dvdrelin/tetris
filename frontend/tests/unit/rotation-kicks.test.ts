@@ -243,7 +243,7 @@ describe('game over handling', () => {
     const score = engine.getScore();
     engine.handleCommand({ type: CommandType.SoftDrop });
     engine.handleCommand({ type: CommandType.HardDrop });
-    engine.handleCommand({ type: CommandType.Tick });
+    engine.handleCommand({ type: CommandType.Tick, payload: { dt: 1000 } });
     engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } });
     expect(engine.getScore()).toBe(score);
     expect(engine.getCurrentPos()).toEqual({ x: 0, y: 18 });

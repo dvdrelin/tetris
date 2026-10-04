@@ -141,7 +141,8 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   При повороте движок пересобирает фишку через `buildPiece` (раньше менялись только индекс
   вращения и `shape`, но не цвета → «кривые» фигуры). Импортируется в `game-engine.ts`.
 - **`game-config.ts`** — три замороженных константы: `SCORING_CONFIG`, `SPEED_CONFIG`,
-  `GAME_CONFIG` (10×20).
+  `GAME_CONFIG` (10×20); плюс `HARDCORE_SPEED_MULTIPLIER` и функция **`dropInterval(level, mode)`** —
+  единственный источник интервала гравитации (блок 2 сингла, A1).
 
 ### 4.2 CQRS (`frontend/src/shared/cqrs`)
 - **`commands.ts`** — enum `CommandType` и набор интерфейсов команд с `payload`.
@@ -151,9 +152,13 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 Сердце логики. Хранит приватное состояние (сетка, текущая фигура, позицию, вращение,
 счёт, уровень, линии, комбо, флаги) и exposes его через:
 - **Команды** — `handleCommand()` = `switch` с сужением типа (не `handlerMap`): StartGame, MovePiece
-  (`left`/`right`/`down`), RotatePiece (+ wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop,
-  HardDrop, Tick (auto-drop в Arcade), Pause/Resume. Вращение больше не проходит через `MovePiece`
+  (`left`/`right`/`down`, где `down` = soft drop), RotatePiece (+ wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop,
+  HardDrop, Tick (`payload: { dt: number }`), Pause/Resume. Вращение больше не проходит через `MovePiece`
   (блок 1 сингла, B4).
+- **Гравитация принадлежит движку** (блок 2 сингла, A1/A2/A8): `tick(dtMs)` копит `gravityAccumulator`
+  и выполняет `while (accumulator >= dropInterval(level, mode))`; автопадение работает в обоих режимах
+  (в Hardcore интервал пополам); дельта кадра ограничена `MAX_TICK_DELTA_MS = 250`; после фиксации
+  фигуры остаток времени не «доигрывается» новой фигуре. UI передаёт только прошедшее время.
 - **Запросы** — `handleQuery()`: GetGameState / GetNextPiece / GetBoardState.
 - Вспомогательное: спавн фигур (`spawnNextPiece`, проверка game over), размещение и
   подсчёт очков (`placePiece`, `calculateScore` с комбо-множителем). **Поворот** — в
@@ -170,8 +175,9 @@ tetris/                          (корень monorepo, npm workspaces: fronten
     `showMenu` должен быть в `return {}` из `setup()` (иначе шаблон падает с «property not defined»).
   - `GameView.vue` — контейнер + глобальный слушатель `keydown`.
   - `GameBoard.vue` — canvas-рендер (сетка, уложенные ячейки, ghost, текущая фигура,
-    частицы, оверлеи паузы/game over) и **игровой цикл** на `requestAnimationFrame` с
-    накопителем времени для авто-tick в Arcade. Рисует текущую фигуру по `currentPiece.shape`.
+    частицы, оверлеи паузы/game over) и **игровой цикл** на `requestAnimationFrame`: каждый кадр
+    отдаёт движку прошедшее время (`Tick` + `dt`), интервал и аккумулятор в UI больше не живут
+    (блок 2 сингла). Рисует текущую фигуру по `currentPiece.shape`.
   - `HudView.vue` — HUD (счёт/уровень/линии/комбо), превью следующей фигуры на canvas,
     кнопки паузы; рендерится через **`<template>`** (раньше был строковый `render()`, отдававший
     HTML как текстовый узел → пустой экран; см. errors.md §H). Использует `gameStore.gameState`.
@@ -237,8 +243,8 @@ gameStore.updateState() → gameState.value = {...}  → watch() → GameBoard.r
 ### 5.3 Игровой цикл рендера (GameBoard.vue)
 `requestAnimationFrame(gameLoop)` каждую итерацию:
 1. вычисляет `dt`;
-2. в Arcade-режиме накапливает время и при достижении интервала (`initialInterval − (level−1)*intervalDecrease`,
-   не ниже `minInterval`) отправляет команду `Tick` движку;
+2. пока игра идёт (не пауза и не game over), отправляет движку `Tick` с `{ dt }` в миллисекундах —
+   решение «упала ли фигура» принимает движок (блок 2 сингла);
 3. обновляет частицы (`updateParticles(dt)`);
 4. рисует всё на canvas.
 
@@ -262,8 +268,10 @@ placePiece() → clearLines() > 0
 
 - Движок — **single-threaded** JS: все мутации состояния происходят синхронно внутри
   обработчиков команд; нет асинхронности в игровой логике.
-- Рендер — `requestAnimationFrame` (≈60 fps), развязан от игрового темпа через
-  **накопитель времени** (`tickAccumulator`) и нормализацию по `dt`.
+- Рендер — `requestAnimationFrame` (≈60 fps), развязан от игрового темпа: UI отдаёт движку
+  прошедшее время (`Tick` + `dt`), а **накопитель времени** (`gravityAccumulator`) и интервал
+  (`dropInterval`) живут в движке (блок 2 сингла). Дельта кадра, которую движок принимает,
+  ограничена `MAX_TICK_DELTA_MS = 250` мс.
 - Частицы реализованы **одной системой** в хранилище (`store.particles`, рендерит GameBoard); движковая система частиц удалена (B6 — была мёртвой, не связана с очисткой строк).
 - Persistence — атомарная запись через temp + rename (D3), конкурентность/блокировки на уровне ОС.
 
@@ -271,10 +279,11 @@ placePiece() → clearLines() > 0
 
 ## 7. Конфигурирование
 
-Игра полностью параметризуется через три замороженных объекта в `game-config.ts`:
-размер поля (10×20), кривая скорости (`initialInterval=800`, `intervalDecrease=50`,
-`minInterval=50`) и таблица очков (`single/double/triple/tetris/softDrop/hardDrop`,
-комбо-множитель 1.5, decay 0.5). Изменение любого параметра не требует правки логики.
+Игра полностью параметризуется через `game-config.ts`: размер поля (10×20), кривая скорости
+(`initialInterval=800`, `intervalDecrease=50`, `minInterval=50`), `HARDCORE_SPEED_MULTIPLIER=0.5`
+и таблица очков (`single/double/triple/tetris/softDrop/hardDrop`, комбо-множитель 1.5).
+Интервал гравитации берётся из одной функции — `dropInterval(level, mode)`. Изменение любого
+параметра не требует правки игровой логики.
 
 ---
 

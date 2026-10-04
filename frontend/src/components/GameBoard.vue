@@ -46,9 +46,9 @@ export default defineComponent({
       })
     }
 
-    // Game loop
+    // Game loop: render every frame, hand elapsed time to the engine.
+    // Gravity (interval, accumulator, how many rows fall) lives in GameEngine.
     let lastTime = 0
-    let tickAccumulator = 0
     let animFrame: number | null = null
 
     function gameLoop(timestamp: number) {
@@ -58,14 +58,7 @@ export default defineComponent({
 
       const state = gameStore.gameState
       if (state.isRunning && !state.isPaused && !state.isGameOver) {
-        const speedConfig = GAME_CONFIG.speedConfig
-        const interval = Math.max(speedConfig.minInterval, speedConfig.initialInterval - (state.level - 1) * speedConfig.intervalDecrease)
-        tickAccumulator += dt * 1000
-
-        if (tickAccumulator >= interval) {
-          tickAccumulator = 0
-          gameStore.handleCommand({ type: CommandType.Tick })
-        }
+        gameStore.handleCommand({ type: CommandType.Tick, payload: { dt: dt * 1000 } })
       }
 
       gameStore.updateParticles(dt)
@@ -76,7 +69,6 @@ export default defineComponent({
 
     function startLoop() {
       lastTime = 0
-      tickAccumulator = 0
       animFrame = requestAnimationFrame(gameLoop)
     }
 

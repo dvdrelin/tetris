@@ -332,11 +332,16 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
    (разрешён) не устранено~~ — **закрыто (блок 1 сингла)**: в `board.ts` `hasCollision(piece, pos)`
    реализован как `!isValidPosition(piece, pos)` (одна коллизия — одно правило), обёртка `hasCollision`
    из `GameEngine` удалена (`docs/SINGLE_PLAYER_DECISIONS.md`, A9).
-6. Мёртвый расчёт скорости в движке: в `GameEngine.autoDrop()` (`frontend/src/shared/engine/game-engine.ts:294–295`)
+6. ~~Мёртвый расчёт скорости в движке: в `GameEngine.autoDrop()` (`frontend/src/shared/engine/game-engine.ts:294–295`)
    вычисляется локальная `interval` из `GAME_CONFIG.speedConfig` и **не используется** (комментарий: «tick-based,
    move down one row per tick»), а реальный тик живёт в `GameBoard.vue` (`tickAccumulator`, `:60–65`) — C12.
    Уточнение к исходной формулировке: поля `SPEED_CONFIG.autoDropInterval` в коде больше нет —
-   `SpeedConfig` = `initialInterval` / `intervalDecrease` / `minInterval` (`game-config.ts:13–17`).
+   `SpeedConfig` = `initialInterval` / `intervalDecrease` / `minInterval` (`game-config.ts:13–17`)~~ —
+   **закрыто (блок 2 сингла)**: гравитация переехала в движок. `dropInterval(level, mode)` в `game-config.ts`
+   — единственный источник интервала; `GameEngine.tick(dtMs)` копит `gravityAccumulator` и выполняет
+   `while (accumulator >= interval)`; `TickCommand.payload = { dt: number }`; в `GameBoard.vue` больше нет
+   ни интервала, ни аккумулятора; локальная мёртвая `interval` из `autoDrop()` удалена
+   (`docs/SINGLE_PLAYER_DECISIONS.md`, A1/A2/A8, §12.9).
 7. ~~`GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры~~ —
    **закрыто (блок 1 сингла)**: `GameStateSnapshot` вместе с `CellState`, `MoveAction`, `Action`,
    `TickResult`, `GhostPiece` удалён из `types.ts` как неиспользуемый (`docs/SINGLE_PLAYER_DECISIONS.md`, E2).
@@ -482,3 +487,27 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 (`jest-worker` не может создать воркеров) — юнит-тесты запускаются `npx.cmd jest --runInBand`.
 Тесты фронтенда при этом **не типизируются** (`ts-jest` с `isolatedModules: true`, тесты вне
 `include` в `frontend/tsconfig.json`), поэтому типизация проверяется отдельно — `npx.cmd vue-tsc --noEmit`.
+
+### 12.9 Программа «сингл — полностью»: блок 2 (тайминг и гравитация)
+
+Блок 2 закрыл A1, A2, A8 и пункт 6 §12.4 (C12). Механику A3–A6, UI и бэкенд блок 2 не трогал.
+
+| Файл | Изменение |
+|---|---|
+| `frontend/src/shared/config/game-config.ts` | `dropInterval(level, mode)` — единственный источник интервала гравитации; `HARDCORE_SPEED_MULTIPLIER = 0.5`. Таблица Arcade не изменена (`800 − (level−1)·50`, минимум `50` с уровня 16); Hardcore — тот же интервал пополам, но не ниже `minInterval`; некорректный `level` (`0`, `-5`, `NaN`) даёт уровень 1 |
+| `frontend/src/shared/cqrs/commands.ts` | `TickCommand.payload: { dt: number }` — миллисекунды с прошлого тика; UI больше не решает, «пора ли падать» |
+| `frontend/src/shared/engine/game-engine.ts` | новые поля `gravityAccumulator` и `elapsedMs`; `tick(dtMs)` = `while (gravityAccumulator >= interval) { accumulator -= interval; autoDrop(); }` с пересчётом интервала после клиренса; автопадение в **обоих** режимах; `MAX_TICK_DELTA_MS = 250` (фон-вкладка не телепортирует фигуру); `dt` без `Number.isFinite` (NaN/±Infinity) и отрицательный `dt` не двигают фигуру; после фиксации фигуры остаток времени обнуляется и не тратится на новую фигуру; `autoDrop()` без мёртвой локальной `interval`; `MovePiece{down}` делегирует `softDrop()` (на полу — фиксация, не смерть в Hardcore); геттеры `getElapsedMs()`, `getGravityAccumulator()`, `getDropInterval()`; `startGame` обнуляет аккумулятор и `elapsedMs` |
+| `frontend/src/components/GameBoard.vue` | игровой цикл передаёт движку только прошедшее время: `{ type: CommandType.Tick, payload: { dt: dt * 1000 } }`; `tickAccumulator` и расчёт интервала из UI удалены |
+| `frontend/tests/unit/gravity.test.ts` | **добавлен** (16 тестов): таблица интервалов Arcade/Hardcore и защита от битого `level`; аккумулятор времени; несколько клеток за кадр; следование уровню; гравитация в Hardcore; ограничение дельты; NaN/отрицательный `dt`; пауза и Game Over; фиксация при приземлении без «доплаты» новой фигуре; `down` = soft drop (в том числе не убивает в Hardcore); смерть Hardcore по блокировке вбок |
+| `frontend/tests/unit/rotation-kicks.test.ts` | `Tick` вызывается с `payload: { dt: 1000 }` (payload стал обязательным) |
+
+Проверки блока 2 (фактический вывод):
+
+| Команда | Результат |
+|---|---|
+| `npx.cmd vue-tsc --noEmit` (`frontend/`) | пустой вывод, `vue-tsc exit=0` |
+| `npx.cmd jest --runInBand` (`frontend/`) | `Test Suites: 7 passed, 7 total` · `Tests: 125 passed, 125 total` · `jest exit=0` |
+| `npx.cmd playwright test --config tests/playwright.config.ts` (корень) | `19 passed (27.0s)` · `playwright LASTEXITCODE=0` |
+
+Ограничение среды: `npx.cmd playwright test` в песочнице тоже падал на `Error: spawn EPERM`
+(запуск dev-серверов и браузера как дочерних процессов) и был выполнен с расширенным доступом к песочнице.

@@ -8,7 +8,7 @@ import {
   AnyCommand, CommandType, MoveCommand, StartGameCommand
 } from '../cqrs/commands';
 import { AnyQuery, QueryType } from '../cqrs/queries';
-import { GAME_CONFIG, SCORING_CONFIG } from '../config/game-config';
+import { GAME_CONFIG, SCORING_CONFIG, dropInterval } from '../config/game-config';
 
 export interface GameEngineCallbacks {
   onStateChange?: () => void;
@@ -58,6 +58,11 @@ function kicksFor(type: PieceType, from: number, to: number): Kick[] {
   return table[key] ?? [{ x: 0, y: 0 }];
 }
 
+// A single frame delta is capped so that a background tab (rAF paused for seconds) cannot
+// teleport a piece to the bottom in one tick. 250ms is well above a real frame (~16ms) and
+// well below a tab-switch gap.
+const MAX_TICK_DELTA_MS = 250;
+
 export class GameEngine {
   private boardManager: BoardManager;
   private pieceFactory: PieceFactoryProvider;
@@ -79,6 +84,10 @@ export class GameEngine {
   private _isPaused: boolean = false;
   private _isGameOver: boolean = false;
   private mode: GameMode;
+  // Gravity timing lives here, not in the UI: Tick carries elapsed milliseconds and the
+  // engine decides how many rows the piece falls.
+  private gravityAccumulator: number = 0;
+  private elapsedMs: number = 0;
 
   constructor(callbacks: GameEngineCallbacks) {
     this.callbacks = callbacks;
@@ -121,9 +130,11 @@ export class GameEngine {
       case CommandType.HardDrop:
         this.hardDrop();
         return;
-      case CommandType.Tick:
-        this.tick();
+      case CommandType.Tick: {
+        const dt = command.payload?.dt;
+        this.tick(typeof dt === 'number' ? dt : 0);
         return;
+      }
       case CommandType.PauseGame:
         this.pauseGame();
         return;
@@ -187,6 +198,8 @@ export class GameEngine {
     this.linesCleared = 0;
     this.combo = 0;
     this._isGameOver = false;
+    this.gravityAccumulator = 0;
+    this.elapsedMs = 0;
     this.nextPieceType = this.pieceFactory.nextPieceType();
   }
 
@@ -201,7 +214,10 @@ export class GameEngine {
     switch (direction) {
       case 'left': dx = -1; break;
       case 'right': dx = 1; break;
-      case 'down': dy = 1; break;
+      case 'down':
+        // Down is a soft drop: it locks on the floor instead of killing, even in Hardcore.
+        this.softDrop();
+        return;
       default:
         // Unknown movement direction: ignore the command rather than treating it as a move.
         // Rotation is not a movement alias any more — it arrives as RotatePiece.
@@ -280,24 +296,42 @@ export class GameEngine {
 
   // ====== Game Tick ======
 
-  private tick(): void {
+  // dtMs = milliseconds elapsed since the previous Tick. Gravity is accumulated here, so a
+  // dropped frame loses no time: the leftover is carried into the next tick, and a long frame
+  // can pay for several rows. Auto-drop runs in both modes; Hardcore differs by death on a
+  // blocked move, not by having no gravity.
+  private tick(dtMs: number): void {
     if (!this.currentPiece || !this._isRunning || this._isPaused) return;
 
-    // Arcade mode: auto-drop
-    if (this.mode === GameMode.Arcade) {
+    // A missing, negative, NaN or Infinity delta contributes no time: gravity can never run
+    // backwards and the accumulator can never become NaN.
+    const dt = Number.isFinite(dtMs) ? Math.min(Math.max(dtMs, 0), MAX_TICK_DELTA_MS) : 0;
+    this.elapsedMs += dt;
+    this.gravityAccumulator += dt;
+
+    let interval = dropInterval(this.level, this.mode);
+    while (this.gravityAccumulator >= interval) {
+      this.gravityAccumulator -= interval;
+      const pieceBefore: Piece | null = this.currentPiece;
       this.autoDrop();
+      // The piece locked (or the game ended): stop spending the remaining time on a new piece.
+      if (this._isGameOver || this.currentPiece !== pieceBefore) {
+        this.gravityAccumulator = 0;
+        break;
+      }
+      // A line clear can raise the level, and the level changes the interval.
+      interval = dropInterval(this.level, this.mode);
     }
+
     this.callbacks.onStateChange?.();
   }
 
   private autoDrop(): void {
     if (!this.currentPiece) return;
-    const config = GAME_CONFIG.speedConfig;
-    const interval = Math.max(config.minInterval, config.initialInterval - (this.level - 1) * config.intervalDecrease);
-    // For tick-based, we just move down one row per tick
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x, y: this.currentPos.y + 1 })) {
       this.currentPos.y += 1;
     } else {
+      // Landed by gravity: lock normally, also in Hardcore (death there is for blocked moves).
       this.placePiece();
     }
   }
@@ -444,6 +478,21 @@ export class GameEngine {
 
   getMode(): GameMode {
     return this.mode;
+  }
+
+  // Milliseconds of active play accumulated by the engine (Tick deltas, capped per tick).
+  getElapsedMs(): number {
+    return this.elapsedMs;
+  }
+
+  // Milliseconds of gravity time still unpaid towards the next automatic row.
+  getGravityAccumulator(): number {
+    return this.gravityAccumulator;
+  }
+
+  // Current gravity interval, ms per row, for this level and mode.
+  getDropInterval(): number {
+    return dropInterval(this.level, this.mode);
   }
 
 }

@@ -35,6 +35,9 @@ export interface HardDropCommand extends Command {
 
 export interface TickCommand extends Command {
   type: CommandType.Tick;
+  // Milliseconds elapsed since the previous Tick. The engine owns gravity: it accumulates
+  // this time and decides how many rows the piece falls. UI does not compute intervals.
+  payload: { dt: number };
 }
 
 export interface StartGameCommand extends Command {
