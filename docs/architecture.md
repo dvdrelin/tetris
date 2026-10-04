@@ -89,7 +89,7 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │  ┌──────────┐                          ▼                     │
 │  │ HudView  │◄──────────── GameView.vue ◄─ keydown            │
 │  └──────────┘   watch(gameState)      (handleKeydown)         │
-│       ▲  render next-piece canvas                              │
+│       ▲  render hold + queue canvases                          │
 │       │                                                        │
 │  ┌────┴───────────────────────────────────────────┐          │
 │  │              Pinia: gameStore                   │          │
@@ -101,7 +101,7 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │       │ callbacks: onStateChange / onLineClear / onGameOver   │
 │       ▼                                                        │
 │  ┌──────────────────────── GameEngine (CQRS) ───────────────┐ │
-│  │  handleCommand() → start/move/rotate/drop/tick/pause…     │ │
+│  │  handleCommand() → start/move/rotate/hold/drop/tick/pause…  │ │
 │  │  handleQuery()  → getGameState/getNextPiece/getBoardState  │ │
 │  │   ├─ BoardManager (сетка, коллизии, clearLines)           │ │
 │  │   ├─ PieceFactoryProvider / PieceFactory (7-bag)          │ │
@@ -125,51 +125,75 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 ### 4.1 Доменный слой (`frontend/src/shared`)
 Чистая, без-UI логика игры:
 - **`types.ts`** — все типы и enum'ы проекта: `Cell`, `Position`, `Piece`, `GameState`,
-  `Particle`, конфиги (`GameConfig`, `ScoringConfig`, `SpeedConfig`) и enum'ы `PieceType`, `GameMode`.
+  `Particle`, конфиги (`GameConfig`, `ScoringConfig`, `SpeedConfig`, `LockConfig`) и enum'ы `PieceType`, `GameMode`.
   Мёртвые `CellState`, `GameStateSnapshot`, `MoveAction`, `Action`, `TickResult`, `GhostPiece`
-  удалены (блок 1 сингла, `docs/SINGLE_PLAYER_DECISIONS.md` E2).
+  удалены (блок 1 сингла, `docs/SINGLE_PLAYER_DECISIONS.md` E2). В `GameState` больше нет
+  одиночного `nextPieceType`: очередь — `nextQueue: PieceType[]` (ближайшая фигура первая),
+  плюс слот удержания `holdType: PieceType | null` и флаг `canHold: boolean`
+  (блок 3 сингла, A4/A6).
 - **`board.ts`** — класс `BoardManager`: создание/сброс сетки, `setCell`/`setCells`, валидация
   позиции (`isValidPosition`), коллизии (`hasCollision` = `!isValidPosition`, одно правило —
   одна реализация), `clearLines` (удаление заполненных строк),
   `getSnapshot`/`getCells`. **Ghost-расчёта здесь нет** (в предыдущей редакции документа он был
-  приписан `board.ts` ошибочно): позиция ghost вычисляется в Pinia-сторе — `stores/gameStore.ts:152`
-  (`getGhostY`), а движок `ghostY` не заполняет. Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
+  приписан `board.ts` ошибочно): позиция ghost вычисляется в Pinia-сторе — `stores/gameStore.ts:145`
+  (`getGhostY`), а движок `ghostY` не заполняет (перенос расчёта в движок — блок 5, A7). Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
 - **`pieces.ts`** — таблица форм всех 7 фигур (`PIECE_SHAPES`, каждая из 4 ориентаций =
-  корректный тетромино по 4 клетки, все — истинные 90°-повороты) + маппинг цветов; классы
-  `PieceFactory` (7-bag рандомизатор с Fisher–Yates), `PieceFactoryProvider`, и вспомогательная
+  корректный тетромино по 4 клетки, все — истинные 90°-повороты) + экспортируемый
+  **`PIECE_COLOR_INDEX`** (`PieceType` → индекс палитры `CELL_COLORS`; раньше был приватным `COLORS`,
+  из-за чего HUD красил превью по строковому enum и получал один цвет на все фигуры — C1, закрыто в блоке 3);
+  классы `PieceFactory` (7-bag рандомизатор с Fisher–Yates), `PieceFactoryProvider`, и вспомогательная
   функция **`buildPiece(type, shape)`** — собирает `{type, shape, colors}` под заданную ориентацию.
   При повороте движок пересобирает фишку через `buildPiece` (раньше менялись только индекс
-  вращения и `shape`, но не цвета → «кривые» фигуры). Импортируется в `game-engine.ts`.
-- **`game-config.ts`** — три замороженных константы: `SCORING_CONFIG`, `SPEED_CONFIG`,
-  `GAME_CONFIG` (10×20); плюс `HARDCORE_SPEED_MULTIPLIER` и функция **`dropInterval(level, mode)`** —
+  вращения и `shape`, но не цвета → «кривые» фигуры). Импортируется в `game-engine.ts` и `HudView.vue`.
+- **`game-config.ts`** — замороженные константы: `SCORING_CONFIG`, `SPEED_CONFIG`, `LOCK_CONFIG`
+  (`delayMs: 500`, `maxResets: 15`), `QUEUE_SIZE` (= 3), `GAME_CONFIG` (10×20, включает `lockConfig`);
+  плюс `HARDCORE_SPEED_MULTIPLIER` и функция **`dropInterval(level, mode)`** —
   единственный источник интервала гравитации (блок 2 сингла, A1).
 
 ### 4.2 CQRS (`frontend/src/shared/cqrs`)
 - **`commands.ts`** — enum `CommandType` и набор интерфейсов команд с `payload`.
+  `RotatePiece.payload.direction` принимает `'cw' | 'ccw' | '180'` (блок 3, A5); добавлена
+  `HoldPiece` без payload (блок 3, A4).
 - **`queries.ts`** — enum `QueryType` и интерфейсы запросов.
 
 ### 4.3 Игровой движок (`GameEngine`, `game-engine.ts`)
 Сердце логики. Хранит приватное состояние (сетка, текущая фигура, позицию, вращение,
 счёт, уровень, линии, комбо, флаги) и exposes его через:
 - **Команды** — `handleCommand()` = `switch` с сужением типа (не `handlerMap`): StartGame, MovePiece
-  (`left`/`right`/`down`, где `down` = soft drop), RotatePiece (+ wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop,
-  HardDrop, Tick (`payload: { dt: number }`), Pause/Resume. Вращение больше не проходит через `MovePiece`
+  (`left`/`right`/`down`, где `down` = soft drop), RotatePiece (`cw` / `ccw` / `180`, wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop,
+  HardDrop, HoldPiece, Tick (`payload: { dt: number }`), Pause/Resume. Вращение больше не проходит через `MovePiece`
   (блок 1 сингла, B4).
 - **Гравитация принадлежит движку** (блок 2 сингла, A1/A2/A8): `tick(dtMs)` копит `gravityAccumulator`
   и выполняет `while (accumulator >= dropInterval(level, mode))`; автопадение работает в обоих режимах
   (в Hardcore интервал пополам); дельта кадра ограничена `MAX_TICK_DELTA_MS = 250`; после фиксации
   фигуры остаток времени не «доигрывается» новой фигуре. UI передаёт только прошедшее время.
+- **Lock delay (блок 3, A3)** — `tick()` развилён по состоянию фигуры: если она уже на опоре
+  (`isGrounded()`), время кадра идёт в `lockAccumulator` и фигура фиксируется при
+  `lockAccumulator >= LOCK_CONFIG.delayMs` (500 мс); иначе работают обычные гравитационные шаги.
+  Успешные перемещение/поворот на опоре вызывают `onSuccessfulManipulation()`: таймер обнуляется,
+  но не более `LOCK_CONFIG.maxResets` (15) раз — 16-й манёвр фиксирует фигуру. Отказавший ход
+  таймер не сбрасывает; приземление от гравитации начинает отсчёт 500 мс со следующего `Tick`
+  (фигура не фиксируется в том же кадре); soft drop на пол и hard drop фиксируют сразу.
+  Пауза и фоновая вкладка таймер не тратят — он двигается только `dt`-ом.
+- **Hold и очередь (блок 3, A4/A6)** — `nextQueue: PieceType[]` всегда держит `QUEUE_SIZE` (3)
+  фигур и пополняется из фабрики; `holdPiece()` меняет активную фигуру местами со слотом `holdType`
+  один раз на фигуру (`canHold`), сбрасывает позицию спавна, `lockAccumulator`, `lockResets` и
+  `gravityAccumulator`, очков не даёт. Очередь сдвигается при фиксации фигуры и при hold.
 - **Запросы** — `handleQuery()`: GetGameState / GetNextPiece / GetBoardState.
-- Вспомогательное: спавн фигур (`spawnNextPiece`, проверка game over), размещение и
+- Вспомогательное: спавн фигур (`spawnNextPiece`, `spawnPiece`, проверка game over), размещение и
   подсчёт очков (`placePiece`, `calculateScore` с комбо-множителем). **Поворот** — в
-  `rotatePiece`: пробует wall-kick'и SRS, а при успешном повороте пересобирает фишку через
+  `rotatePiece`: `cw`/`ccw` дают ±1 шаг индекса, `180` — два шага за одну команду
+  (`KICKS_JLSTZ`/`KICKS_I` содержат ключи `0>2`, `2>0`, `1>3`, `3>1`; у `O` — только `(0,0)`),
+  затем пробуются wall-kick'и SRS, а при успешном повороте фишка пересобирается через
   `buildPiece(type, rotatedShape)` (форма + цвета остаются согласованными). Система частиц в
   движке удалена (B6); визуальные эффекты — в хранилище/UI.
 
 ### 4.4 Pinia + UI
 - **`gameStore.ts`** — мост между UI и движком: держит `gameState` (DTO) и `particles`,
-  инстанцирует один `GameEngine`, переводит результат запроса в DTO, вычисляет позицию
-  «призрачной» фигуры (`getGhostY`), обрабатывает клавиатуру.
+  инстанцирует один `GameEngine`, переводит результат запроса в DTO (`GameStateDTO` включает
+  `nextQueue: string[]`, `holdType: string | null`, `canHold: boolean`), вычисляет позицию
+  «призрачной» фигуры (`getGhostY`), обрабатывает клавиатуру (`C`/`Shift` = hold, `R` = поворот 180°,
+  `Z`/`Q` = CCW, `↑`/`X` = CW).
 - **Компоненты:**
   - `App.vue` — переключатель между меню и игрой (`v-if="showMenu"` / `v-else`). Важно:
     `showMenu` должен быть в `return {}` из `setup()` (иначе шаблон падает с «property not defined»).
@@ -178,9 +202,13 @@ tetris/                          (корень monorepo, npm workspaces: fronten
     частицы, оверлеи паузы/game over) и **игровой цикл** на `requestAnimationFrame`: каждый кадр
     отдаёт движку прошедшее время (`Tick` + `dt`), интервал и аккумулятор в UI больше не живут
     (блок 2 сингла). Рисует текущую фигуру по `currentPiece.shape`.
-  - `HudView.vue` — HUD (счёт/уровень/линии/комбо), превью следующей фигуры на canvas,
-    кнопки паузы; рендерится через **`<template>`** (раньше был строковый `render()`, отдававший
-    HTML как текстовый узел → пустой экран; см. errors.md §H). Использует `gameStore.gameState`.
+  - `HudView.vue` — HUD (счёт/уровень/линии/комбо), слот удержания («УДЕРЖАНИЕ») и превью
+    очереди из `QUEUE_SIZE` фигур («СЛЕДУЮЩИЕ») на canvas'ах 76×76: прозрачность по удалённости
+    от текущей фигуры (`QUEUE_OPACITY = [1, 0.6, 0.35]`), слот hold затемняется до `0.4`, когда
+    hold на эту фигуру уже использован (`canHold === false`). Геометрия превью — `PIECE_SHAPES[type][0]`,
+    цвет — `PIECE_COLOR_INDEX` (общая палитра с доской, C1). Кнопки паузы; рендерится через
+    **`<template>`** (раньше был строковый `render()`, отдававший HTML как текстовый узел →
+    пустой экран; см. errors.md §H). Использует `gameStore.gameState`.
 
 ### 4.5 Backend
 - **`index.ts`** — Express + HTTP-сервер (порт `PORT || 3000`), роутинг `/api`,
@@ -229,15 +257,16 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 MenuView.startGame(mode) → gameStore.startGame(mode)
    → engine.handleCommand({StartGame, payload:{mode}})
      → reset() + spawnNextPiece(); isRunning=true
+     → nextQueue пополняется до QUEUE_SIZE (3), holdType=null, canHold=true
 gameStore.updateState() → пересчёт DTO + ghostY → re-render
 ```
 
 ### 5.2 Ввод игрока → движок
 ```
 keydown (в GameView) → gameStore.handleKey(e)
-   → engine.handleCommand({MovePiece/Rotate/SoftDrop/HardDrop/Pause…})
+   → engine.handleCommand({MovePiece/Rotate(cw|ccw|180)/SoftDrop/HardDrop/HoldPiece/Pause…})
      → изменение приватного состояния + onStateChange()
-gameStore.updateState() → gameState.value = {...}  → watch() → GameBoard.render()
+gameStore.updateState() → gameState.value = {...}  → watch() → GameBoard.render() + HudView (превью очереди/hold)
 ```
 
 ### 5.3 Игровой цикл рендера (GameBoard.vue)
@@ -272,6 +301,9 @@ placePiece() → clearLines() > 0
   прошедшее время (`Tick` + `dt`), а **накопитель времени** (`gravityAccumulator`) и интервал
   (`dropInterval`) живут в движке (блок 2 сингла). Дельта кадра, которую движок принимает,
   ограничена `MAX_TICK_DELTA_MS = 250` мс.
+- Lock delay (`lockAccumulator`, `lockResets`) тоже двигается **только `dt`-ом** (блок 3): ни `Date.now()`,
+  ни таймаутов в движке нет, поэтому пауза и фоновая вкладка не «проедают» 500 мс и не дают лишних
+  сбросов таймера.
 - Частицы реализованы **одной системой** в хранилище (`store.particles`, рендерит GameBoard); движковая система частиц удалена (B6 — была мёртвой, не связана с очисткой строк).
 - Persistence — атомарная запись через temp + rename (D3), конкурентность/блокировки на уровне ОС.
 
@@ -280,8 +312,9 @@ placePiece() → clearLines() > 0
 ## 7. Конфигурирование
 
 Игра полностью параметризуется через `game-config.ts`: размер поля (10×20), кривая скорости
-(`initialInterval=800`, `intervalDecrease=50`, `minInterval=50`), `HARDCORE_SPEED_MULTIPLIER=0.5`
-и таблица очков (`single/double/triple/tetris/softDrop/hardDrop`, комбо-множитель 1.5).
+(`initialInterval=800`, `intervalDecrease=50`, `minInterval=50`), `HARDCORE_SPEED_MULTIPLIER=0.5`,
+`LOCK_CONFIG` (`delayMs=500`, `maxResets=15`), `QUEUE_SIZE=3` и таблица очков
+(`single/double/triple/tetris/softDrop/hardDrop`, комбо-множитель 1.5).
 Интервал гравитации берётся из одной функции — `dropInterval(level, mode)`. Изменение любого
 параметра не требует правки игровой логики.
 

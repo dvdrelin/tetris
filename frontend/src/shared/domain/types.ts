@@ -25,7 +25,12 @@ export interface GameState {
   currentPiece: Piece | null;
   currentPos: Position;
   currentRotation: RotationState;
-  nextPieceType: PieceType;
+  // Upcoming pieces, nearest first (A6). The queue is the single source: there is no separate
+  // "next piece" field any more.
+  nextQueue: PieceType[];
+  // Held piece slot (A4): one swap per piece, `canHold` tells the UI whether the swap is used up.
+  holdType: PieceType | null;
+  canHold: boolean;
   score: number;
   level: number;
   linesCleared: number;
@@ -61,11 +66,17 @@ export interface SpeedConfig {
   minInterval: number;
 }
 
+export interface LockConfig {
+  readonly delayMs: number;
+  readonly maxResets: number;
+}
+
 export interface GameConfig {
   readonly boardWidth: number;
   readonly boardHeight: number;
   readonly speedConfig: SpeedConfig;
   readonly scoring: ScoringConfig;
+  readonly lockConfig: LockConfig;
 }
 
 export interface ScoringConfig {

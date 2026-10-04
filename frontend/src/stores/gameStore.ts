@@ -16,7 +16,9 @@ export interface GameStateDTO {
   currentPiece: { type: string; shape: number[][]; colors: number[][] } | null
   currentPos: { x: number; y: number } | null
   currentRotation: { index: number } | null
-  nextPieceType: string
+  nextQueue: string[]
+  holdType: string | null
+  canHold: boolean
   score: number
   level: number
   linesCleared: number
@@ -54,7 +56,9 @@ export const useGameStore = defineStore('game', () => {
     currentPiece: null,
     currentPos: null,
     currentRotation: null,
-    nextPieceType: 'I',
+    nextQueue: [],
+    holdType: null,
+    canHold: true,
     score: 0,
     level: 1,
     linesCleared: 0,
@@ -123,7 +127,9 @@ export const useGameStore = defineStore('game', () => {
       } : null,
       currentPos: state.currentPos,
       currentRotation: state.currentRotation,
-      nextPieceType: state.nextPieceType,
+      nextQueue: [...state.nextQueue],
+      holdType: state.holdType,
+      canHold: state.canHold,
       score: state.score,
       level: state.level,
       linesCleared: state.linesCleared,
@@ -192,6 +198,11 @@ export const useGameStore = defineStore('game', () => {
       case ' ': handleCommand({ type: CommandType.HardDrop }); break
       case 'z':
       case 'q': handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'ccw' } }); break
+      case 'r':
+      case 'R': handleCommand({ type: CommandType.RotatePiece, payload: { direction: '180' } }); break
+      case 'c':
+      case 'C':
+      case 'Shift': handleCommand({ type: CommandType.HoldPiece }); break
       case 'p':
         togglePause()
         break

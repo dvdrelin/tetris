@@ -42,6 +42,9 @@ tmp-*.mjs
 # Audit scratch: JS-клон движка и probe-скрипты — в образ не нужны
 audit-verify/
 
+# Генерируемый knowledge-граф проекта (graphify-out/) — в образ не нужен
+graphify-out/
+
 # Coverage
 coverage/
 

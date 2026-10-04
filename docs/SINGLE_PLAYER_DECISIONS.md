@@ -22,10 +22,10 @@ MP (старый и новый дизайн) — отдельная тема, б
 |---|---|---|---|---|
 | A1 | Кто владеет гравитацией | Интервал падения считался в UI (`GameBoard.vue`), движок получал готовый «тик» и сам интервал не знал | **Гравитация — ответственность движка.** UI передаёт только прошедшее время (`Tick` + `dt`), движок сам копит аккумулятор и решает, сколько клеток упала фигура | ✅ блок 2 |
 | A2 | Автопадение в Hardcore | `tick()` делал авто-drop только в Arcade: в Hardcore фигура стояла на месте | **Автопадение есть в обоих режимах**; Hardcore отличается смертью при блокировке, а не отсутствием гравитации. Скорость Hardcore — та же таблица, интервал пополам (`HARDCORE_SPEED_MULTIPLIER = 0.5`, не ниже `minInterval`) | ✅ блок 2 |
-| A3 | Lock delay | Фигура блокировалась в тот же момент, когда касалась опоры: «клиренс» и манёвры у пола невозможны | **Lock delay 500 мс + 15 сбросов таймера** (перемещение/поворот откладывает фиксацию). Soft drop на пол и hard drop фиксируют сразу | ⏳ блок 3 |
-| A4 | Hold | Команды hold нет, клавиша не занята | **Hold вводится**: `C` / `Shift`, не более одного hold на фигуру, слот в HUD | ⏳ блок 3 |
-| A5 | Поворот на 180° | Только ±90° | **180° добавлен** (клавиша `R`, отдельный небольшой набор киков) | ⏳ блок 3 |
-| A6 | Очередь фигур | В UI показывалась одна следующая фигура | **Очередь из 3 фигур.** Визуал зафиксирован пользователем: «чем дальше фигура в очереди от текущей, тем прозрачнее» (≈ 1.0 / 0.6 / 0.35) | ⏳ блок 3 |
+| A3 | Lock delay | Фигура блокировалась в тот же момент, когда касалась опоры: «клиренс» и манёвры у пола невозможны | **Lock delay 500 мс + 15 сбросов таймера** (перемещение/поворот откладывает фиксацию). Soft drop на пол и hard drop фиксируют сразу | ✅ блок 3 |
+| A4 | Hold | Команды hold нет, клавиша не занята | **Hold вводится**: `C` / `Shift`, не более одного hold на фигуру, слот в HUD | ✅ блок 3 |
+| A5 | Поворот на 180° | Только ±90° | **180° добавлен** (клавиша `R`, отдельный небольшой набор киков) | ✅ блок 3 |
+| A6 | Очередь фигур | В UI показывалась одна следующая фигура | **Очередь из 3 фигур.** Визуал зафиксирован пользователем: «чем дальше фигура в очереди от текущей, тем прозрачнее» (≈ 1.0 / 0.6 / 0.35) | ✅ блок 3 |
 | A7 | Ghost («призрак») | `ghostY` считался в сторе (`getGhostY`) своей копией проверки коллизий | **Единственный источник — движок** (`GameEngine.getGhostY()`); сторе остаётся только прочитать значение | ⏳ блок 5 |
 | A8 | Аккумулятор времени | `tickAccumulator` в UI сбрасывался в 0, а не вычитал интервал: при просадке кадра терялось время | **Цикл `while (acc >= interval)`** на стороне движка, dt приходит каждый кадр | ✅ блок 2 |
 | A9 | Две функции коллизий | `hasCollision` и `isValidPosition` в `board.ts` имели разную семантику (`boardY < 0`), `hasCollision` движком не вызывалась | **Одно правило — одна реализация:** `hasCollision(piece, pos) === !isValidPosition(piece, pos)`; обёртка `hasCollision` в движке удалена | ✅ блок 1 |
@@ -36,7 +36,7 @@ MP (старый и новый дизайн) — отдельная тема, б
 
 | # | Вопрос | Что показал аудит | Решение | Статус |
 |---|---|---|---|---|
-| B1 | Клавиши вращения | `↑` и `w` уходили в `MovePiece{direction:'rotateCW'}`, `z` — тоже в CW, `c` — в CW | **Единая карта:** `↑` / `X` = CW, `Z` / `Q` = CCW; `A`/`D`/`S`/`W` сохранены | ✅ блок 1 (карта), `R` — блок 3 |
+| B1 | Клавиши вращения | `↑` и `w` уходили в `MovePiece{direction:'rotateCW'}`, `z` — тоже в CW, `c` — в CW | **Единая карта:** `↑` / `X` = CW, `Z` / `Q` = CCW; `A`/`D`/`S`/`W` сохранены | ✅ блок 1 (карта) + блок 3 (`R` = 180°, `C`/`Shift` = hold) |
 | B2 | DAS / ARR | Удержание клавиши давало только автоповтор ОС; `keyup` не слушался, `e.repeat` не отсекался | **Собственный DAS 167 мс / ARR 33 мс** + слушатель `keyup` + игнор `e.repeat` | ⏳ блок 4 |
 | B3 | Мобильные устройства | Touch/pointer-обработчиков в `frontend/src` нет | **Поддержка мобильных обязательна** (тач-контролы сингла) | ⏳ блок 4 |
 | B4 | Вращение как «движение» | Поворот был возможен и как `MovePiece`, и как `RotatePiece` | **Только `RotatePiece`.** `MoveCommand.payload.direction` сужен до `'left' \| 'right' \| 'down'` — псевдо-направления больше не компилируются | ✅ блок 1 |
@@ -45,7 +45,7 @@ MP (старый и новый дизайн) — отдельная тема, б
 
 | # | Вопрос | Что показал аудит | Решение | Статус |
 |---|---|---|---|---|
-| C1 | Цвет превью очереди | `HudView.vue` брал форму из `PIECE_SHAPES[nextPieceType]`, а цвет — из `CELL_COLORS[nextPieceType as unknown as number]`: строковый enum → `undefined` → всегда `CELL_COLORS[1]` (циан) | **Индекс цвета экспортируется из `pieces.ts`** и используется и в canvas, и в HUD | ⏳ блок 6 |
+| C1 | Цвет превью очереди | `HudView.vue` брал форму из `PIECE_SHAPES[nextPieceType]`, а цвет — из `CELL_COLORS[nextPieceType as unknown as number]`: строковый enum → `undefined` → всегда `CELL_COLORS[1]` (циан) | **Индекс цвета экспортируется из `pieces.ts`** и используется и в canvas, и в HUD | ✅ блок 3 (`PIECE_COLOR_INDEX`, общий с доской) |
 | C2 | Кнопка паузы | `⏸` рендерился при `isRunning && !isGameOver`, `▶` — во `v-else-if="isPaused"`, куда поток не доходил | **Кнопка управляется `isPaused`:** один элемент, ⏸/▶ | ⏳ блок 6 |
 | C3 | Подсказки клавиш | В меню было написано «↑ / ↓ — Вращение / Сброс», что не соответствует коду | **Общий `CONTROL_HINTS`**, который читают и меню, и HUD | ⏳ блок 6 |
 | C4 | Имя игрока | `playerName` жёстко `'Игрок'`, поля ввода нет | **Поле ввода + `localStorage`**, валидация 1–32 символа (потолок бэкенда) | ⏳ блок 6 |
@@ -134,3 +134,60 @@ MP (старый и новый дизайн) — отдельная тема, б
 - `frontend/tests/unit/gravity.test.ts` — новый файл: 16 тестов на таблицу интервалов,
   аккумулятор, несколько клеток за кадр, Hardcore-гравитацию, ограничение дельты, паузу/game over,
   фиксацию при приземлении и «down — это soft drop».
+
+---
+
+## Проверка блока 3 (команды и их вывод)
+
+| Команда | Вывод |
+|---|---|
+| `npx.cmd vue-tsc --noEmit` (в `frontend/`) | пустой вывод, `LASTEXITCODE=0` |
+| `npx.cmd jest --runInBand` (в `frontend/`) | `Test Suites: 8 passed, 8 total` · `Tests: 148 passed, 148 total` |
+| `npx.cmd jest --runInBand tests/unit/<suite>.test.ts` (в `frontend/`) | `board 14` · `engine 17` · `gravity 22` · `mechanics 17` · `pieces 12` · `renderer 8` · `rotation-geometry 44` · `rotation-kicks 14` (сумма = 148) |
+| `npx.cmd jest --runInBand` (в `backend/`) | `Test Suites: 3 passed, 3 total` · `Tests: 36 passed, 36 total` |
+| `npx.cmd playwright test --config tests/playwright.config.ts` (в корне) | `19 passed (26.6s)` · `LASTEXITCODE=0` |
+
+Важно про запуск E2E: в этом репозитории Playwright запускается **только** с явным конфигом
+(`npm run test:e2e` = `playwright test --config tests/playwright.config.ts`). Без `--config` он не
+находит конфигурацию, сканирует всё дерево и падает на jest-файлах с
+`ReferenceError: describe is not defined` (`backend/tests/unit/*.test.ts`, `frontend/tests/unit/*.test.ts`).
+
+## Что изменено в коде блока 3
+
+- `frontend/src/shared/config/game-config.ts` — `LOCK_CONFIG = Object.freeze({ delayMs: 500, maxResets: 15 })`,
+  `QUEUE_SIZE = 3`; `GAME_CONFIG` получил `lockConfig: LOCK_CONFIG`.
+- `frontend/src/shared/domain/types.ts` — `GameState`: вместо `nextPieceType` →
+  `nextQueue: PieceType[]`, `holdType: PieceType | null`, `canHold: boolean`; новый `LockConfig`,
+  `GameConfig.lockConfig`.
+- `frontend/src/shared/cqrs/commands.ts` — `CommandType.HoldPiece` + `HoldPieceCommand` в `AnyCommand`;
+  `RotateCommand.payload.direction`: `'cw' | 'ccw' | '180'`.
+- `frontend/src/shared/domain/pieces.ts` — приватный `COLORS` → экспортируемый `PIECE_COLOR_INDEX`
+  (его же использует `buildPiece`), C1.
+- `frontend/src/shared/engine/game-engine.ts` — `nextQueue`/`fillQueue()` (всегда `QUEUE_SIZE`),
+  `holdPiece()` + `canHold`, `lockAccumulator`/`lockResets` + `isGrounded()` + `onSuccessfulManipulation()`,
+  набор киков 180° (`0>2`, `2>0`, `1>3`, `3>1`; `O` — только `(0,0)`), `spawnPiece(type)` с
+  центрированием по ширине фигуры; геттеры `getNextQueue()`, `getHoldType()`, `canHoldPiece()`,
+  `getCurrentRotation()`, `getLockAccumulator()`, `getLockResets()`.
+- `frontend/src/stores/gameStore.ts` — DTO `nextQueue`/`holdType`/`canHold`; клавиши `R` →
+  `RotatePiece{direction:'180'}`, `C`/`Shift` → `HoldPiece`.
+- `frontend/src/components/HudView.vue` — слот «УДЕРЖАНИЕ» + `QUEUE_SIZE` превью «СЛЕДУЮЩИЕ»
+  (canvas 76×76, геометрия `PIECE_SHAPES[type][0]`, цвет `PIECE_COLOR_INDEX`), прозрачность
+  `QUEUE_OPACITY = [1, 0.6, 0.35]` и `HOLD_USED_OPACITY = 0.4` при использованном hold;
+  перерисовка по `watch` на ключе `${nextQueue}|${holdType}|${canHold}`.
+- `frontend/tests/unit/mechanics.test.ts` — новый файл, 17 тестов: очередь (длина, порядок,
+  пополнение, копия снапшота), hold (обмен со слотом, запрет второго hold, возврат удержанной
+  фигуры, отсутствие очков/фиксации, игнор на паузе, сброс lock-состояния, спавн `y = 0`,
+  видимость в DTO), 180° (все четыре перехода индексов, эквивалентность двум CW на L, кейс с киком,
+  полностью заблокированный поворот → Arcade жив / Hardcore смерть, трата сброса на опоре).
+- `frontend/tests/unit/gravity.test.ts` — 16 → 22 теста: новая сюита «Lock delay (A3)» (фигура на
+  опоре остаётся управляемой 500 мс, манёвр перезапускает таймер, 15 сбросов и 16-й манёвр,
+  отказ хода не сбрасывает, приземление от гравитации не фиксирует в том же кадре, пауза не тратит
+  таймер) + переписанный Hardcore-тест под lock delay.
+- `frontend/tests/unit/rotation-kicks.test.ts` — тест «soft drop до пола фиксирует всю фигуру»:
+  30 мягких сбросов → 16 (лишние сбросы давали приземление следующей фигуры на башню из I и
+  +4 клетки к ожидаемому снимку).
+
+Граница блока 3 (осознанно): механика движка + очередь/hold в HUD. DAS/ARR, `keyup`, `e.repeat`,
+тач-контролы — блок 4; `getGhostY` в движке — блок 5; кнопка паузы, общие подсказки, имя игрока,
+`engine.stop()` — блок 6. Клавиши `R` и `C` подключены минимально, чтобы механику можно было
+тестировать; полноценная обработка удержания клавиш — в блоке 4.

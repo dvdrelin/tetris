@@ -4,6 +4,7 @@ export enum CommandType {
   RotatePiece = 'RotatePiece',
   SoftDrop = 'SoftDrop',
   HardDrop = 'HardDrop',
+  HoldPiece = 'HoldPiece',
   Tick = 'Tick',
   PauseGame = 'PauseGame',
   ResumeGame = 'ResumeGame',
@@ -22,7 +23,8 @@ export interface MoveCommand extends Command {
 
 export interface RotateCommand extends Command {
   type: CommandType.RotatePiece;
-  payload: { direction: 'cw' | 'ccw' };
+  // '180' is a half turn (A5): one command, one wall-kick attempt, not two 90° rotations.
+  payload: { direction: 'cw' | 'ccw' | '180' };
 }
 
 export interface SoftDropCommand extends Command {
@@ -31,6 +33,11 @@ export interface SoftDropCommand extends Command {
 
 export interface HardDropCommand extends Command {
   type: CommandType.HardDrop;
+}
+
+export interface HoldPieceCommand extends Command {
+  type: CommandType.HoldPiece;
+  // Swaps the active piece with the hold slot. The engine enforces "one hold per piece".
 }
 
 export interface TickCommand extends Command {
@@ -53,4 +60,4 @@ export interface ResumeGameCommand extends Command {
   type: CommandType.ResumeGame;
 }
 
-export type AnyCommand = MoveCommand | RotateCommand | SoftDropCommand | HardDropCommand | TickCommand | StartGameCommand | PauseGameCommand | ResumeGameCommand;
+export type AnyCommand = MoveCommand | RotateCommand | SoftDropCommand | HardDropCommand | HoldPieceCommand | TickCommand | StartGameCommand | PauseGameCommand | ResumeGameCommand;

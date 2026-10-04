@@ -1,4 +1,4 @@
-import { GameConfig, GameMode, ScoringConfig, SpeedConfig } from '../domain/types';
+import { GameConfig, GameMode, LockConfig, ScoringConfig, SpeedConfig } from '../domain/types';
 
 export const SCORING_CONFIG: ScoringConfig = Object.freeze({
   single: 100,
@@ -29,9 +29,21 @@ export function dropInterval(level: number, mode: GameMode): number {
   return Math.max(config.minInterval, scaled);
 }
 
+// Lock delay (A3). A piece that landed by gravity stays controllable for `delayMs`; a successful
+// move or rotation while it is on the ground restarts that timer, at most `maxResets` times.
+// Soft drop onto the surface and hard drop lock immediately and ignore the timer.
+export const LOCK_CONFIG: LockConfig = Object.freeze({
+  delayMs: 500,
+  maxResets: 15,
+});
+
+// How many upcoming pieces the engine keeps visible in the queue (A6).
+export const QUEUE_SIZE = 3;
+
 export const GAME_CONFIG: GameConfig = Object.freeze({
   boardWidth: 10,
   boardHeight: 20,
   speedConfig: SPEED_CONFIG,
   scoring: SCORING_CONFIG,
+  lockConfig: LOCK_CONFIG,
 });

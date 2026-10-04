@@ -8,7 +8,7 @@ import {
   AnyCommand, CommandType, MoveCommand, StartGameCommand
 } from '../cqrs/commands';
 import { AnyQuery, QueryType } from '../cqrs/queries';
-import { GAME_CONFIG, SCORING_CONFIG, dropInterval } from '../config/game-config';
+import { GAME_CONFIG, LOCK_CONFIG, QUEUE_SIZE, SCORING_CONFIG, dropInterval } from '../config/game-config';
 
 export interface GameEngineCallbacks {
   onStateChange?: () => void;
@@ -32,6 +32,12 @@ const KICKS_JLSTZ: Record<string, Kick[]> = {
   '3>2': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: -2 }, { x: 1, y: -2 }],
   '3>0': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: -1 }, { x: 0, y: 2 }, { x: 1, y: 2 }],
   '0>3': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: 1 }, { x: 0, y: -2 }, { x: -1, y: -2 }],
+  // 180° turns (A5) have their own kick set: a half turn is one rotation with one kick attempt,
+  // not two 90° rotations. Classic y-up offsets (0,0) (±1,0) (0,±1), y inverted for engine coords.
+  '0>2': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
+  '2>0': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
+  '1>3': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
+  '3>1': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
 };
 
 const KICKS_I: Record<string, Kick[]> = {
@@ -43,6 +49,11 @@ const KICKS_I: Record<string, Kick[]> = {
   '3>2': [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: 2, y: 0 }, { x: -1, y: -2 }, { x: 2, y: 1 }],
   '3>0': [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: -1, y: 0 }, { x: 2, y: -1 }, { x: -1, y: 2 }],
   '0>3': [{ x: 0, y: 0 }, { x: -2, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 1 }, { x: 1, y: -2 }],
+  // I-piece 180° kicks (A5): the same half-turn offsets as JLSTZ.
+  '0>2': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
+  '2>0': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
+  '1>3': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
+  '3>1': [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }],
 };
 
 const KICKS_O: Record<string, Kick[]> = {
@@ -50,6 +61,9 @@ const KICKS_O: Record<string, Kick[]> = {
   '1>2': [{ x: 0, y: 0 }], '2>1': [{ x: 0, y: 0 }],
   '2>3': [{ x: 0, y: 0 }], '3>2': [{ x: 0, y: 0 }],
   '3>0': [{ x: 0, y: 0 }], '0>3': [{ x: 0, y: 0 }],
+  // O is symmetric: a half turn needs no offset at all.
+  '0>2': [{ x: 0, y: 0 }], '2>0': [{ x: 0, y: 0 }],
+  '1>3': [{ x: 0, y: 0 }], '3>1': [{ x: 0, y: 0 }],
 };
 
 function kicksFor(type: PieceType, from: number, to: number): Kick[] {
@@ -75,7 +89,11 @@ export class GameEngine {
   private currentPiece: Piece | null = null;
   private currentPos: Position = { x: 0, y: 0 };
   private currentRotation: RotationState = { index: 0 };
-  private nextPieceType: PieceType = PieceType.I;
+  // Upcoming pieces, nearest first (A6). There is no separate "next piece" field: nextQueue[0]
+  // is the next piece, and the queue is always kept at QUEUE_SIZE entries.
+  private nextQueue: PieceType[] = [];
+  private holdType: PieceType | null = null;
+  private canHold: boolean = true;
   private score: number = 0;
   private level: number = 1;
   private linesCleared: number = 0;
@@ -88,6 +106,10 @@ export class GameEngine {
   // engine decides how many rows the piece falls.
   private gravityAccumulator: number = 0;
   private elapsedMs: number = 0;
+  // Lock delay (A3): counted from Tick milliseconds only, never from a wall clock, so paused
+  // time and background tabs can never spend the lock timer.
+  private lockAccumulator: number = 0;
+  private lockResets: number = 0;
 
   constructor(callbacks: GameEngineCallbacks) {
     this.callbacks = callbacks;
@@ -98,8 +120,16 @@ export class GameEngine {
     this.pieceFactory = new PieceFactoryProvider();
     this.mode = GameMode.Arcade;
 
-    // Generate next piece
-    this.nextPieceType = this.pieceFactory.nextPieceType();
+    // Fill the visible queue (A6)
+    this.nextQueue = this.fillQueue();
+  }
+
+  private fillQueue(): PieceType[] {
+    const queue: PieceType[] = [];
+    while (queue.length < QUEUE_SIZE) {
+      queue.push(this.pieceFactory.nextPieceType());
+    }
+    return queue;
   }
 
   // ====== CQRS Command Handlers ======
@@ -120,8 +150,9 @@ export class GameEngine {
       case CommandType.RotatePiece: {
         // A malformed direction is ignored instead of silently turning counter-clockwise.
         const direction = command.payload?.direction;
-        if (direction !== 'cw' && direction !== 'ccw') return;
-        this.rotatePiece(this.currentRotation.index, direction === 'cw' ? 1 : -1);
+        if (direction !== 'cw' && direction !== 'ccw' && direction !== '180') return;
+        const turn = direction === 'cw' ? 1 : direction === 'ccw' ? -1 : 2;
+        this.rotatePiece(this.currentRotation.index, turn);
         return;
       }
       case CommandType.SoftDrop:
@@ -129,6 +160,9 @@ export class GameEngine {
         return;
       case CommandType.HardDrop:
         this.hardDrop();
+        return;
+      case CommandType.HoldPiece:
+        this.holdPiece();
         return;
       case CommandType.Tick: {
         const dt = command.payload?.dt;
@@ -200,7 +234,11 @@ export class GameEngine {
     this._isGameOver = false;
     this.gravityAccumulator = 0;
     this.elapsedMs = 0;
-    this.nextPieceType = this.pieceFactory.nextPieceType();
+    this.lockAccumulator = 0;
+    this.lockResets = 0;
+    this.holdType = null;
+    this.canHold = true;
+    this.nextQueue = this.fillQueue();
   }
 
   // ====== Movement ======
@@ -227,6 +265,7 @@ export class GameEngine {
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x + dx, y: this.currentPos.y + dy })) {
       this.currentPos.x += dx;
       this.currentPos.y += dy;
+      this.onSuccessfulManipulation();
     } else if (this.mode === GameMode.Hardcore) {
       // Hardcore mode: any move into a wall/block is instant death.
       this.hardcoreDeath();
@@ -259,6 +298,7 @@ export class GameEngine {
         this.currentPos = testPos;
         // Rebuild shape + matching colors for the active rotation.
         this.currentPiece = rotatedPiece;
+        this.onSuccessfulManipulation();
         this.callbacks.onStateChange?.();
         return;
       }
@@ -276,6 +316,12 @@ export class GameEngine {
     if (this.isValidPosition(this.currentPiece, nextPos)) {
       this.currentPos = nextPos;
       this.score += SCORING_CONFIG.softDrop;
+      // Soft drop onto the surface locks immediately: the lock timer is for gravity landings.
+      if (this.isGrounded()) {
+        this.placePiece();
+        return;
+      }
+      this.lockAccumulator = 0;
       this.callbacks.onStateChange?.();
     } else {
       // Cannot move down: lock the piece where it actually is (never below the floor).
@@ -307,20 +353,35 @@ export class GameEngine {
     // backwards and the accumulator can never become NaN.
     const dt = Number.isFinite(dtMs) ? Math.min(Math.max(dtMs, 0), MAX_TICK_DELTA_MS) : 0;
     this.elapsedMs += dt;
-    this.gravityAccumulator += dt;
 
-    let interval = dropInterval(this.level, this.mode);
-    while (this.gravityAccumulator >= interval) {
-      this.gravityAccumulator -= interval;
-      const pieceBefore: Piece | null = this.currentPiece;
-      this.autoDrop();
-      // The piece locked (or the game ended): stop spending the remaining time on a new piece.
-      if (this._isGameOver || this.currentPiece !== pieceBefore) {
-        this.gravityAccumulator = 0;
-        break;
+    // Gravity runs only while the piece can still fall. Once it rests on the floor or on locked
+    // cells, the same dt feeds the lock timer instead (A3). A piece that lands mid-frame starts
+    // its lock delay on the next Tick: the frame that carried it down is not lock time.
+    if (this.isGrounded()) {
+      this.lockAccumulator += dt;
+      if (this.lockAccumulator >= LOCK_CONFIG.delayMs) {
+        this.placePiece();
       }
-      // A line clear can raise the level, and the level changes the interval.
-      interval = dropInterval(this.level, this.mode);
+    } else {
+      let interval = dropInterval(this.level, this.mode);
+      this.gravityAccumulator += dt;
+      while (this.gravityAccumulator >= interval) {
+        this.gravityAccumulator -= interval;
+        const pieceBefore: Piece | null = this.currentPiece;
+        this.autoDrop();
+        // The piece locked (or the game ended): stop spending the remaining time on a new piece.
+        if (this._isGameOver || this.currentPiece !== pieceBefore) {
+          this.gravityAccumulator = 0;
+          break;
+        }
+        // A line clear can raise the level, and the level changes the interval.
+        interval = dropInterval(this.level, this.mode);
+        if (this.isGrounded()) {
+          // Landed by gravity: leftover gravity time is not carried over into the lock timer.
+          this.gravityAccumulator = 0;
+          break;
+        }
+      }
     }
 
     this.callbacks.onStateChange?.();
@@ -330,21 +391,59 @@ export class GameEngine {
     if (!this.currentPiece) return;
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x, y: this.currentPos.y + 1 })) {
       this.currentPos.y += 1;
-    } else {
-      // Landed by gravity: lock normally, also in Hardcore (death there is for blocked moves).
-      this.placePiece();
     }
+    // A gravity landing does not lock the piece: tick() spends the next LOCK_CONFIG.delayMs of
+    // active play on the lock timer, during which moves and rotations can still restart it.
+  }
+
+  // ====== Lock delay (A3) ======
+
+  /** True when the piece cannot move down any more (floor or locked cells directly below). */
+  isGrounded(): boolean {
+    if (!this.currentPiece) return false;
+    return !this.isValidPosition(this.currentPiece, { x: this.currentPos.x, y: this.currentPos.y + 1 });
+  }
+
+  /**
+   * A successful move or rotation restarts the lock timer while the piece is grounded, at most
+   * LOCK_CONFIG.maxResets times. After that budget is spent, the next successful manipulation
+   * locks the piece where it stands.
+   */
+  private onSuccessfulManipulation(): void {
+    if (!this.isGrounded()) {
+      this.lockAccumulator = 0;
+      return;
+    }
+    if (this.lockResets >= LOCK_CONFIG.maxResets) {
+      this.placePiece();
+      return;
+    }
+    this.lockResets++;
+    this.lockAccumulator = 0;
   }
 
   // ====== Piece Placement ======
 
   private spawnNextPiece(): void {
-    const piece = this.pieceFactory.createPiece(this.nextPieceType);
+    const type = this.nextQueue.shift() ?? this.pieceFactory.nextPieceType();
+    while (this.nextQueue.length < QUEUE_SIZE) {
+      this.nextQueue.push(this.pieceFactory.nextPieceType());
+    }
+    // A freshly spawned piece may be held once (A4).
+    this.canHold = true;
+    this.spawnPiece(type);
+  }
+
+  private spawnPiece(type: PieceType): void {
+    const piece = this.pieceFactory.createPiece(type);
     this.currentPiece = piece;
     // Center the piece
     const offsetX = Math.floor((this.width - piece.shape[0].length) / 2);
     this.currentPos = { x: offsetX, y: 0 };
     this.currentRotation = { index: 0 };
+    this.gravityAccumulator = 0;
+    this.lockAccumulator = 0;
+    this.lockResets = 0;
 
     // Check game over
     if (!this.isValidPosition(piece, this.currentPos)) {
@@ -355,6 +454,25 @@ export class GameEngine {
       return;
     }
     this.callbacks.onStateChange?.();
+  }
+
+  /**
+   * Hold (A4): swap the active piece with the hold slot, once per piece. An empty slot pulls the
+   * piece from the front of the queue; the queue is refilled to QUEUE_SIZE either way.
+   */
+  private holdPiece(): void {
+    if (!this.currentPiece || !this._isRunning || this._isPaused) return;
+    if (!this.canHold) return;
+
+    const heldNow = this.currentPiece.type;
+    const spawnType = this.holdType ?? this.nextQueue.shift() ?? this.pieceFactory.nextPieceType();
+    this.holdType = heldNow;
+    this.canHold = false;
+    while (this.nextQueue.length < QUEUE_SIZE) {
+      this.nextQueue.push(this.pieceFactory.nextPieceType());
+    }
+    // canHold stays false: the new piece of this turn cannot be held again.
+    this.spawnPiece(spawnType);
   }
 
   private placePiece(): void {
@@ -381,8 +499,7 @@ export class GameEngine {
       this.combo = 0;
     }
 
-    // Next piece
-    this.nextPieceType = this.pieceFactory.nextPieceType();
+    // Next piece: spawnNextPiece pulls from the queue and refills it.
     this.spawnNextPiece();
 
     this.callbacks.onStateChange?.();
@@ -416,7 +533,9 @@ export class GameEngine {
       currentPiece: this.currentPiece,
       currentPos: this.currentPos,
       currentRotation: this.currentRotation,
-      nextPieceType: this.nextPieceType,
+      nextQueue: [...this.nextQueue],
+      holdType: this.holdType,
+      canHold: this.canHold,
       score: this.score,
       level: this.level,
       linesCleared: this.linesCleared,
@@ -429,7 +548,19 @@ export class GameEngine {
   }
 
   getNextPieceType(): PieceType {
-    return this.nextPieceType;
+    return this.nextQueue[0] ?? this.pieceFactory.nextPieceType();
+  }
+
+  getNextQueue(): PieceType[] {
+    return [...this.nextQueue];
+  }
+
+  getHoldType(): PieceType | null {
+    return this.holdType;
+  }
+
+  canHoldPiece(): boolean {
+    return this.canHold;
   }
 
   getBoardSnapshot(): number[][] {
@@ -493,6 +624,16 @@ export class GameEngine {
   // Current gravity interval, ms per row, for this level and mode.
   getDropInterval(): number {
     return dropInterval(this.level, this.mode);
+  }
+
+  // Milliseconds of active play the grounded piece has already spent in its lock delay.
+  getLockAccumulator(): number {
+    return this.lockAccumulator;
+  }
+
+  // How many lock-delay restarts the grounded piece has already used (max LOCK_CONFIG.maxResets).
+  getLockResets(): number {
+    return this.lockResets;
   }
 
 }

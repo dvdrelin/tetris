@@ -1,9 +1,19 @@
 <script lang="ts">
-import { defineComponent, computed } from 'vue'
+import { defineComponent, computed, onMounted, watch } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import { CELL_COLORS } from '../stores/gameStore'
 import { PieceType } from '../shared/domain/types'
-import { PIECE_SHAPES } from '../shared/domain/pieces'
+import { PIECE_SHAPES, PIECE_COLOR_INDEX } from '../shared/domain/pieces'
+
+// A6: the further a queued piece is from the active one, the more transparent it is.
+const QUEUE_OPACITY = [1, 0.6, 0.35]
+// A used hold slot is dimmed until the next piece spawns.
+const HOLD_USED_OPACITY = 0.4
+
+// Every piece fits into a 4x4 box (I is 4 cells wide, the rest 3), so all previews share one size.
+const PREVIEW_CELL = 18
+const PREVIEW_GRID = 4
+const PREVIEW_SIZE = PREVIEW_GRID * PREVIEW_CELL + 4
 
 export default defineComponent({
   name: 'HudView',
@@ -16,43 +26,90 @@ export default defineComponent({
       return num.toString()
     }
 
-    function renderNextPiece(previewCanvas: HTMLCanvasElement | null, nextPieceType: string) {
-      if (!previewCanvas) return
-      const ctx = previewCanvas.getContext('2d')
+    // Canvas refs are collected by the template (function refs), because the queue is a v-for list.
+    const queueCanvases: HTMLCanvasElement[] = []
+    let holdCanvas: HTMLCanvasElement | null = null
+
+    function setQueueCanvas(el: unknown, index: number) {
+      if (el instanceof HTMLCanvasElement) queueCanvases[index] = el
+    }
+
+    function setHoldCanvas(el: unknown) {
+      holdCanvas = el instanceof HTMLCanvasElement ? el : null
+    }
+
+    /**
+     * Draws one piece preview. Single source of truth for geometry: the canonical rot0 state from
+     * PIECE_SHAPES; single source of color: PIECE_COLOR_INDEX, the same mapping the board uses.
+     */
+    function renderPreview(canvas: HTMLCanvasElement | null, pieceType: string | null) {
+      if (!canvas) return
+      const ctx = canvas.getContext('2d')
       if (!ctx) return
 
-      // Single source of truth for piece geometry: the canonical rot0 state from PIECE_SHAPES.
-      const shape = PIECE_SHAPES[nextPieceType as PieceType]?.[0] ?? PIECE_SHAPES[PieceType.I][0]
-      const cellSize = 18
+      canvas.width = PREVIEW_SIZE
+      canvas.height = PREVIEW_SIZE
 
-      previewCanvas.width = shape[0].length * cellSize + 4
-      previewCanvas.height = shape.length * cellSize + 4
-
-      // Clear
       ctx.fillStyle = '#1a1a2e'
-      ctx.fillRect(0, 0, previewCanvas.width, previewCanvas.height)
+      ctx.fillRect(0, 0, PREVIEW_SIZE, PREVIEW_SIZE)
 
-      // Draw piece
+      const type = pieceType as PieceType | null
+      const shape = type ? PIECE_SHAPES[type]?.[0] : null
+      if (!shape) return
+
+      // Center the used cells of the rot0 state inside the fixed preview box.
+      let minRow = shape.length, maxRow = -1, minCol = shape[0].length, maxCol = -1
       for (let r = 0; r < shape.length; r++) {
         for (let c = 0; c < shape[r].length; c++) {
-          if (shape[r][c]) {
-            const x = c * cellSize + 2
-            const y = r * cellSize + 2
-            const color = CELL_COLORS[nextPieceType as unknown as number] || CELL_COLORS[1]
+          if (!shape[r][c]) continue
+          if (r < minRow) minRow = r
+          if (r > maxRow) maxRow = r
+          if (c < minCol) minCol = c
+          if (c > maxCol) maxCol = c
+        }
+      }
+      if (maxRow < 0) return
 
-            ctx.fillStyle = color.backgroundColor
-            ctx.shadowColor = color.boxShadow
-            ctx.shadowBlur = 5
-            ctx.fillRect(x, y, cellSize - 2, cellSize - 2)
-            ctx.shadowBlur = 0
+      const offsetX = Math.floor((PREVIEW_GRID - (maxCol - minCol + 1)) / 2)
+      const offsetY = Math.floor((PREVIEW_GRID - (maxRow - minRow + 1)) / 2)
+      const color = CELL_COLORS[PIECE_COLOR_INDEX[type as PieceType]] || CELL_COLORS[1]
 
-            // Inner highlight
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'
-            ctx.fillRect(x + 1, y + 1, cellSize - 3, (cellSize - 3) / 2)
-          }
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          if (!shape[r][c]) continue
+          const x = (offsetX + c - minCol) * PREVIEW_CELL + 2
+          const y = (offsetY + r - minRow) * PREVIEW_CELL + 2
+
+          ctx.fillStyle = color.backgroundColor
+          ctx.shadowColor = color.backgroundColor
+          ctx.shadowBlur = 5
+          ctx.fillRect(x, y, PREVIEW_CELL - 2, PREVIEW_CELL - 2)
+          ctx.shadowBlur = 0
+
+          // Inner highlight
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'
+          ctx.fillRect(x + 1, y + 1, PREVIEW_CELL - 3, (PREVIEW_CELL - 3) / 2)
         }
       }
     }
+
+    // One key that changes whenever any preview must be redrawn (queue contents, hold slot,
+    // and whether the hold of this piece is already used).
+    const previewKey = computed(() =>
+      `${gameStore.gameState.nextQueue.join(',')}|${gameStore.gameState.holdType}|${gameStore.gameState.canHold}`
+    )
+
+    function renderPreviews() {
+      const queue = gameStore.gameState.nextQueue
+      for (let i = 0; i < queueCanvases.length; i++) {
+        renderPreview(queueCanvases[i], queue[i] ?? null)
+      }
+      renderPreview(holdCanvas, gameStore.gameState.holdType)
+    }
+
+    // flush: 'post' so the v-for canvases exist before they are drawn into.
+    onMounted(renderPreviews)
+    watch(previewKey, renderPreviews, { flush: 'post' })
 
     function handlePause() {
       gameStore.togglePause()
@@ -62,22 +119,15 @@ export default defineComponent({
       gameStore.resumeGame()
     }
 
-    const nextPieceType = computed(() => gameStore.gameState.nextPieceType)
-
-    return { gameStore, formatNumber, renderNextPiece, handlePause, handleResume, nextPieceType }
-  },
-  mounted() {
-    const canvas = this.$refs.nextPieceCanvas as HTMLCanvasElement
-    this.$nextTick(() => {
-      this.renderNextPiece(canvas, this.nextPieceType)
-    })
-  },
-  watch: {
-    nextPieceType() {
-      const canvas = this.$refs.nextPieceCanvas as HTMLCanvasElement
-      this.$nextTick(() => {
-        this.renderNextPiece(canvas, this.nextPieceType)
-      })
+    return {
+      gameStore,
+      formatNumber,
+      handlePause,
+      handleResume,
+      setQueueCanvas,
+      setHoldCanvas,
+      queueOpacity: QUEUE_OPACITY,
+      holdOpacity: HOLD_USED_OPACITY,
     }
   },
 })
@@ -105,16 +155,34 @@ export default defineComponent({
         x{{ gameStore.gameState.combo }}
       </div>
     </div>
-    <div class="hud-section next-piece-section">
-      <div class="hud-title">СЛЕДУЮЩИЙ</div>
-      <canvas ref="nextPieceCanvas" class="next-piece-canvas"></canvas>
+    <div class="hud-section hold-section">
+      <div class="hud-title">УДЕРЖАНИЕ</div>
+      <canvas
+        :ref="setHoldCanvas"
+        class="preview-canvas"
+        :style="{ opacity: gameStore.gameState.canHold ? 1 : holdOpacity }"
+      ></canvas>
+    </div>
+    <div class="hud-section queue-section">
+      <div class="hud-title">СЛЕДУЮЩИЕ</div>
+      <div class="queue-list">
+        <canvas
+          v-for="(pieceType, index) in gameStore.gameState.nextQueue"
+          :key="index"
+          :ref="(el) => setQueueCanvas(el, index)"
+          class="preview-canvas"
+          :style="{ opacity: queueOpacity[index] ?? 0.35 }"
+        ></canvas>
+      </div>
     </div>
     <div class="hud-section controls-section">
       <div class="hud-title">УПРАВЛЕНИЕ</div>
       <div class="control-item"><span class="key">← →</span> Движение</div>
       <div class="control-item"><span class="key">↑</span> Вращение</div>
+      <div class="control-item"><span class="key">R</span> Поворот 180°</div>
       <div class="control-item"><span class="key">↓</span> Soft Drop</div>
       <div class="control-item"><span class="key">SPACE</span> Hard Drop</div>
+      <div class="control-item"><span class="key">C</span> Удержание</div>
       <div class="control-item"><span class="key">P</span> Пауза</div>
     </div>
     <div class="hud-section pause-btn-section">
@@ -163,13 +231,21 @@ export default defineComponent({
   text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);
 }
 
-.next-piece-section {
+.hold-section,
+.queue-section {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-.next-piece-canvas {
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.preview-canvas {
   background: #1a1a2e;
   border-radius: 8px;
 }

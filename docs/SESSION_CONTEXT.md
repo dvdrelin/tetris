@@ -12,8 +12,8 @@
 `git clone` + `rsync` + `docker compose`), `b0b7ac9` (`node:20-alpine` → `node:22-alpine`),
 `5b9418a` (реальный `GET /api/health`, JSON 200/503), `4344f3d` (исключения `.dockerignore` +
 build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих деплоях в документах), `96af5cd`
-(дизайн-документы), `2613360` (фаза 5, блок 1: типы и расчистка). Коммит этого блока — блок 2
-(тайминг и гравитация).
+(дизайн-документы), `2613360` (фаза 5, блок 1: типы и расчистка), `4050670` (фаза 5, блок 2: тайминг и
+гравитация). Коммит этого блока — фаза 5, блок 3 (lock delay, hold, поворот 180°, очередь из 3 фигур).
 Историческая справка: до аудита HEAD был `e570ee8` («Fix: deploy.sh — skip vue-tsc…», дата `2026-09-13`);
 упоминавшийся ранее `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный, но он на 24 коммита позади
 того HEAD. Незакоммиченных изменений P0/P1/P3 больше нет; полный список правок — `docs/AUDIT_REPORT.md` §10
@@ -31,8 +31,8 @@ build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих д�
   (`renderPiecePreview` нигде не импортировался); `renderer.ts` остался — его используют
   `GameBoard.vue` и `renderer.test.ts`
 - **74 теста проходят** (историческая цифра фазы; актуально на момент аудита: **109** frontend unit,
-  **21** backend unit, **16** E2E — `docs/AUDIT_REPORT.md` §11; после блоков 1–2 фазы 5:
-  **125** frontend unit, **36** backend unit, **19** E2E):
+  **21** backend unit, **16** E2E — `docs/AUDIT_REPORT.md` §11; после блоков 1–3 фазы 5:
+  **148** frontend unit (8 сюит), **36** backend unit (3 сюиты), **19** E2E):
   - Frontend unit: 51 тест (jest + ts-jest)
   - Backend unit: 9 тестов (jest + ts-jest)
   - E2E: 14 тестов (playwright)
@@ -304,18 +304,57 @@ MP (старый и новый дизайн) — отдельная тема, б
 → `7 suites / 125 tests passed` (exit 0), `npx.cmd playwright test --config tests/playwright.config.ts`
 → `19 passed`, `LASTEXITCODE=0`. Бэкенд не менялся, прод не пересобирается.
 
+**Блок 3 (коммит этого блока): механика (A3, A4, A5, A6 + C1).** Изменены `game-config.ts`
+(`LOCK_CONFIG = { delayMs: 500, maxResets: 15 }`, `QUEUE_SIZE = 3`), `types.ts`
+(`nextQueue`/`holdType`/`canHold` вместо `nextPieceType`, `LockConfig`), `commands.ts`
+(`HoldPiece`, `direction: 'cw' | 'ccw' | '180'`), `pieces.ts` (`PIECE_COLOR_INDEX`), `game-engine.ts`
+(`fillQueue`, `holdPiece`/`canHold`, `lockAccumulator`/`lockResets`, `isGrounded`,
+`onSuccessfulManipulation`, кики 180°, `spawnPiece`), `gameStore.ts` (DTO + клавиши `R`, `C`/`Shift`),
+`HudView.vue` (слот hold + 3 превью с прозрачностью `[1, 0.6, 0.35]`); добавлен
+`frontend/tests/unit/mechanics.test.ts` (17 тестов), `gravity.test.ts` расширен до 22 тестов,
+в `rotation-kicks.test.ts` мягких сбросов 30 → 16.
+Проверки: `npx.cmd vue-tsc --noEmit` → `LASTEXITCODE=0` (пустой вывод), `npx.cmd jest --runInBand`
+во `frontend/` → `8 suites / 148 tests passed`, в `backend/` → `3 suites / 36 tests passed`,
+`npx.cmd playwright test --config tests/playwright.config.ts` → `19 passed (26.6s)`, `LASTEXITCODE=0`.
+Бэкенд не менялся, прод не пересобирается.
+
+Два практических правила, которые блок 3 зафиксировал:
+- E2E запускается **только** как `npx.cmd playwright test --config tests/playwright.config.ts`
+  (или `npm.cmd run test:e2e`). Без `--config` Playwright не находит конфиг, обходит всё дерево и
+  падает на jest-файлах: `ReferenceError: describe is not defined`.
+- `tick()` обрезает `dt` до `MAX_TICK_DELTA_MS = 250`: ожидание в 400–500 мс в тестах набирается
+  несколькими вызовами `tick`, иначе время теряется.
+
+## Граф проекта (Graphify)
+
+`graphify-out/graph.json` — knowledge-граф этого репозитория, доступен через MCP-сервер
+`graphify-tetris` (`query_graph`, `get_node`, `get_neighbors`, `graph_stats`, `shortest_path`).
+Он уже отражает блок 3: узлы `mechanics.test.ts`, `PIECE_COLOR_INDEX`, `holdPiece()`, `fillQueue()`,
+`isGrounded()`, `onSuccessfulManipulation()`, `RotationState`.
+
+Обновление графа — **только вручную**, наблюдателей нет. Локальная перезагрузка без LLM
+(без расхода Polza-кредитов):
+
+```
+& "C:\Users\dvdre\AppData\Roaming\Python\Python313\Scripts\graphify.exe" C:\GIT\tetris --update --code-only
+```
+
+Вывод последней такой перезагрузки: `3 code, 0 docs, 0 papers, 0 images changed; 52 unchanged; 0 deleted`,
+`wrote graph.json: 624 nodes, 1007 edges, 37 communities`, `LASTEXITCODE=0`.
+`graphify-out/` — генерируемый артефакт, в git не попадает (`.gitignore`).
+`GRAPH_REPORT.md` и имена сообществ после `--code-only` не пересобираются: для этого нужен
+`graphify cluster-only C:\GIT\tetris` (требует LLM-бэкенд), по текущему решению — не запускать.
+
 ## Следующий шаг
 
-### Блок 3: механика (A3, A4, A5, A6)
+### Блок 4: управление (B2, B3)
 
-1. **Lock delay 500 мс + 15 сбросов таймера** на `dt`-логике движка (без `Date.now()`): приземление
-   по гравитации запускает таймер фиксации, перемещение/поворот сбрасывают его (не более 15 раз);
-   soft drop на пол и hard drop фиксируют сразу.
-2. **Hold**: новая команда `HoldPiece` (клавиши `C` / `Shift`), не более одного hold на фигуру,
-   слот в HUD.
-3. **Поворот на 180°**: клавиша `R`, отдельный небольшой набор киков.
-4. **Очередь из 3 фигур**: `nextQueue: PieceType[]` в движке и DTO; в HUD прозрачность по удалённости
-   (≈ 1.0 / 0.6 / 0.35 — «чем дальше фигура в очереди от текущей, тем прозрачнее»).
+1. **DAS 167 мс / ARR 33 мс** — собственный модуль автоповтора в `frontend/src` (не автоповтор ОС);
+   тесты на фиксированных таймерах jest (`jest.useFakeTimers()`).
+2. **`keyup`-слушатель** в `GameView.vue` + игнор `e.repeat` в `gameStore.handleKey`.
+3. Сохранить текущую карту клавиш (`A`/`D`/`S`/`W`, `↑`/`X`, `Z`/`Q`, `R`, `C`/`Shift`, `Space`, `P`, `Esc`).
+4. **Тач-контролы для мобильных (B3)** — обязательны: кнопки/жесты поверх canvas, чтобы в игру
+   можно было играть с телефона; существующие E2E (19) не должны сломаться.
 5. Тесты на новое поведение — в том же коммите; затем `git commit` + `git push origin main`.
 
 Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) — отдельная тема,

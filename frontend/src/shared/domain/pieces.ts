@@ -1,6 +1,8 @@
 import { Piece, PieceType } from './types';
 
-const COLORS: Record<PieceType, number> = {
+// Piece type -> board color index (1..7; 0 is the empty cell). Exported so the HUD previews use
+// the same mapping as the board instead of guessing it.
+export const PIECE_COLOR_INDEX: Record<PieceType, number> = {
   [PieceType.I]: 1,
   [PieceType.O]: 2,
   [PieceType.T]: 3,
@@ -109,7 +111,7 @@ export function buildPiece(type: PieceType, shape: number[][]): Piece {
   for (let r = 0; r < shape.length; r++) {
     const row: number[] = [];
     for (let c = 0; c < shape[r].length; c++) {
-      row.push(shape[r][c] ? COLORS[type] : 0);
+      row.push(shape[r][c] ? PIECE_COLOR_INDEX[type] : 0);
     }
     colors.push(row);
   }

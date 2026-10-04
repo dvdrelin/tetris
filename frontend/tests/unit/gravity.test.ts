@@ -3,7 +3,7 @@ import { BoardManager } from '../../src/shared/domain/board';
 import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
 import { GameMode, PieceType } from '../../src/shared/domain/types';
 import { CommandType } from '../../src/shared/cqrs/commands';
-import { HARDCORE_SPEED_MULTIPLIER, SPEED_CONFIG, dropInterval } from '../../src/shared/config/game-config';
+import { HARDCORE_SPEED_MULTIPLIER, LOCK_CONFIG, SPEED_CONFIG, dropInterval } from '../../src/shared/config/game-config';
 
 const W = 10;
 const H = 20;
@@ -149,15 +149,106 @@ describe('Engine-owned gravity timing (Tick carries dt, not a ready-made step)',
     expect(engine.getCurrentPos()).toEqual({ x: 4, y: 5 });
   });
 
-  test('a gravity landing locks the piece and leftover time is not spent on the new piece', () => {
+  test('a gravity landing starts the lock timer instead of locking at once', () => {
     const engine = createEngine(GameMode.Arcade);
     (engine as any).level = 16; // interval 50ms: 250ms would be 5 rows
     forceState(engine, PieceType.O, 0, 4, 17); // rows 17-18, one row of travel left
     tick(engine, MAX_DT);
-    expect(lockedCells(engine)).toBe(4); // the O piece is locked
-    expect(engine.getCurrentPos().y).toBe(0); // the spawned piece starts at the top, unpaid
-    expect(engine.getGravityAccumulator()).toBe(0);
+    expect(engine.getCurrentPos()).toEqual({ x: 4, y: 18 }); // landed, still a live piece
+    expect(lockedCells(engine)).toBe(0);
+    expect(engine.isGrounded()).toBe(true);
+    expect(engine.getGravityAccumulator()).toBe(0); // leftover gravity time is not carried over
+    expect(engine.getLockAccumulator()).toBe(0);    // and it is not spent on the lock timer either
     expect(engine.isGameOver()).toBe(false);
+  });
+});
+
+describe('Lock delay (A3): a landed piece stays controllable', () => {
+  test('a grounded piece locks after LOCK_CONFIG.delayMs of active play', () => {
+    const engine = createEngine(GameMode.Arcade);
+    forceState(engine, PieceType.O, 0, 4, 18); // already on the floor
+    tick(engine, 250);
+    expect(lockedCells(engine)).toBe(0);
+    expect(engine.getLockAccumulator()).toBe(250);
+    tick(engine, 249);
+    expect(lockedCells(engine)).toBe(0);
+    expect(engine.getLockAccumulator()).toBe(499);
+    tick(engine, 1); // 500ms reached
+    expect(lockedCells(engine)).toBe(4);
+    expect(engine.getCurrentPos().y).toBe(0); // the next piece spawned at the top
+  });
+
+  test('paused time cannot spend the lock timer', () => {
+    const engine = createEngine(GameMode.Arcade);
+    forceState(engine, PieceType.O, 0, 4, 18);
+    tick(engine, 250);
+    tick(engine, 150); // 400ms of active play, one Tick at a time (MAX_DT is 250)
+    engine.handleCommand({ type: CommandType.PauseGame });
+    tick(engine, MAX_DT);
+    tick(engine, MAX_DT);
+    expect(lockedCells(engine)).toBe(0);
+    expect(engine.getLockAccumulator()).toBe(400);
+    engine.handleCommand({ type: CommandType.ResumeGame });
+    tick(engine, 100);
+    expect(lockedCells(engine)).toBe(4);
+  });
+
+  test('a successful move or rotation while grounded restarts the lock timer', () => {
+    const engine = createEngine(GameMode.Arcade);
+    forceState(engine, PieceType.O, 0, 4, 18);
+    tick(engine, 250);
+    tick(engine, 200); // 450ms
+    expect(engine.getLockAccumulator()).toBe(450);
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    expect(engine.getLockAccumulator()).toBe(0);
+    expect(engine.getLockResets()).toBe(1);
+    tick(engine, 250);
+    tick(engine, 200); // 450ms again
+    expect(lockedCells(engine)).toBe(0);
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
+    expect(engine.getLockResets()).toBe(2);
+    tick(engine, 250);
+    tick(engine, 249); // 499ms: one millisecond short of the lock
+    expect(lockedCells(engine)).toBe(0);
+    tick(engine, 1);
+    expect(lockedCells(engine)).toBe(4);
+  });
+
+  test('the restart budget is finite: after maxResets the next successful move locks the piece', () => {
+    const engine = createEngine(GameMode.Arcade);
+    forceState(engine, PieceType.O, 0, 4, 18);
+    for (let i = 0; i < LOCK_CONFIG.maxResets; i++) {
+      engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: i % 2 === 0 ? 'left' : 'right' } });
+    }
+    expect(engine.getLockResets()).toBe(LOCK_CONFIG.maxResets);
+    expect(lockedCells(engine)).toBe(0);
+    // The budget is spent: the next successful manipulation locks the piece where it stands.
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    expect(lockedCells(engine)).toBe(4);
+  });
+
+  test('a blocked move does not restart the lock timer', () => {
+    const engine = createEngine(GameMode.Arcade);
+    forceState(engine, PieceType.O, 0, 0, 18); // against the left wall
+    tick(engine, 250);
+    tick(engine, 200); // 450ms
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    expect(engine.getLockResets()).toBe(0);
+    expect(engine.getLockAccumulator()).toBe(450);
+    tick(engine, 50);
+    expect(lockedCells(engine)).toBe(4);
+  });
+
+  test('a soft drop onto the surface locks immediately, not after the delay', () => {
+    const engine = createEngine(GameMode.Arcade);
+    forceState(engine, PieceType.O, 0, 4, 17);
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'down' } });
+    // No 500ms wait: the piece is already on the board and the next one has spawned.
+    const cells = (engine as any).boardManager.getCells() as any[][];
+    expect(cells[18][4].locked).toBe(true);
+    expect(cells[19][5].locked).toBe(true);
+    expect(lockedCells(engine)).toBe(4);
+    expect(engine.getCurrentPos().y).toBe(0);
   });
 });
 
@@ -185,12 +276,17 @@ describe('Down is a soft drop, not a death', () => {
     expect(engine.isGameOver()).toBe(true);
   });
 
-  test('a gravity landing in Hardcore locks normally and does not kill', () => {
+  test('a gravity landing in Hardcore starts the lock delay and does not kill', () => {
     const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 4, 18);
+    forceState(engine, PieceType.O, 0, 4, 17);
     tick(engine, 200);
-    tick(engine, 200); // 400ms = the Hardcore interval of level 1
+    tick(engine, 200); // 400ms = the Hardcore interval of level 1: the piece lands on row 18
     expect(engine.isGameOver()).toBe(false);
+    expect(engine.getCurrentPos()).toEqual({ x: 4, y: 18 });
+    expect(lockedCells(engine)).toBe(0); // landed, not locked
+    tick(engine, 250);
+    tick(engine, 250); // 500ms of lock delay
     expect(lockedCells(engine)).toBe(4);
+    expect(engine.isGameOver()).toBe(false);
   });
 });

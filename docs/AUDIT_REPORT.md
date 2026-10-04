@@ -360,7 +360,8 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
     `b0b7ac9` (`node:22-alpine` — `EBADENGINE` при сборке больше нет), `5b9418a`
     (`GET /api/health` + тесты + docs), `7a30e48` (протокол деплоя и исправление `DEFAULT_EMAIL` → `EMAIL`),
      правка build-арга `APP_VERSION` `4344f3d` (поле `version` в health, формат `1.<YYMMDD>.<git short hash>`)
-     и исключения `.dockerignore` для `audit-verify/` и `tmp-audit/` —
+     и исключения `.dockerignore` для `audit-verify/` и `tmp-audit/`, `2613360` (блок 1 сингла, §12.8),
+     `4050670` (блок 2 сингла, §12.9) и коммит блока 3 (§12.10) —
     `main` синхронизирован с `origin/main`, прод-контейнер пересобирается из текущего `main`
      (`docker compose build && docker compose up -d`; откат — `git revert` + пересборка).
 
@@ -511,3 +512,39 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 
 Ограничение среды: `npx.cmd playwright test` в песочнице тоже падал на `Error: spawn EPERM`
 (запуск dev-серверов и браузера как дочерних процессов) и был выполнен с расширенным доступом к песочнице.
+
+### 12.10 Программа «сингл — полностью»: блок 3 (lock delay, hold, 180°, очередь)
+
+Блок 3 закрыл A3, A4, A5, A6 и C1 (цвет превью). Базовый коммит — `4050670` (блок 2).
+B2/B3 (DAS/ARR, `keyup`, `e.repeat`, тач) и A7 (ghost в движке) блоком 3 не тронуты.
+
+| Файл | Изменение |
+|---|---|
+| `frontend/src/shared/config/game-config.ts` | `LOCK_CONFIG = Object.freeze({ delayMs: 500, maxResets: 15 })`, `QUEUE_SIZE = 3`; `GAME_CONFIG.lockConfig` |
+| `frontend/src/shared/domain/types.ts` | `GameState`: `nextPieceType` → `nextQueue: PieceType[]` + `holdType: PieceType \| null` + `canHold: boolean`; новый `LockConfig`, поле `GameConfig.lockConfig` |
+| `frontend/src/shared/cqrs/commands.ts` | `CommandType.HoldPiece` + `HoldPieceCommand` (в `AnyCommand`); `RotateCommand.payload.direction: 'cw' \| 'ccw' \| '180'` |
+| `frontend/src/shared/domain/pieces.ts` | `COLORS` → экспортируемый `PIECE_COLOR_INDEX` (тот же индекс использует `buildPiece`), C1 |
+| `frontend/src/shared/engine/game-engine.ts` | `nextQueue` + `fillQueue()` (всегда `QUEUE_SIZE`), `holdPiece()`/`canHold`, `lockAccumulator`/`lockResets`, `isGrounded()`, `onSuccessfulManipulation()` (макс. 15 сбросов, 16-й манёвр фиксирует), кики 180° (`0>2`, `2>0`, `1>3`, `3>1`; `O` — только `(0,0)`), `spawnPiece(type)` с центрированием; геттеры `getNextQueue`, `getHoldType`, `canHoldPiece`, `getCurrentRotation`, `getLockAccumulator`, `getLockResets` |
+| `frontend/src/stores/gameStore.ts` | DTO `nextQueue`/`holdType`/`canHold`; клавиши `R` → `RotatePiece{180}`, `C`/`Shift` → `HoldPiece` |
+| `frontend/src/components/HudView.vue` | слот «УДЕРЖАНИЕ» + 3 превью «СЛЕДУЮЩИЕ» (canvas 76×76, `PIECE_SHAPES[type][0]`, цвет `PIECE_COLOR_INDEX`), прозрачность `[1, 0.6, 0.35]`, затемнение использованного hold до `0.4` |
+| `frontend/tests/unit/mechanics.test.ts` | **добавлен** (17 тестов): очередь, hold, 180° (переходы индексов, кик-кейс, заблокированный поворот в Arcade/Hardcore, трата сброса на опоре) |
+| `frontend/tests/unit/gravity.test.ts` | 16 → 22 теста: сюита «Lock delay (A3)» + переписанный Hardcore-тест |
+| `frontend/tests/unit/rotation-kicks.test.ts` | тест soft-drop-до-пола: 30 мягких сбросов → 16 (иначе следующая фигура приземлялась на башню из I и добавляла 4 клетки к снимку) |
+
+Проверки блока 3 (фактический вывод):
+
+| Команда | Результат |
+|---|---|
+| `npx.cmd vue-tsc --noEmit` (`frontend/`) | пустой вывод, `LASTEXITCODE=0` |
+| `npx.cmd jest --runInBand` (`frontend/`) | `Test Suites: 8 passed, 8 total` · `Tests: 148 passed, 148 total` |
+| `npx.cmd jest --runInBand` (`backend/`) | `Test Suites: 3 passed, 3 total` · `Tests: 36 passed, 36 total` |
+| `npx.cmd playwright test --config tests/playwright.config.ts` (корень) | `19 passed (26.6s)` · `LASTEXITCODE=0` |
+
+Два ограничения среды, зафиксированные в этом блоке:
+1. Playwright требует явный `--config tests/playwright.config.ts`; без него он не находит конфиг,
+   сканирует всё дерево и падает на jest-файлах (`ReferenceError: describe is not defined`).
+2. `GameEngine.tick()` ограничивает `dt` величиной `MAX_TICK_DELTA_MS = 250`, поэтому в тестах
+   ожидание >250 мс должно набираться несколькими `tick`-ами — одиночный `tick(400)` не существует.
+
+Блок 3 — только фронтенд и документы: прод-контейнер не пересобирается (первая пересборка нужна
+в блоке 7, где меняется бэкенд).

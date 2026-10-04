@@ -526,6 +526,9 @@ esbuild — тот же движок, что использует Vite для б
   сломанный `watch: { gameState() {} }` — смотрел на несуществующее свойство.
 - **Исправление.** Заменён строковый `render()` на нормальный `<template>`; watcher переписан через
   `computed(() => gameStore.gameState.nextPieceType)` (предыдущий getter не резолвился).
+- **Актуально (блок 3 сингла):** `nextPieceType` в `GameState` больше нет — очередь из трёх фигур,
+  поэтому ключ перерисовки HUD теперь `computed(() => \`${nextQueue.join(',')}|${holdType}|${canHold}\`)`
+  (`HudView.vue`), watcher с `flush: 'post'`, чтобы canvas-refs уже существовали.
 
 ### H3. Вращение не меняло форму — рендер игнорировал индекс поворота 🟠 [✅ исправлено]
 

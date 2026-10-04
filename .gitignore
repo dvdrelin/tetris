@@ -43,6 +43,9 @@ temp/
 # Scratch logs of the audit runs (raw jest/vite/probe output); the scripts themselves are in audit-verify/
 tmp-audit/
 
+# Generated Graphify knowledge graph (graph.json/html, GRAPH_REPORT.md, caches) — rebuilt locally, not source
+graphify-out/
+
 # Coverage
 coverage/
 

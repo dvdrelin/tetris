@@ -201,7 +201,8 @@ describe('soft drop and locking', () => {
   test('soft drop to the floor locks the whole piece, not a truncated one', () => {
     const engine = createEngine();
     forceState(engine, PieceType.I, 1, 3, 0); // vertical I
-    for (let i = 0; i < 30; i++) engine.handleCommand({ type: CommandType.SoftDrop });
+    // 16 rows of travel: the 16th soft drop lands the piece and locks it immediately.
+    for (let i = 0; i < 16; i++) engine.handleCommand({ type: CommandType.SoftDrop });
     const cells = (engine as any).boardManager.getCells() as any[][];
     const locked = cells.flatMap((row, y) => row.map((c, x) => (c.locked ? `${y},${x}` : null)).filter(Boolean));
     expect(locked).toEqual(['16,5', '17,5', '18,5', '19,5']);
