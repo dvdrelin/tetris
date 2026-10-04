@@ -14,7 +14,7 @@ sequenceDiagram
     participant C as Игрок C
     participant D as Игрок D
 
-    Note over A,S,B,C,D: ФАЗА ЛОББИ
+    Note over S: ФАЗА ЛОББИ
     A->>S: create_room { league: "shortlist", mode: "top", name: "PvP #1" }
     S->>A: room_created { room_id, invite_code }
     B->>S: join_room { room_id }
@@ -25,7 +25,7 @@ sequenceDiagram
     S->>C: room_state { ... }
     S->>D: room_state { ... }
 
-    Note over A,S,B,C,D: ФАЗА READY CHECK
+    Note over S: ФАЗА READY CHECK
     A->>S: player_ready { ready: true }
     S->>B: player_ready { player: A, ready: true }
     B->>S: player_ready { ready: true }
@@ -33,16 +33,16 @@ sequenceDiagram
     D->>S: player_ready { ready: true }
     S->>A: all_ready { countdown: "starting" }
 
-    Note over A,S,B,C,D: ФАЗА СТАРТА МАТЧА (СИНХРОНИЗАЦИЯ)
+    Note over S: ФАЗА СТАРТА МАТЧА (СИНХРОНИЗАЦИЯ)
     S->>S: generate_seed()
     S->>A: game_start { seed: 0xDEADBEEF, player_index: 0, start_time: 1712345678000, target_mode: "top", league: "shortlist" }
     S->>B: game_start { seed: 0xDEADBEEF, player_index: 1, start_time: 1712345678000, ... }
     S->>C: game_start { seed: 0xDEADBEEF, player_index: 2, start_time: 1712345678000, ... }
     S->>D: game_start { seed: 0xDEADBEEF, player_index: 3, start_time: 1712345678000, ... }
 
-    Note over A,S,B,C,D: ФАЗА ИГРЫ (ЦИКЛ)
+    Note over S: ФАЗА ИГРЫ (ЦИКЛ)
     loop Каждый ход
-        Note over A,S,B,C,D: Циклическая раздача фигур (global_step)
+        Note over S: Циклическая раздача фигур (global_step)
         S->>A: piece_spawn { global_step: 0, piece: "T" }
         S->>B: piece_spawn { global_step: 1, piece: "J" }
         S->>C: piece_spawn { global_step: 2, piece: "Z" }
@@ -55,14 +55,14 @@ sequenceDiagram
         B->>B: start_queue_timer(400ms)
     end
 
-    Note over A,S,B,C,D: ФАЗА ЗАЩИТЫ (Garbage Counteract)
+    Note over S: ФАЗА ЗАЩИТЫ (Garbage Counteract)
     B->>S: piece_lock { ..., lines_cleared: 2 }
     S->>S: calculate_nullify(B, lines: 2, pending_attack_lines: 1)
     S->>B: attack_nullify { player: B, nullified: 1, remaining: 0 }
     S->>A: attack_nullify { player: B, nullified: 1, remaining: 0 }
     S->>A: attack_nullify_notify { target: B, status: "NULLIFIED" }
 
-    Note over A,S,B,C,D: ФАЗА ВЫБЫВАНИЯ / ПЕРЕПОЛНЕНИЯ
+    Note over S: ФАЗА ВЫБЫВАНИЯ / ПЕРЕПОЛНЕНИЯ
     S->>C: attack_send { from: A, to: C, lines: 7, delay_ms: 900 }
     C->>C: queue_timer_expired -> apply_garbage(7)
     C->>C: board_overflow -> game_over
@@ -72,7 +72,7 @@ sequenceDiagram
     S->>D: player_eliminated { player: C }
     Note over S: alive_players = [A, B, D]
 
-    Note over A,S,B,C,D: ФАЗА ЗАВЕРШЕНИЯ МАТЧА
+    Note over S: ФАЗА ЗАВЕРШЕНИЯ МАТЧА
     S->>S: check_winner(alive: [A, B, D])
     alt Shortlist Mode
         Note over S: Последний выживший
@@ -88,7 +88,7 @@ sequenceDiagram
         S->>D: game_over { round: 4, winner: D, match_winner: D, scores: {...} }
     end
 
-    Note over A,S,B,C,D: ФАЗА РЕЗУЛЬТАТОВ
+    Note over S: ФАЗА РЕЗУЛЬТАТОВ
     S->>A: match_result { winner, leaderboard, stats, rating_change }
     S->>B: match_result { ... }
     S->>C: match_result { ... }
@@ -129,7 +129,7 @@ sequenceDiagram
     S->>B: global_step 13 → Z
 
     Note over S: И так далее. Каждый игрок видит одну и ту же ленту фигур
-    Note over A,B,C,D: (но "ловит" свою по индексу global_step % 4 == player_index)
+    Note over S: Игрок ловит свою фигуру по индексу global_step (player_index = global_step mod 4)
 ```
 
 ---
@@ -208,7 +208,7 @@ sequenceDiagram
     participant P2 as Игрок B
     participant P3 as Игрок C
 
-    Note over Host,S,P1,P2,P3: Комната заполнена (4/4)
+    Note over S: Комната заполнена (4/4)
     S->>Host: room_full { players: 4, ready_check_started: true }
     S->>P1: ready_check_started { timeout_sec: 60 }
     S->>P2: ready_check_started { timeout_sec: 60 }
@@ -225,7 +225,7 @@ sequenceDiagram
         S->>P1: game_start { seed, ... }
         S->>P2: game_start { seed, ... }
         S->>P3: game_start { seed, ... }
-        Note over P3: P3 получает тот же game_start, но без статуса "ready"
+        Note over P3: P3 получает тот же game_start, но без статуса ready
     else Все нажали готов
         P3->>S: player_ready { ready: true }
         S->>S: all_ready → start_match()
