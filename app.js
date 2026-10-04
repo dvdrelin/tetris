@@ -6,7 +6,7 @@ const BOARD_WIDTH = 10;
 const BOARD_HEIGHT = 20;
 const BOARD_PIXELS_W = BOARD_WIDTH * CELL_SIZE;
 const BOARD_PIXELS_H = BOARD_HEIGHT * CELL_SIZE;
-const API_URL = 'https://tetris-api-dvdrelin.amvera.io';
+const API_URL = ''; // same-origin: /api/* (dev — Vite proxy на :3000, prod — бэкенд раздаёт frontend/dist)
 
 // ====== API ======
 async function saveScore(playerName, score, mode, level, lines) {
