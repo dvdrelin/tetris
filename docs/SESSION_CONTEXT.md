@@ -157,9 +157,13 @@ pm2 unstartup systemd       # Removed "/etc/systemd/system/multi-user.target.wan
 (там `.env` с `DEFAULT_EMAIL`, которого нет в репозитории). `rsync --exclude=dist --exclude=node_modules`
 не пересоздаёт удалённое: контейнер собирает `dist` внутри образа.
 
-Замечание по сборке: `Dockerfile` использует `node:20-alpine` (20.20.2); при `npm install` появляются
-`EBADENGINE`-предупреждения (`abbrev@5.0.0`, `nopt@10.0.1` требуют `^22.22.2 || ^24.15.0 || >=26.0.0`).
-Сборка проходит, `found 0 vulnerabilities`, но это кандидат на переход на `node:22-alpine`.
+Замечание по сборке: `Dockerfile` переведён на `node:22-alpine` (обе стадии — builder и production).
+На `node:20-alpine` (20.20.2) `npm install` давал `EBADENGINE` (`abbrev@5.0.0`, `nopt@10.0.1` требуют
+`^22.22.2 || ^24.15.0 || >=26.0.0`), а Vite 8 требует `^20.19 || >=22.12`. Проверка локальной сборки
+образа: `docker build` → exit 0, в логе нет ни одного `EBADENGINE` (только `npm warn deprecated`),
+`found 0 vulnerabilities`; в контейнере `node --version` → `v22.23.3`,
+`npm ls --omit=dev --depth=0` → `express@4.22.3`, `ws@8.22.0`; лог контейнера —
+`Neon Tetris server running on port 3000`.
 
 Ранее использовавшийся Amvera-хостинг выведен полностью: упоминаний в репозитории нет (проверено по
 всем файлам, исключая `node_modules/`, `.git/`, `dist/`).
