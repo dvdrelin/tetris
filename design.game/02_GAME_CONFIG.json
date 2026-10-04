@@ -1,0 +1,105 @@
+{
+  "$schema": "Neon Tetris Server Configuration v1.0",
+  "description": "Все балансные числа для быстрой правки без пересборки сервера",
+  "version": "1.0.0",
+
+  "attack": {
+    "base_lines": {
+      "single": 1,
+      "double": 2,
+      "triple": 4,
+      "tetris": 7,
+      "perfect_clear": 10
+    },
+    "combo_multiplier": {
+      "1": 1.0,
+      "2": 1.25,
+      "3": 1.5,
+      "4+": 2.0
+    },
+    "combo_cap": 2.0,
+    "rounding": "ceil",
+
+    "queue_delay_ms": {
+      "single": 400,
+      "double": 500,
+      "triple": 700,
+      "tetris": 900,
+      "perfect_clear": 1200
+    },
+
+    "garbage_counteract_ratio": 1.0,
+    "garbage_counteract_stack": true,
+    "per_player_garbage_cap": 20,
+    "targeting_modes": ["top", "all", "random"]
+  },
+
+  "perfect_clear": {
+    "immunity_duration_ms": 1000,
+    "reward_lines_sent": 10,
+    "reward_score_perfect": 1,
+    "clean_slate_buff": true
+  },
+
+  "match": {
+    "ready_check_timeout_sec": 60,
+    "leader_recalculation_interval_ms": 100,
+    "max_players": 4,
+    "min_players_shortlist": 2,
+    "min_players_1v1": 2,
+    "min_players_bo4": 2,
+    "max_players_bo4": 4,
+
+    "heads_up": {
+      "time_limit_sec": 180,
+      "win_condition": "survival_or_points"
+    },
+
+    "shortlist": {
+      "time_limit_sec": 300,
+      "win_condition": "last_man_standing"
+    },
+
+    "bo4": {
+      "wins_needed": 4,
+      "round_duration_sec": 90,
+      "break_duration_sec": 10,
+      "new_seed_per_round": true,
+      "max_rounds": 7
+    }
+  },
+
+  "randomizer": {
+    "algorithm": "7-bag",
+    "shuffle_algorithm": "fisher_yates",
+    "seed_bit_size": 32,
+    "seed_format": "uint32",
+    "pieces": ["I", "O", "T", "S", "Z", "J", "L"],
+    "bag_size": 7
+  },
+
+  "chat": {
+    "global": {
+      "max_length": 200,
+      "rate_limit_ms": 2000,
+      "buffer_size": 100,
+      "spam_repeat_threshold": 3,
+      "profanity_filter": true
+    },
+    "room": {
+      "fast_phrase_max_length": 50,
+      "spectators_readonly": true
+    }
+  },
+
+  "anticheat": {
+    "piece_lock_verification": true,
+    "disconnect_on_mismatch": true,
+    "max_ping_jitter_ms": 500
+  },
+
+  "garbage_visual": {
+    "pieces_per_line": 10,
+    "color_pool": ["I_cyan", "O_yellow", "T_purple", "S_green", "Z_red", "J_blue", "L_orange"]
+  }
+}
