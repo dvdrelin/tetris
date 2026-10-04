@@ -37,8 +37,8 @@ MP (старый и новый дизайн) — отдельная тема, б
 | # | Вопрос | Что показал аудит | Решение | Статус |
 |---|---|---|---|---|
 | B1 | Клавиши вращения | `↑` и `w` уходили в `MovePiece{direction:'rotateCW'}`, `z` — тоже в CW, `c` — в CW | **Единая карта:** `↑` / `X` = CW, `Z` / `Q` = CCW; `A`/`D`/`S`/`W` сохранены | ✅ блок 1 (карта) + блок 3 (`R` = 180°, `C`/`Shift` = hold) |
-| B2 | DAS / ARR | Удержание клавиши давало только автоповтор ОС; `keyup` не слушался, `e.repeat` не отсекался | **Собственный DAS 167 мс / ARR 33 мс** + слушатель `keyup` + игнор `e.repeat` | ⏳ блок 4 |
-| B3 | Мобильные устройства | Touch/pointer-обработчиков в `frontend/src` нет | **Поддержка мобильных обязательна** (тач-контролы сингла) | ⏳ блок 4 |
+| B2 | DAS / ARR | Удержание клавиши давало только автоповтор ОС; `keyup` не слушался, `e.repeat` не отсекался | **Собственный DAS 167 мс / ARR 33 мс** + слушатель `keyup` + игнор `e.repeat` | ✅ блок 4 |
+| B3 | Мобильные устройства | Touch/pointer-обработчиков в `frontend/src` нет | **Поддержка мобильных обязательна** (тач-контролы сингла) | ✅ блок 4 |
 | B4 | Вращение как «движение» | Поворот был возможен и как `MovePiece`, и как `RotatePiece` | **Только `RotatePiece`.** `MoveCommand.payload.direction` сужен до `'left' \| 'right' \| 'down'` — псевдо-направления больше не компилируются | ✅ блок 1 |
 
 ## C. UI
@@ -191,3 +191,81 @@ MP (старый и новый дизайн) — отдельная тема, б
 тач-контролы — блок 4; `getGhostY` в движке — блок 5; кнопка паузы, общие подсказки, имя игрока,
 `engine.stop()` — блок 6. Клавиши `R` и `C` подключены минимально, чтобы механику можно было
 тестировать; полноценная обработка удержания клавиш — в блоке 4.
+
+---
+
+## Проверка блока 4 (команды и их вывод)
+
+| Команда | Вывод |
+|---|---|
+| `npx.cmd vue-tsc --noEmit` (в `frontend/`) | пустой вывод, `vue-tsc exit: 0` |
+| `npx.cmd jest --runInBand` (в `frontend/`) | `Test Suites: 9 passed, 9 total` · `Tests: 173 passed, 173 total` · `jest exit: 0` |
+| `npx.cmd jest --runInBand` (в `backend/`) | `Test Suites: 3 passed, 3 total` · `Tests: 36 passed, 36 total` · `backend jest exit: 0` |
+| `npx.cmd playwright test --config tests/playwright.config.ts` (в корне) | `30 passed (30.1s)` · `playwright exit: 0` |
+| grep `handleKey\|e\.repeat\|keyup` по `frontend/src/**.{ts,vue}` | 18 совпадений: `shared/input/input-controller.ts`, `shared/input/repeat-controller.ts`, `components/GameView.vue`; в `stores/gameStore.ts` — ни одного (метод `handleKey` удалён) |
+
+Прирост тестов: `173 − 148 = 25` юнит-тестов — все в новом `frontend/tests/unit/input.test.ts`
+(2 — значения `DAS_CONFIG`, 5 — карта клавиш и `HELD_ACTIONS`, 10 — `RepeatController`,
+8 — `InputController`). E2E: `30 − 19 = 11` тестов — 6 в `tests/e2e/input.test.ts` (клавиатура),
+1 там же (на десктопе `.touch-controls` отсутствует), 4 в `tests/e2e/touch.test.ts` (телефон).
+
+Как именно доказаны два ключевых факта B2:
+
+- **Автоповтор ОС не управляет игрой.** `tests/e2e/input.test.ts` диспатчит 8 синтетических
+  `KeyboardEvent('keydown', { key: 'ArrowLeft', repeat: true })` прямо в `document`; слушатель в
+  странице подтверждает, что все 8 событий дошли (`delivered === 8`), а позиция фигуры не изменилась
+  (`after.x === before.x`). Тот же ключ без `repeat` сдвигает фигуру на 1 — слушатель работает.
+- **Повторы даёт наш DAS/ARR, а не браузер.** `page.keyboard.down('ArrowRight')` отправляет ровно
+  один `keydown` (автоповтора ОС в Playwright нет), и за 400 мс фигура проходит ≥ 2 клеток; после
+  `keyboard.up()` три замера подряд дают одну и ту же координату. В юнитах те же числа получаются на
+  фейковых таймерах Jest: `jest.advanceTimersByTime()` двигает `Date.now()`, а часы контроллеру
+  передаются инъекцией, поэтому тесты ничего не ждут в реальном времени.
+
+## Что изменено в коде блока 4
+
+- `frontend/src/shared/input/input-actions.ts` (новый) — словарь действий `InputAction`
+  (`left`, `right`, `softDrop`, `hardDrop`, `rotateCW`, `rotateCCW`, `rotate180`, `hold`, `pause`),
+  `HELD_ACTIONS = ['left', 'right', 'softDrop']` (только они автоповторяются), `KEY_MAP`
+  (`←`/`A`, `→`/`D`, `↓`/`S`, `↑`/`X`/`W`, `Z`/`Q`, `R`, `C`/`Shift`, `Space`, `P`), `actionForKey()`,
+  `isModifiedCombo()` (Ctrl/Alt/Cmd остаются браузеру) и `actionToCommand()` — переход
+  «действие → команда CQRS». Буквы сравниваются без регистра, поэтому `CapsLock` и буква с `Shift`
+  больше не теряются (старая карта в сторе их выбрасывала).
+- `frontend/src/shared/input/repeat-controller.ts` (новый) — `RepeatController` с `dasMs`/`arrMs`:
+  первое нажатие стреляет сразу, повтор начинается через `dasMs` и идёт каждые `arrMs`; одно
+  обновление кадра = максимум один повтор (просадка кадра не «телепортирует» фигуру);
+  `keyup`/`releaseAll()` сбрасывают состояние; последнее нажатое ключ держит управление, а его
+  отпускание передаёт управление ключу, который всё ещё удержан; повторное `keydown` без `keyup`
+  не перезапускает DAS. Чистый модуль: часы и диспетчер передаются аргументами, DOM не используется.
+- `frontend/src/shared/input/input-controller.ts` (новый) — единственное место, где сырые события
+  становятся действиями: `handleKeyDown` (отбрасывает `e.repeat` и модифицированные комбинации),
+  `handleKeyUp`, `pressAction`/`releaseAction` (тач), `update()` (раз в кадр), `releaseAll()`.
+- `frontend/src/shared/input/touch.ts` (новый) — `isTouchDevice()` по
+  `matchMedia('(pointer: coarse)')`; `window.__FORCE_TOUCH_CONTROLS === true` включает контролы
+  принудительно (для отладки).
+- `frontend/src/shared/config/game-config.ts` — `DAS_CONFIG = Object.freeze({ dasMs: 167, arrMs: 33 })`
+  (B2) рядом с `LOCK_CONFIG` и `QUEUE_SIZE`.
+- `frontend/src/components/GameView.vue` — слушатели `keydown` **и** `keyup` на `document`;
+  собственный цикл `requestAnimationFrame` для ввода (DAS/ARR живут отдельно от цикла гравитации
+  `GameBoard`); `releaseAll()` на `blur`, `visibilitychange` и `onUnmounted`, а также каждый кадр,
+  пока игра на паузе, закончена или не запущена; `Enter` после game over переехал из стора сюда;
+  `Esc` не изменён (C7: сначала снять паузу, иначе — меню); подключён `<TouchControls :input="input" />`;
+  медиа-запрос `max-width: 900px` (колонка, отступ снизу 150 px под панель кнопок).
+- `frontend/src/components/TouchControls.vue` (новый) — тач-панель B3: `◀ ▼ ▶` как удерживаемые
+  действия (`pointerdown`/`pointerup`/`pointercancel`/`pointerleave`), `⟲ ⟳ 180° HOLD DROP` как
+  одноударные (`pointerdown`); `Set` по действию не даёт второму пальцу на той же кнопке выстрелить
+  дважды; `touch-action: none`, `user-select: none`, `env(safe-area-inset-bottom)`, `z-index: 90`;
+  на узких экранах кнопки 48×48, а кластер действий переносится на свою строку
+  (`flex-wrap` + `margin-left: auto`) — иначе кнопки `HOLD`/`DROP` на 390 px выпадали за viewport
+  (это и была причина первых падений E2E).
+- `frontend/src/stores/gameStore.ts` — метод `handleKey` удалён (функция и экспорт): путь ввода теперь
+  один, через `InputController`. Остальные экспорты не изменились.
+- `frontend/src/components/HudView.vue` — медиа-запрос `max-width: 900px` (HUD строкой под доской,
+  `.hud-section { flex: 1 1 28% }`, значение 20 px, очередь строкой).
+- `frontend/tests/unit/input.test.ts` (новый, 25 тестов), `tests/e2e/input.test.ts` (7 тестов),
+  `tests/e2e/touch.test.ts` (4 теста, профиль iPhone 13 без `defaultBrowserType` — E2E идёт в одном
+  chromium-проекте конфига), `tests/e2e/helpers.ts` (общие хелперы `getErrors`/`getGameState`/
+  `startGame`/`piecePosition`).
+
+Граница блока 4 (осознанно): только ввод и его тайминг. `getGhostY` в движке — блок 5; кнопка паузы,
+общие подсказки, имя игрока, `engine.stop()` и один `init()` — блок 6; бэкенд (`scoreMax`, rate-limit) —
+блок 7.

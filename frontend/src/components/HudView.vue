@@ -301,4 +301,29 @@ export default defineComponent({
   background: rgba(0, 255, 136, 0.2);
   box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
 }
+
+/* Mobile (B3): the HUD becomes a strip under the board instead of a 200px column beside it. */
+@media (max-width: 900px) {
+  .hud {
+    width: 100%;
+    max-width: 420px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .hud-section {
+    flex: 1 1 28%;
+    padding: 8px;
+  }
+
+  .hud-value {
+    font-size: 20px;
+  }
+
+  .queue-list {
+    flex-direction: row;
+  }
+}
 </style>

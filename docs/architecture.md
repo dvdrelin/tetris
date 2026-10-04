@@ -87,15 +87,14 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │  └──────────┘                  └───────┬───────┘             │
 │                                         │ showGame/menu        │
 │  ┌──────────┐                          ▼                     │
-│  │ HudView  │◄──────────── GameView.vue ◄─ keydown            │
-│  └──────────┘   watch(gameState)      (handleKeydown)         │
-│       ▲  render hold + queue canvases                          │
-│       │                                                        │
-│  ┌────┴───────────────────────────────────────────┐          │
+│  │ HudView  │◄──────────── GameView.vue ◄─ keydown + keyup    │
+│  └──────────┘   watch(gameState)      (InputController)       │
+│       ▲  render hold + queue canvases   ▲ TouchControls       │
+│       │                                 │ (pointer, B3)       │
+│  ┌────┴─────────────────────────────────┴───────────┐        │
 │  │              Pinia: gameStore                   │          │
 │  │  gameState(ref) · particles(ref)                │          │
 │  │   • init / startGame / handleCommand            │          │
-│  │   • handleKey (клавиатура)                       │          │
 │  │   • getGhostY, updateParticles/spawnParticles    │          │
 │  └────┬───────────────────────────────────────────┘          │
 │       │ callbacks: onStateChange / onLineClear / onGameOver   │
@@ -192,12 +191,31 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 - **`gameStore.ts`** — мост между UI и движком: держит `gameState` (DTO) и `particles`,
   инстанцирует один `GameEngine`, переводит результат запроса в DTO (`GameStateDTO` включает
   `nextQueue: string[]`, `holdType: string | null`, `canHold: boolean`), вычисляет позицию
-  «призрачной» фигуры (`getGhostY`), обрабатывает клавиатуру (`C`/`Shift` = hold, `R` = поворот 180°,
-  `Z`/`Q` = CCW, `↑`/`X` = CW).
+  «призрачной» фигуры (`getGhostY`). Обработкой клавиатуры стор **больше не занимается** — метод
+  `handleKey` удалён в блоке 4 сингла, единственный путь ввода — слой `shared/input/` (см. 4.4.1).
+- **4.4.1 Слой ввода `frontend/src/shared/input/` (блок 4 сингла, B1/B2/B3):**
+  - `input-actions.ts` — словарь `InputAction` и `KEY_MAP` (клавиша → действие), `HELD_ACTIONS`
+    (`left`, `right`, `softDrop` — только они автоповторяются), `isModifiedCombo()` (Ctrl/Alt/Cmd
+    остаются браузеру), `actionToCommand()` — переход к командам CQRS.
+  - `repeat-controller.ts` — DAS/ARR: первый ход нажатием, далее `dasMs` пауза и `arrMs` между
+    повторами; максимум один повтор за вызов `update()`; часы и диспетчер инъекционные, DOM не
+    используется (тестируется фейковыми таймерами Jest).
+  - `input-controller.ts` — единственный переводчик сырых событий в действия: `handleKeyDown`
+    (игнорирует `e.repeat` и модифицированные комбинации), `handleKeyUp`, `pressAction`/
+    `releaseAction` (тач), `update()` раз в кадр, `releaseAll()` при паузе/blur/unmount.
+  - `touch.ts` + `TouchControls.vue` — определение сенсорного устройства
+    (`matchMedia('(pointer: coarse)')`, переключатель `window.__FORCE_TOUCH_CONTROLS`) и панель кнопок
+    для мобильных; действия те же, что у клавиатуры, поэтому тайминг и механика не дублируются.
+  - `GameView.vue` создаёт `InputController` и свой `requestAnimationFrame`-цикл для ввода
+    (DAS/ARR не зависят от цикла гравитации `GameBoard`); `fireAction()` решает, что действие
+    значит: `pause` → `gameStore.togglePause()`, остальное → `gameStore.handleCommand(actionToCommand(...))`.
 - **Компоненты:**
   - `App.vue` — переключатель между меню и игрой (`v-if="showMenu"` / `v-else`). Важно:
     `showMenu` должен быть в `return {}` из `setup()` (иначе шаблон падает с «property not defined»).
-  - `GameView.vue` — контейнер + глобальный слушатель `keydown`.
+  - `GameView.vue` — контейнер: слушатели `keydown` и `keyup` на `document`, `Escape` (C7: сначала
+    снять паузу, иначе меню), `Enter` после game over (рестарт тем же режимом), `window blur` и
+    `visibilitychange` → `releaseAll()`, собственный rAF-цикл `input.update()`, тач-панель
+    `<TouchControls :input="input" />` и мобильный медиа-запрос (`max-width: 900px`).
   - `GameBoard.vue` — canvas-рендер (сетка, уложенные ячейки, ghost, текущая фигура,
     частицы, оверлеи паузы/game over) и **игровой цикл** на `requestAnimationFrame`: каждый кадр
     отдаёт движку прошедшее время (`Tick` + `dt`), интервал и аккумулятор в UI больше не живут
@@ -263,10 +281,18 @@ gameStore.updateState() → пересчёт DTO + ghostY → re-render
 
 ### 5.2 Ввод игрока → движок
 ```
-keydown (в GameView) → gameStore.handleKey(e)
-   → engine.handleCommand({MovePiece/Rotate(cw|ccw|180)/SoftDrop/HardDrop/HoldPiece/Pause…})
-     → изменение приватного состояния + onStateChange()
+keydown / keyup (в GameView) → InputController
+   ├ e.repeat === true или Ctrl/Alt/Cmd → событие отброшено (автоповтор ОС не управляет игрой)
+   ├ held-действие (left/right/softDrop): press сразу + DAS 167 мс + ARR 33 мс в RepeatController
+   │     └ каждый кадр input-цикла: input.update() → максимум один повтор
+   └ одноударное действие (rotate/180/hold/drop/pause): стреляет один раз
+→ GameView.fireAction(action)
+   ├ pause → gameStore.togglePause()
+   └ иначе → gameStore.handleCommand(actionToCommand(action))
+      → engine.handleCommand({MovePiece/Rotate(cw|ccw|180)/SoftDrop/HardDrop/HoldPiece/Pause…})
+        → изменение приватного состояния + onStateChange()
 gameStore.updateState() → gameState.value = {...}  → watch() → GameBoard.render() + HudView (превью очереди/hold)
+тач-кнопки (TouchControls) идут тем же путём: pressAction()/releaseAction() → тот же RepeatController
 ```
 
 ### 5.3 Игровой цикл рендера (GameBoard.vue)

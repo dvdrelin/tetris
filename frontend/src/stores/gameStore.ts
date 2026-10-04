@@ -172,42 +172,9 @@ export const useGameStore = defineStore('game', () => {
     updateState()
   }
 
-  function handleKey(e: KeyboardEvent): void {
-    if (!engineInstance) return
-
-    if (engineInstance.isGameOver() && e.key === 'Enter') {
-      engineInstance.handleCommand({ type: CommandType.StartGame, payload: { mode: engineInstance.getMode() } })
-      return
-    }
-
-    // Block all input after game over (unless handled above)
-    if (engineInstance.isGameOver()) return
-
-    if (!engineInstance.isRunning() || engineInstance.isPaused()) return
-
-    switch (e.key) {
-      case 'ArrowLeft':
-      case 'a': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } }); break
-      case 'ArrowRight':
-      case 'd': handleCommand({ type: CommandType.MovePiece, payload: { direction: 'right' } }); break
-      case 'ArrowUp':
-      case 'x':
-      case 'w': handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } }); break
-      case 'ArrowDown':
-      case 's': handleCommand({ type: CommandType.SoftDrop }); break
-      case ' ': handleCommand({ type: CommandType.HardDrop }); break
-      case 'z':
-      case 'q': handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'ccw' } }); break
-      case 'r':
-      case 'R': handleCommand({ type: CommandType.RotatePiece, payload: { direction: '180' } }); break
-      case 'c':
-      case 'C':
-      case 'Shift': handleCommand({ type: CommandType.HoldPiece }); break
-      case 'p':
-        togglePause()
-        break
-    }
-  }
+  // Keyboard handling moved out of the store (B2): GameView owns one InputController, which maps
+  // keys to actions, ignores the OS auto-repeat and runs DAS/ARR. Keeping a second key map here
+  // would mean two input paths that can double-fire the same command.
 
   function spawnParticles(lines: number, combo: number) {
     const count = lines * 20
@@ -273,7 +240,6 @@ export const useGameStore = defineStore('game', () => {
     init,
     startGame,
     handleCommand,
-    handleKey,
     getCellColor,
     getCellShadow,
     getCellBorder,

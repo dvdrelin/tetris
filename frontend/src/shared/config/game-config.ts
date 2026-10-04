@@ -1,4 +1,5 @@
 import { GameConfig, GameMode, LockConfig, ScoringConfig, SpeedConfig } from '../domain/types';
+import { RepeatConfig } from '../input/repeat-controller';
 
 export const SCORING_CONFIG: ScoringConfig = Object.freeze({
   single: 100,
@@ -39,6 +40,14 @@ export const LOCK_CONFIG: LockConfig = Object.freeze({
 
 // How many upcoming pieces the engine keeps visible in the queue (A6).
 export const QUEUE_SIZE = 3;
+
+// DAS / ARR (B2). The first move fires on the press itself; after `dasMs` of holding, the move
+// repeats every `arrMs`. These numbers are the guideline values (167 ms / 33 ms) and the OS key
+// repeat is ignored entirely — see frontend/src/shared/input/repeat-controller.ts.
+export const DAS_CONFIG: RepeatConfig = Object.freeze({
+  dasMs: 167,
+  arrMs: 33,
+});
 
 export const GAME_CONFIG: GameConfig = Object.freeze({
   boardWidth: 10,
