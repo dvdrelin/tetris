@@ -121,7 +121,7 @@
 | C15 | `Dockerfile:28` / корневой `build:frontend` — `vite build` | `frontend/package.json:7` — `vue-tsc --noEmit && vite build`. Штатная команда `npm run build` **падает** (vue-tsc 1.8.27 несовместим с TypeScript 5.9.3: `Search string not found: "/supportedTSExtensions = .*(?=;)/"`) → `.vue`-файлы в проекте **никогда не типизируются** |
 | C16 | `deploy.sh` «полная выгрузка проекта» | Не копирует `frontend/index.html` (строки 126–156) → удалённый `npx vite build` (`:180`) не имеет SPA-входа; не копирует `tsconfig.base.json`, который расширяет `frontend/tsconfig.json:2`; `backend/jest.config.js` копируется в **корень**, а не в `backend/`; каталог `backend/data` на сервере не создаётся |
 | C17 | `SESSION_CONTEXT.md:35` «npx заблокирован» | Корневые скрипты `dev/build` (`package.json:11–15`) построены на `npx` → локально не работают |
-| C18 | `README.md` / `docs/` описывают единое приложение | Legacy `index.html` + `app.js` + `styles.css` недоступны ни из одного пути: не копируются `Dockerfile` (только `frontend/`, `backend/`), не отдаются backend'ом (`express.static → frontend/dist`), не участвуют в `vite.config.ts`. **Поправка к аудиту:** исторически `app.js:9` указывал на внешний API-хост, который больше **не является окружением** этого проекта; сейчас там `API_URL = ''` (same-origin `/api/score`, `/api/leaderboard` — `app.js:14,27`). Мёртвым остаётся сам файл `app.js` |
+| C18 | `README.md` / `docs/` описывают единое приложение | Legacy `index.html` + `app.js` + `styles.css` недоступны ни из одного пути: не копируются `Dockerfile` (только `frontend/`, `backend/`), не отдаются backend'ом (`express.static → frontend/dist`), не участвуют в `vite.config.ts` (ныне — `frontend/vite.config.mts`, см. §12.7). **Поправка к аудиту:** исторически `app.js:9` указывал на внешний API-хост, который больше **не является окружением** этого проекта; сейчас там `API_URL = ''` (same-origin `/api/score`, `/api/leaderboard` — `app.js:14,27`). Мёртвым остаётся сам файл `app.js` |
 
 ---
 
@@ -146,7 +146,7 @@
 | **B4** | ✅ `comboDecay` удалён из `ScoringConfig` (`types.ts`) и `SCORING_CONFIG` (`game-config.ts`); сброс комбо без дробного затухания закреплён тестом |
 | **C1** | ✅ Добавлена проверка `payload.direction` (`'cw'`/`'ccw'`, иначе команда игнорируется) + тест на «мусорный» direction; остаток: приватные хендлеры движка по-прежнему принимают `command: any` |
 | **C2** | ❌ **Осталось как есть (осознанно):** `handleQuery` реализует все 3 запроса, `queries.ts` не удалён. В `errors.md` статус перебит на «не исправлено» — ложная отметка снята, код не ломали |
-| **C3** | ◐ Runtime-зависимости `uuid`/`better-sqlite3` из backend удалены; `@types/uuid` и `@types/better-sqlite3` (`backend/package.json:20–21`) остались как мёртвые dev-зависимости |
+| **C3** | ✅ Runtime-зависимости `uuid`/`better-sqlite3` из backend удалены; мёртвые dev-зависимости `@types/uuid` и `@types/better-sqlite3` удалены позже, при обновлении зависимостей (§12.7) |
 | **H1** | ⚠️ Формулировка в `errors.md` исправлена: идентификатора `showMenu` в `App.vue` нет и никогда не было — переключение экрана делает `currentView` (`App.vue:12,142–148,160–161`) |
 
 ---
@@ -315,7 +315,8 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 
 1. **C2** — query-путь (`GetNextPiece`, `GetBoardState`) жив и UI не используется: менять не стали, ложная отметка в `errors.md` снята.
 2. Приватные хендлеры движка по-прежнему принимают `command: any` (валидация есть только на входе `handleCommand` для `RotatePiece`/`MovePiece`).
-3. `@types/uuid` и `@types/better-sqlite3` в `backend/package.json:20–21` — мёртвые dev-зависимости.
+3. ~~`@types/uuid` и `@types/better-sqlite3` в `backend/package.json:20–21` — мёртвые dev-зависимости~~ —
+   **закрыто**: оба пакета удалены из `devDependencies` при обновлении зависимостей (§12.7).
 4. ~~`vue-tsc` ≥2.x (типизация `.vue`) не установлен~~ — **закрыто после аудита**: `vue-tsc` обновлён до
    `3.3.12`, типизация `.vue` вернулась в `npm run build`; см. §12.6.
 5. `hasCollision` не вызывается; расхождение `isValidPosition` (`boardY < 0` запрещён) vs `hasCollision` (разрешён) не устранено.
@@ -323,8 +324,9 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 7. `GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры.
 8. `docs/tsc-frontend.log` — нечитаемый бинарный артефакт, упоминается как результат проверки типов.
 9. Фаза 3 (мультиплеер) не начата: WebSocket-сервер поднят и проксируется, но `GameServer.handleAction` — заглушка, фронтенд сокет не открывает.
-10. Все правки закоммичены и запушены: `9dba4ea` (P0–P3) и `9db00a3` (удаление внешнего API-хоста),
-    `main` синхронизирован с `origin/main`.
+10. Все правки закоммичены и запушены: `9dba4ea` (P0–P3), `9db00a3` (удаление внешнего API-хоста),
+    `b06f4fb` (уточнение утверждений об окружении), `37ba308` (`vue-tsc` 3.3.12) и коммит с обновлением
+    зависимостей (§12.7) — `main` синхронизирован с `origin/main`.
 
 ### 12.5 Повторная проверка сетевых утверждений (после аудита)
 
@@ -367,3 +369,49 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 
 Природа найденных ошибок: тип имени вьюшки и тип частиц фона писались «на глаз» и никогда не проверялись —
 сломанный `vue-tsc` не запускался, а обычный `tsc` не видит `.vue`.
+
+### 12.7 Устранение уязвимостей зависимостей (42 → 0)
+
+Запрошено пользователем: «33 уязвимости (2 moderate, 31 high) — поправь». Фактический снимок на момент
+начала работ был другим, и он тоже зафиксирован: `npm.cmd audit` → **42 уязвимости (7 moderate, 35 high)**.
+Ни одна не относилась к коду игры: все шли через dev-зависимости и один неиспользуемый пакет.
+
+| Уязвимый пакет (копия) | Цепочка в дереве | Что сделано |
+|---|---|---|
+| `@grpc/grpc-js` (high ×2), `fast-uri`, `ip-address` (moderate ×3) | корневой devDep `ssh-mcp@2.8.1` → `@modelcontextprotocol/sdk`, `@opentelemetry/sdk-node` → `@opentelemetry/otlp-transformer` → `@grpc/grpc-js`; `fast-uri` и `ip-address` — через `@modelcontextprotocol/sdk` | `ssh-mcp` **удалён** из `package.json`: в исходниках проекта (`frontend/`, `backend/`, `tests/`) он не импортировался нигде |
+| `braces` (high) → `micromatch`, `chokidar` | `jest@29` → `jest-haste-map`, `jest-message-util`, `jest-config`; `ts-node-dev@2` → `chokidar@3` | `jest` и `jest-environment-jsdom` → `30.5.2` (в jest 30 пакетов `jest-haste-map`/`micromatch` нет — `npm view jest-haste-map@30.5.2` → `E404`), `@types/jest` → `30.0.0`, `ts-jest` → `29.4.14` (peer `jest ^29 \|\| ^30`); `ts-node-dev` **заменён** на `tsx@4.23.15` (единственная зависимость — `esbuild ~0.28.0`), `dev:backend` → `tsx watch src/index.ts` |
+| `esbuild@0.21.5` (moderate: dev-сервер отвечал на запросы с произвольного Origin) | `vite@5.4.21` | `vite` → `8.3.2`, `@vitejs/plugin-vue` → `6.0.9`; esbuild → `0.28.2` |
+| `qs@6.15.3` (moderate ×2) | `express@4.22.2` → `body-parser@1.20.6` → `qs`; также `supertest@6` → `superagent` | `express` → `4.22.3` (пиннит `qs ~6.16.0`, `body-parser ~1.20.5`); `supertest` поднят до `6.3.4` → `superagent 8.1.2` → `formidable 2.1.5`. На express 5 не переходили: API роутера (`gameRouter.ts`) не менялся |
+| `brace-expansion@1.1.18`, `brace-expansion@5.0.9` (high ×3) | `npm-run-all@4` → `minimatch@3`; `@vue/test-utils@2.4.x` → `js-beautify` → `editorconfig` → `glob@10` → `minimatch@10` | `npm audit fix`: `brace-expansion` → `1.1.21` и `5.0.12` (через `minimatch@3.1.5` / `minimatch@10.2.6`); `@vue/test-utils` → `2.5.1` |
+
+Ход работ и проверки:
+
+| Шаг | Результат |
+|---|---|
+| `npm.cmd view <pkg> version` для кандидатов | `vite 8.3.2`, `@vitejs/plugin-vue 6.0.9`, `jest 30.5.2`, `ts-jest 29.4.14`, `@types/jest 30.0.0`, `tsx 4.23.15`, `express 4.22.3` / `5.2.1`, `qs 6.16.0`, `body-parser 1.20.8`, `minimatch 3.1.5` / `10.2.6` |
+| `npm.cmd install` после правки трёх `package.json` | 42 → **5 уязвимостей (3 moderate, 2 high)**; `npm.cmd ls braces micromatch chokidar` → пусто; но `npm.cmd ls vite esbuild` → `ELSPROBLEMS` (устаревший вложенный `vite@5.4.21` под `@vitejs/plugin-vue@6.0.9` и hoisted `esbuild@0.21.5`) |
+| `Remove-Item -Recurse -Force node_modules, frontend\node_modules, backend\node_modules` + `npm.cmd install` | exit 0 (`added 102, removed 219, changed 84`), дерево чистое |
+| `npm.cmd audit fix` (без `--force`) | `added 1, removed 9, changed 6` → **found 0 vulnerabilities** |
+| `npm.cmd audit` повторно | **found 0 vulnerabilities** |
+| Итоговые версии в дереве | `vite 8.3.2`, `@vitejs/plugin-vue 6.0.9`, `esbuild 0.28.2`, `jest 30.5.2`, `jest-environment-jsdom 30.5.2`, `ts-jest 29.4.14`, `@types/jest 30.0.0`, `tsx 4.23.15`, `express 4.22.3`, `body-parser 1.20.8`, `qs 6.16.0`, `brace-expansion 1.1.21`, `@vue/test-utils 2.5.1` |
+| `npm.cmd run build` | exit 0: backend `tsc` + frontend `vue-tsc --noEmit && vite build` → `dist/index.html` 0.51 kB · `assets/index-B04z4d71.js` 99.13 kB · `assets/index-C_FNZJOZ.css` 6.62 kB (`✓ 54 modules transformed`, 85 ms) |
+| `npm.cmd run test` | **109 frontend + 21 backend — все проходят** (jest 30 + ts-jest 29.4.14; `isolatedModules: true` в обоих `jest.config.js`) |
+| `npm.cmd run test:e2e` | **16/16 Playwright** (26.2s): webServer поднимает `npm run dev:backend` (`tsx watch`) и `npm run dev:frontend` (vite 8) |
+
+Побочные эффекты обновления, зафиксированные в коде:
+
+1. **`frontend/vite.config.ts` → `frontend/vite.config.mts`.** Vite 8 при запуске выдавал
+   «(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to
+   become the default in a future major version of Vite: ESM syntax in a file loaded as CommonJS
+   (vite.config.ts:1:1)». В `.mts` файл грузится как ESM, а `__dirname` в ESM недоступен, поэтому alias
+   `@` описан как `fileURLToPath(new URL('./src', import.meta.url))`. После переименования предупреждение
+   исчезло, бандл собирается без изменений в логике. Обновлены `deploy.sh` (scp-список
+   `frontend/vite.config.mts`) и `docs/architecture.md` (дерево проекта).
+2. **`backend/package.json`**: удалены мёртвые `@types/uuid` и `@types/better-sqlite3` (закрыт пункт 3 §12.4
+   и остаток C3 в `docs/errors.md`).
+3. **Корневой `package.json`**: `dev:backend` больше не использует `ts-node-dev` (он и был источником
+   `chokidar@3` → `braces`), теперь `cd backend && npx tsx watch src/index.ts`.
+4. **jest 30**: removal legacy fake timers проекту не мешает — в тестах из fake-таймеров используется только
+   `jest.fn()` (`frontend/tests/unit/renderer.test.ts`), таймеры в тестах не мокются.
+5. Бандл фронтенда пересобран vite 8: `99.13 kB` JS / `6.62 kB` CSS против `99.99 kB` / `6.77 kB` на vite 5
+   (53 → 54 модуля). Хэши файлов изменились только из-за версии сборщика.

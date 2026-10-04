@@ -27,7 +27,7 @@ monorepo на npm workspaces, состоящий из двух независи�
 | State       | Pinia `^2.1.7`                 | Управление состоянием                |
 | Build       | Vite `^5.0`, @vitejs/plugin-vue `^4.4` | сборка, dev-сервер (порт 3001) |
 | TS          | TypeScript `^5.3`              | типизация                           |
-| Backend     | Node.js, Express `^4.18.2`     | HTTP/REST API                       |
+| Backend     | Node.js, Express `^4.22.3`     | HTTP/REST API                       |
 | Backend     | ws `^8.16.0`                   | WebSocket-сервер (мультиплеер)      |
 | Backend     | (были `better-sqlite3`, `uuid`) | зависимости **удалены** из package.json после фикса C3; id → crypto.randomUUID, persistence — через fs |
 | Shared      | —                              | доменная логика, общая для обоих слоёв |
@@ -45,7 +45,7 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │   ├── package.json             # vue, pinia (+ dev: vite, vue-tsc)
 │   ├── index.html               # точка монтирования #app
 │   ├── env.d.ts                 # типы для *.vue и vite/client
-│   ├── vite.config.ts           # alias @ -> src; прокси /api и /ws на :3000
+│   ├── vite.config.mts          # alias @ -> src; прокси /api и /ws на :3000
 │   └── src/
 │       ├── main.ts              # createApp + createPinia, mount('#app')
 │       ├── App.vue              # корень: переключатель MenuView / GameView

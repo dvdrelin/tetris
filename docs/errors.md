@@ -298,8 +298,9 @@ direction !== 'ccw'` → команда игнорируется, а не пре
 
 **Исправление (перепроверено).** Runtime-зависимости `better-sqlite3` и `uuid` из
 `backend/package.json` удалены — в `dependencies` остались только `express` и `ws`.
-Остаток: в `devDependencies` по-прежнему числятся `@types/uuid` и `@types/better-sqlite3`
-(`backend/package.json:20-21`) — неиспользуемые типы следовало вычистить вместе с пакетами.
+**Остаток закрыт после обновления зависимостей:** `@types/uuid` и `@types/better-sqlite3` удалены из
+`devDependencies` (см. `docs/AUDIT_REPORT.md` §12.7) — в `backend/package.json` больше нет пакетов,
+которые код не импортирует.
 
 ### C4. `req`/`res` как `any`; нет валидации и аутентификации 🔵 [✅ исправлено] — типизированный роутер с валидацией
 
@@ -394,6 +395,33 @@ Search string not found: "/supportedTSExtensions = ?(.=;)/"
 вернулась в основной `npm run build`. Первая в истории проекта проверка `.vue` нашла **7 реальных ошибок
 типов в `App.vue`** — они исправлены (подробности: `docs/AUDIT_REPORT.md` §12.6).
 
+### E2. 42 уязвимости в дереве зависимостей (`npm audit`) 🟡 [✅ исправлено — 0 vulnerabilities]
+
+До починки `npm.cmd audit` давал **42 уязвимости (7 moderate, 35 high)**. Ни одна не относилась к коду
+игры — источник был в dev-зависимостях и в одном неиспользуемом пакете:
+
+| Уязвимый пакет | Откуда шёл | Что сделано |
+|---|---|---|
+| `@grpc/grpc-js` (high ×2), `fast-uri`, `ip-address` (moderate ×3) | `ssh-mcp@2.8.1` (корневой devDep) → `@modelcontextprotocol/sdk`, `@opentelemetry/sdk-node`. В коде проекта пакет не упоминался нигде | `ssh-mcp` удалён из `package.json` |
+| `braces` (high) → `micromatch`, `chokidar` | `jest@29` (`jest-haste-map`, `jest-message-util`, `jest-config`) и `ts-node-dev@2` (`chokidar@3`) | `jest` и `jest-environment-jsdom` → `30.5.2` (в jest 30 этих зависимостей больше нет), `@types/jest` → `30.0.0`, `ts-jest` → `29.4.14` (peer допускает jest 30); `ts-node-dev` заменён на `tsx@4.23.15`, `dev:backend` → `tsx watch src/index.ts` |
+| `esbuild@0.21.5` (moderate: dev-сервер принимает запросы от любого сайта) | `vite@5.4.21` | `vite` → `8.3.2`, `@vitejs/plugin-vue` → `6.0.9`; esbuild стал `0.28.2` |
+| `qs@6.15.3` (moderate ×2) | `express@4.22.2` → `body-parser@1.20.6` | `express` → `4.22.3` (тянет `qs 6.16.0` и `body-parser 1.20.8`); на express 5 не переходили — API роутера не менялся |
+| `brace-expansion@1.1.18` и `@5.0.9` (high ×3) | `npm-run-all` → `minimatch@3`; `@vue/test-utils` → `js-beautify`/`editorconfig` → `minimatch@10` | обновлены до `1.1.21` и `5.0.12` через `npm audit fix`; `@vue/test-utils` → `2.5.1` |
+
+Итог: `npm.cmd audit` → **found 0 vulnerabilities**. Установка сделана заново с чистым `node_modules`
+(`added 102, removed 219, changed 84`), затем `npm audit fix` (`removed 9, changed 6`).
+
+Побочный эффект vite 8: `frontend/vite.config.ts` переименован в **`frontend/vite.config.mts`**. Vite 8
+предупреждает «Your Vite config uses features unsupported by `configLoader: native` (ESM syntax in a file
+loaded as CommonJS)», а native-загрузчик обещан дефолтным в следующей мажорной версии; в ESM-контексте
+`__dirname` недоступен, поэтому alias `@` теперь `fileURLToPath(new URL('./src', import.meta.url))`.
+Список файлов в `deploy.sh` и дерево в `docs/architecture.md` обновлены.
+
+Проверено после починки: `npm run build` → exit 0 (vite 8.3.2, `✓ 54 modules transformed`,
+`index-B04z4d71.js` 99.13 kB / `index-C_FNZJOZ.css` 6.62 kB — было 99.99/6.77 на vite 5);
+`npm run test` → 109 frontend + 21 backend; `npm run test:e2e` → 16/16 (backend поднимается через `tsx watch`).
+Подробности: `docs/AUDIT_REPORT.md` §12.7.
+
 ---
 
 ## F. Результаты проверки сборки (verification)
@@ -437,7 +465,7 @@ esbuild — тот же движок, что использует Vite для б
 | P1 🟠✅ | D1 (ws→player маппинг) | `Map<WebSocket, playerId>` в handleJoin/handleAction/handleLeave | gameServer.ts |
 | 🔵✅ | D2 (REST без валидации) | Типизированный роутер, `toInt()`-коercion, 400 на некорректный ввод | gameRouter.ts |
 | 🔵🔴✅ | D3 (persistence) | Атомарная запись (temp+rename), лог ошибки загрузки вместо молчаливого `[]` | scoreService.ts |
-| 🔵✅ | C3 (мёртвые deps) | Удалены `better-sqlite3`, `uuid` из backend/package.json | package.json |
+| 🔵✅ | C3 (мёртвые deps) | Удалены `better-sqlite3`, `uuid` из backend/package.json; позже — `@types/uuid` и `@types/better-sqlite3` из devDependencies | package.json |
 | 🔵✅ | C4 (`req/res: any`) | Типизированные handlers, валидация + защита от NaN | gameRouter.ts |
 | 🔵✅ | C5 (alias @shared) | Удалён блок paths из tsconfig.base.json | tsconfig.base.json |
 
@@ -466,6 +494,7 @@ esbuild — тот же движок, что использует Vite для б
 | **P3** 🔵✅ | C3, C4, C5 — **ИСПРАВЛЕНО**: убранные deps, типизированный роутер с валидацией, удалён alias |
 | **P3** 🟡 | C1 (слабая типизация payload), C2 (`handleQuery` не вызывается) — дизайн-вопросы, не блокируют сборку/запуск |
 | **P3** 🔵✅ | E1 (`vue-tsc@1.8.27` vs Node v26) — **ИСПРАВЛЕНО**: `vue-tsc` обновлён до 3.3.12, типизация `.vue` снова в `npm run build` |
+| **P3** 🟡✅ | E2 (42 уязвимости `npm audit`: 7 moderate / 35 high) — **ИСПРАВЛЕНО**: `npm audit` → 0 vulnerabilities (удалён `ssh-mcp`, обновлены jest/vite/express/tsx, `vite.config.mts`) |
 
 **Итог:** после фикса A1/A2/B7/C3–C5 проект **собирается и типизируется чисто** (frontend + backend, exit 0).
 Остались только дизайн-вопросы типа C1/C2 — ни один из них не блокирует сборку или запуск игры (E1 закрыт обновлением `vue-tsc`).

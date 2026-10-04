@@ -6,8 +6,9 @@
 **Ветка:** `main`, синхронизирована с `origin/main` (`https://github.com/dvdrelin/tetris.git`)
 **Коммиты после аудита:** `9dba4ea` (P0–P3: канонические матрицы SRS + направленные wall kicks, тесты, доки,
 сборка и деплой), `9db00a3` (внешний API-хост выведен из проекта: убран git-remote, `app.js` → same-origin
-`/api`), `b06f4fb` (уточнение утверждений об окружении) и последний — обновление `vue-tsc` до 3.3.12 с
-починкой найденных типов в `App.vue` (`docs/AUDIT_REPORT.md` §12.6).
+`/api`), `b06f4fb` (уточнение утверждений об окружении), обновление `vue-tsc` до 3.3.12 с починкой
+найденных типов в `App.vue` (`docs/AUDIT_REPORT.md` §12.6) и обновление зависимостей с устранением всех
+уязвимостей `npm audit` (§12.7).
 Историческая справка: до аудита HEAD был `e570ee8` («Fix: deploy.sh — skip vue-tsc…», дата `2026-09-13`);
 упоминавшийся ранее `bbecb19` («Phase 2 completion: 74 tests…») — коммит реальный, но он на 24 коммита позади
 того HEAD. Незакоммиченных изменений P0/P1/P3 больше нет; полный список правок — `docs/AUDIT_REPORT.md` §10
@@ -37,7 +38,7 @@
 ## Текущий статус
 
 ### Рабочее окружение
-- Frontend: `C:\GIT\tetris\frontend` (Vite 5.4.21, порт 3001)
+- Frontend: `C:\GIT\tetris\frontend` (Vite 8.3.2, порт 3001)
 - Backend: `C:\GIT\tetris\backend` (Express, порт 3000)
 - Dev server: `npm run dev` (frontend на 3001, backend на 3000)
 
@@ -62,7 +63,16 @@
   в `C:\Users\<user>\.npmrc`, где никто не слушал (`Test-NetConnection 127.0.0.1:1301` → `TcpTestSucceeded=False`).
   **Эти строки удалены** — `npm.cmd ping` → `PONG`, `npm.cmd view vue-tsc version` → `3.3.12`.
   Если локальный прокси на :1301 снова появится, их надо вернуть (в файле оставлен комментарий).
-- ts-node-dev: работает только без `--transpileOnly` (флаг не поддерживается)
+- `ts-node-dev` из проекта **удалён**: dev-скрипт бэкенда — `tsx watch src/index.ts` (`tsx@4.23.15`).
+  Причина не только в том, что `ts-node-dev` не поддерживал `--transpileOnly`, но и в том, что он тянул
+  `chokidar@3` → `micromatch` → `braces` (уязвимость high).
+- Зависимости обновлены, `npm.cmd audit` → **found 0 vulnerabilities** (было 42: 7 moderate / 35 high).
+  Ключевые версии: `vite 8.3.2` + `@vitejs/plugin-vue 6.0.9` + `esbuild 0.28.2`, `jest 30.5.2` +
+  `jest-environment-jsdom 30.5.2` + `ts-jest 29.4.14` + `@types/jest 30.0.0`, `express 4.22.3`
+  (`qs 6.16.0`, `body-parser 1.20.8`), `tsx 4.23.15`, `@vue/test-utils 2.5.1`; из корня удалён
+  неиспользуемый `ssh-mcp`. Конфиг Vite — `frontend/vite.config.mts` (ESM, alias через `import.meta.url`).
+  Проверено после обновления: `npm run build` → exit 0, `npm run test` → 109 + 21, `npm run test:e2e` → 16/16
+  (подробности: `docs/AUDIT_REPORT.md` §12.7)
 
 ### Известные файлы
 - `docs/PLAN.md` — главный план, обновлён

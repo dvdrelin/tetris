@@ -134,7 +134,7 @@ scp -i "$SSH_KEY" -P "$SSH_PORT" \
     frontend/tsconfig.json \
     frontend/env.d.ts \
     frontend/index.html \
-    frontend/vite.config.ts \
+    frontend/vite.config.mts \
     "$USER@$HOST:$REMOTE_DIR/frontend/"
 
 log "  backend-конфиги"

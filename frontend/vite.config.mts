@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { resolve } from 'path'
+import { fileURLToPath } from 'node:url'
 
+// .mts extension on purpose: Vite loads this file as ES modules, so `import.meta.url`
+// is available and the config stays compatible with Vite's native config loader.
 export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
   server: {

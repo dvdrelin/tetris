@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
     "dev:frontend": "cd frontend && npx vite --port 3001 --host",
-    "dev:backend": "cd backend && npx ts-node-dev --respawn src/index.ts",
+    "dev:backend": "cd backend && npx tsx watch src/index.ts",
     "build": "npm-run-all build:backend build:frontend",
     "build:frontend": "npm run build --workspace frontend",
     "build:backend": "npm run build --workspace backend",
@@ -22,7 +22,6 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "npm-run-all": "^4.1.1",
-    "ssh-mcp": "^2.8.1",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   }
 }

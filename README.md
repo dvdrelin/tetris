@@ -113,11 +113,19 @@ npm run test            # Jest (frontend + backend)
 npm run test:e2e        # Playwright E2E
 ```
 
-**Результаты (проверено в аудите, HEAD `e570ee8` + рабочие изменения):**
+**Результаты (перепроверено после обновления зависимостей — jest 30 / vite 8 / tsx):**
 - Frontend unit: **109 тестов** в 6 сюитах (engine, board, pieces, renderer, `rotation-geometry`, `rotation-kicks`)
 - Backend unit: **21 тест** в 2 сюитах (scoreService, `gameRouter` — границы HTTP-API)
 - E2E (Playwright): **16 тестов** в 2 файлах (game flow, keyboard controls, пауза/рестарт, leaderboard,
-  реальный поворот и hard drop на канвасе)
+  реальный поворот и hard drop на канвасе) — webServer поднимает backend через `tsx watch`, frontend через `vite 8`
+
+## 🔒 Зависимости
+
+`npm audit` → **found 0 vulnerabilities** (было 42: 7 moderate / 35 high). Удалён неиспользуемый
+`ssh-mcp` и мёртвые `@types/uuid` / `@types/better-sqlite3`; обновлены `vite 8.3.2`,
+`@vitejs/plugin-vue 6.0.9`, `jest 30.5.2`, `ts-jest 29.4.14`, `@types/jest 30.0.0`, `express 4.22.3`,
+`tsx 4.23.15` (вместо `ts-node-dev`), `@vue/test-utils 2.5.1`. Конфиг Vite — `frontend/vite.config.mts`
+(ESM). Подробности: `docs/AUDIT_REPORT.md` §12.7 и `docs/errors.md` E2.
 
 В PowerShell шимы `npm.ps1` и `npx.ps1` блокируются политикой выполнения — работают `npm.cmd` и `npx.cmd`,
 либо прямые бинарники:
