@@ -35,8 +35,8 @@
 #   cd /opt/neon-tetris && docker compose build && docker compose up -d
 #
 # `--exclude=backend/data` сохраняет scores.json (он примонтирован в контейнер),
-# `--exclude=nginx-proxy` сохраняет nginx-proxy/.env с DEFAULT_EMAIL, которого
-# нет в репозитории. Оба исключения обязательны.
+# `--exclude=nginx-proxy` сохраняет nginx-proxy/.env с EMAIL (адрес для Let's Encrypt),
+# которого нет в репозитории. Оба исключения обязательны.
 # ============================================================================
 
 set -euo pipefail

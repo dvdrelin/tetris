@@ -128,7 +128,9 @@ cd /opt/neon-tetris && docker compose build && docker compose up -d
 ```
 
 `--exclude=backend/data` и `--exclude=nginx-proxy` обязательны: первый сохраняет `scores.json`
-(он же примонтирован в контейнер), второй сохраняет `nginx-proxy/.env` с `DEFAULT_EMAIL`, которого нет в репозитории.
+(он же примонтирован в контейнер), второй сохраняет `nginx-proxy/.env` с `EMAIL` (адрес для Let's Encrypt),
+которого нет в репозитории. Проверено на сервере: `cut -d= -f1 /opt/neon-tetris/nginx-proxy/.env` →
+комментарий + `EMAIL` (файл 67 байт, `docker-compose.yml` в том же каталоге — 1248 байт).
 
 Что проверять после `up -d`:
 - `docker ps` → `neon-tetris  neon-tetris-neon-tetris  Up`; `docker logs --tail 15 neon-tetris` → `Neon Tetris server running on port 3000`
@@ -180,7 +182,7 @@ pm2 unstartup systemd       # Removed "/etc/systemd/system/multi-user.target.wan
 Мёртвые артефакты PM2-контура с хоста удалены: `/opt/neon-tetris/node_modules` (87 МБ),
 `/opt/neon-tetris/frontend/dist`, `/opt/neon-tetris/backend/dist`. Не тронуты и обязательны к сохранению:
 `/opt/neon-tetris/backend/data/scores.json` (volume контейнера) и `/opt/neon-tetris/nginx-proxy/`
-(там `.env` с `DEFAULT_EMAIL`, которого нет в репозитории). `rsync --exclude=dist --exclude=node_modules`
+(там `.env` с `EMAIL`, которого нет в репозитории). `rsync --exclude=dist --exclude=node_modules`
 не пересоздаёт удалённое: контейнер собирает `dist` внутри образа.
 
 Замечание по сборке: `Dockerfile` переведён на `node:22-alpine` (обе стадии — builder и production).
@@ -190,6 +192,22 @@ pm2 unstartup systemd       # Removed "/etc/systemd/system/multi-user.target.wan
 `found 0 vulnerabilities`; в контейнере `node --version` → `v22.23.3`,
 `npm ls --omit=dev --depth=0` → `express@4.22.3`, `ws@8.22.0`; лог контейнера —
 `Neon Tetris server running on port 3000`.
+
+Деплой коммита `5b9418a` (`bash deploy.sh root ntetris.ddns.net 3000`, 2026-10-04) — все самопроверки прошли:
+- образ `neon-tetris-neon-tetris:latest` → `470d4c44911e` (393 МБ), обе стадии на `node:22-alpine`,
+  `found 0 vulnerabilities`; `docker compose ps` → `neon-tetris Up`, порт только `3000/tcp` внутренний
+  (`ss -ltnp | grep :3000` → `no_external_listener_3000`);
+- `https://ntetris.ddns.net/api/health` → `200` + `application/json`: `"status":"ok"`, `version: "1.0.0"`,
+  `db: {ok:true, writable:true, count:31, bytes:6486}`, `static: {indexHtml:"present", assetCount:2}`,
+  `websocket: {clients:0, path:"/ws"}`, `runtime: {node:"v22.23.3", env:"production", port:"3000"}`,
+  `api: {scoreRecords:10, leaderboardEntries:17}`; изнутри контейнера (`docker exec … node -e fetch(…)`) — тот же `200`;
+- хэш бандла совпал: `assets/index-B04z4d71.js` → `c84daf18…` и наружу, и в образе;
+- `wss://ntetris.ddns.net/ws` → handshake OK; `http://` → `301` на `https://ntetris.ddns.net/`;
+  `/leaderboard` → `200 text/html` (SPA catch-all жив), `/api/health/x` → HTML (маршрут — ровно `/api/health`);
+- данные целы: `/opt/neon-tetris/backend/data/` → `.gitignore` + `scores.json` (6486 байт), `.health-probe` отсутствует;
+  `nginx-proxy` и `nginx-proxy-letsencrypt` → `Up 2 weeks`, не тронуты; `/opt/neon-tetris` — 140M, `/` — 30% занято;
+- откат: предыдущий образ (`8cdd94157c95`, `node:20-alpine`) после пересборки на сервере отсутствует
+  (`docker images --filter dangling=true` → пусто). Откат = `git revert` + `docker compose build && docker compose up -d`.
 
 Ранее использовавшийся Amvera-хостинг выведен полностью: упоминаний в репозитории нет (проверено по
 всем файлам, исключая `node_modules/`, `.git/`, `dist/`).
