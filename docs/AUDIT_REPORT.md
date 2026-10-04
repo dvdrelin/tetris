@@ -295,7 +295,7 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 | `docs/PHASE1_FIXES.md` | I-строка таблицы (col 2 / col 1); блок «область действия»: пункты 1.5–1.5.3 относятся к legacy `app.js` (`04be72a`), не к `frontend/` |
 | `docs/PHASE2_ARCHITECTURE.md` | Раздел «Вращение фигур» переписан под боевой движок (`rotatePiece`, kick-таблицы, ghost в сторе); «11 позиций» снято; статус-строка с актуальными числами тестов |
 | `docs/architecture.md` | `BoardManager` больше **не** описывается как источник ghost-расчёта: ghost — `stores/gameStore.ts:152` (`getGhostY`), в `board.ts` его нет |
-| `docs/SESSION_CONTEXT.md` | HEAD исправлен на `e570ee8` (`bbecb19` — реальный коммит, но на 24 коммита позади HEAD); цифры тестов; блок окружения (`npm.cmd`, обход `npx` через `node node_modules\<pkg>\bin\...`, hoisted deps, поломка `vue-tsc` 1.8.27 × TS 5.9.3, отсутствие сети); `piecePreview.ts` помечен удалённым |
+| `docs/SESSION_CONTEXT.md` | HEAD исправлен на `e570ee8` (`bbecb19` — реальный коммит, но на 24 коммита позади HEAD); цифры тестов; блок окружения (`npm.cmd`/`npx.cmd`, обход через `node node_modules\<pkg>\bin\...`, hoisted deps, поломка `vue-tsc` 1.8.27 × TS 5.9.3, причина сбоев npm — proxy-строки в пользовательском `.npmrc`, см. §12.5); `piecePreview.ts` помечен удалённым |
 | `docs/PLAN.md` | Поправка к таблице статусов: цифры фазы 2 исторические; фазы 1–2 не включали починку вращения боевого фронтенда |
 | `README.md` | Удалён пункт «Touch-управление — свайпы» (в `frontend/src` 0 touch/pointer-обработчиков); дерево: `piecePreview.ts` убран, добавлен `app.js` как legacy; числа тестов 109/21/16; «Express + WebSocket — real-time sync» заменён на честное описание (REST работает, WebSocket-сервер поднят, фронтенд сокета не открывает, `handleAction` — заглушка); таблица документации дополнена `AUDIT_REPORT.md`, `ROTATION_SYSTEM_REFERENCE.md`, `errors.md` |
 
@@ -303,7 +303,7 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 
 | Файл | Изменение |
 |---|---|
-| `frontend/package.json` | `"build": "tsc --noEmit && vite build"` (было `vue-tsc --noEmit && vite build` — падало); отдельная цель `build:vue-tsc` оставлена на момент, когда `vue-tsc` обновят до ≥2.x (в аудите сети нет: registry → `ECONNREFUSED 127.0.0.1:1301`) |
+| `frontend/package.json` | `"build": "tsc --noEmit && vite build"` (было `vue-tsc --noEmit && vite build` — падало); отдельная цель `build:vue-tsc` оставлена на момент, когда `vue-tsc` обновят до ≥2.x (блокировка была в конфиге npm, а не в сети — см. §12.5) |
 | `frontend/dist/**` | Пересобран штатной `npm run build`: `index.html` 0.58 kB · `assets/index-1GF7EUM4.js` 99.99 kB · `assets/index-DPHrKT2t.css` 6.77 kB (53 модуля) |
 | `deploy.sh` | `REMOTE_PORT="${3:-3000}"` (было `${1:-3000}` — порт брался из USER); scp разнесён по каталогам (прежде `frontend/package.json` и `backend/package.json` выгружались в один `$REMOTE_DIR/` и перезаписывали друг друга); копируются `package-lock.json`, `tsconfig.base.json`, `frontend/env.d.ts`, `frontend/index.html`; `mkdir -p backend/data` до scp; сборка через `npm run build` вместо `npx …`; PM2: один `--name`, `--cwd`, без безусловного `pm2 restart`; удалён неиспользуемый `FILES_TO_COPY` и бессмысленный финальный блок «Теперь запустите deploy.sh…»; `bash -n deploy.sh` → OK |
 | `backend/src/services/scoreService.ts` | `getDBDir = dirname(dbPath)` (было `join(dbPath, '..', '..')` → `ENOENT`); `loadScores` создаёт каталог и возвращает `[]` при отсутствии/битом файле; `saveScores` пишет во временный файл и делает `renameSync` |
@@ -316,10 +316,35 @@ L: [ [[0,0,1],[1,1,1],[0,0,0]], [[0,1,0],[0,1,0],[0,1,1]],
 1. **C2** — query-путь (`GetNextPiece`, `GetBoardState`) жив и UI не используется: менять не стали, ложная отметка в `errors.md` снята.
 2. Приватные хендлеры движка по-прежнему принимают `command: any` (валидация есть только на входе `handleCommand` для `RotatePiece`/`MovePiece`).
 3. `@types/uuid` и `@types/better-sqlite3` в `backend/package.json:20–21` — мёртвые dev-зависимости.
-4. `vue-tsc` ≥2.x (типизация `.vue`) требует установки из реестра — в среде аудита сети нет.
+4. `vue-tsc` ≥2.x (типизация `.vue`) не установлен; реестр доступен (актуальная версия `3.3.12`), мешает только
+   конфиг npm с мёртвым proxy — см. §12.5.
 5. `hasCollision` не вызывается; расхождение `isValidPosition` (`boardY < 0` запрещён) vs `hasCollision` (разрешён) не устранено.
 6. `SPEED_CONFIG.autoDropInterval` в движке вычисляется и не используется (tick живёт в `GameBoard.vue`) — C12.
 7. `GameStateSnapshot.currentPiece: number[]` — тип не описывает реальную форму фигуры.
 8. `docs/tsc-frontend.log` — нечитаемый бинарный артефакт, упоминается как результат проверки типов.
 9. Фаза 3 (мультиплеер) не начата: WebSocket-сервер поднят и проксируется, но `GameServer.handleAction` — заглушка, фронтенд сокет не открывает.
-10. Все перечисленные правки — **незакоммиченное рабочее дерево**; коммит остаётся на решение пользователя.
+10. Все правки закоммичены и запушены: `9dba4ea` (P0–P3) и `9db00a3` (удаление внешнего API-хоста),
+    `main` синхронизирован с `origin/main`.
+
+### 12.5 Повторная проверка сетевых утверждений (после аудита)
+
+Утверждение «сети для npm registry нет → починки только офлайн» оказалось **ложным**: это была конфигурация,
+а не ограничение среды.
+
+| Проверка | Результат |
+|---|---|
+| `C:\Users\<user>\.npmrc` | содержит `proxy=http://127.0.0.1:1301` и `https-proxy=http://127.0.0.1:1301` |
+| `Test-NetConnection 127.0.0.1:1301` | `TcpTestSucceeded=False` — слушателя нет (отсюда `ECONNREFUSED 127.0.0.1:1301` в npm) |
+| `Test-NetConnection registry.npmjs.org:443` | `TcpTestSucceeded=True` (`104.16.7.34`) |
+| `Test-NetConnection github.com:443` | `TcpTestSucceeded=True` (`140.82.121.3`); `git push origin main` проходит |
+| `npm.cmd ping` (конфиг по умолчанию) | `ECONNREFUSED 127.0.0.1:1301` |
+| `npm.cmd --userconfig <чистый .npmrc> ping` | `PONG 558ms` |
+| `npm.cmd --userconfig <чистый .npmrc> view vue-tsc version` | `3.3.12` |
+| `node -e "fetch('https://registry.npmjs.org/vue-tsc')…"` | `HTTP 200`, `latest = 3.3.12` |
+| `npm --version` / `npx --version` (шимы `.ps1`) | блокируются политикой выполнения («running scripts is disabled») |
+| `npx.cmd --version` / `npx.cmd tsc --version` | `11.13.0` / `Version 5.9.3` |
+| `npm.cmd run test` из корня | 109 frontend + 21 backend — все проходят |
+
+Вывод: офлайн-ограничение снимается, пункт 4 (обновление `vue-tsc`) технически выполним. Правка
+`C:\Users\<user>\.npmrc` (удаление двух proxy-строк) в аудит не входила — это конфиг вне репозитория, решение за
+пользователем; обход через `--userconfig` проверен и ничего в репозитории не меняет.

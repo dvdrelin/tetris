@@ -39,18 +39,23 @@
 
 ### Важно (проверено в аудите)
 - Vite proxy: `/api` → `http://localhost:3000`, `/ws` → `ws://localhost:3000`
-- PowerShell: `npx` заблокирован. Рабочие команды обхода:
+- PowerShell: шимы `npm.ps1` и `npx.ps1` блокируются политикой выполнения («running scripts is disabled»).
+  Работают `.cmd`-шимы: **`npm.cmd`** и **`npx.cmd`** (проверено: `npx.cmd --version` → 11.13.0,
+  `npx.cmd tsc --version` → 5.9.3, `npm.cmd run test` из корня → 109 + 21 тестов). Эквивалентный обход
+  через прямые бинарники:
   - `node node_modules\typescript\bin\tsc --noEmit -p frontend\tsconfig.json`
   - `node node_modules\jest\bin\jest.js --config frontend\jest.config.js --runInBand`
   - `node node_modules\@playwright\test\cli.js test --config tests\playwright.config.ts`
-- PowerShell: `npm` как `npm.ps1` не запускается («running scripts is disabled») → использовать **`npm.cmd`**
-  (или `cmd /c npm ...`)
 - Зависимости workspace hoisted в корневой `node_modules`, поэтому из каталога `frontend` Vite запускается
   как `node ..\node_modules\vite\bin\vite.js --port 3001 --host`
 - `vue-tsc@1.8.27` несовместим с установленным `typescript@5.9.3`
   (`Search string not found: "/supportedTSExtensions = .*(?=;)/"`) → `npm run build` во frontend падал;
   в `"build"` поставлен `tsc --noEmit && vite build`, `vue-tsc` требует обновления до ≥2.x
-- Сеть в среде аудита недоступна (npm registry → `ECONNREFUSED 127.0.0.1:1301`) → починки только офлайн
+- Сеть **есть**: `registry.npmjs.org:443` и `github.com:443` доступны (`Test-NetConnection` → `True`,
+  `git push` проходит). npm падал только из-за устаревших строк `proxy` / `https-proxy = http://127.0.0.1:1301`
+  в `C:\Users\<user>\.npmrc`, где никто не слушает (`Test-NetConnection 127.0.0.1:1301` → `TcpTestSucceeded=False`).
+  Обход без правки пользовательского конфига: `npm.cmd --userconfig <чистый .npmrc> …`
+  (проверено: `npm ping` → `PONG 558ms`, `npm view vue-tsc version` → `3.3.12`, прямой `fetch` реестра → HTTP 200)
 - ts-node-dev: работает только без `--transpileOnly` (флаг не поддерживается)
 
 ### Известные файлы

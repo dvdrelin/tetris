@@ -118,7 +118,8 @@ npm run test:e2e        # Playwright E2E
 - E2E (Playwright): **16 тестов** в 2 файлах (game flow, keyboard controls, пауза/рестарт, leaderboard,
   реальный поворот и hard drop на канвасе)
 
-В PowerShell `npx` недоступен, поэтому напрямую:
+В PowerShell шимы `npm.ps1` и `npx.ps1` блокируются политикой выполнения — работают `npm.cmd` и `npx.cmd`,
+либо прямые бинарники:
 `node node_modules\jest\bin\jest.js --config frontend\jest.config.js`,
 `node node_modules\@playwright\test\cli.js test --config tests\playwright.config.ts`.
 

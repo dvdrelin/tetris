@@ -566,18 +566,18 @@ esbuild — тот же движок, что использует Vite для б
 ### Как проверить после продолжения
 ```bash
 # Типы (frontend; vue-tsc НЕ использовать — см. E1)
-npx tsc --noEmit -p frontend/tsconfig.json          # expect exit 0, 0 errors
-npx tsc --noEmit -p backend/tsconfig.json           # expect exit 0
+npx.cmd tsc --noEmit -p frontend/tsconfig.json        # expect exit 0, 0 errors
+npx.cmd tsc --noEmit -p backend/tsconfig.json         # expect exit 0
 
 # Production-бандл (обход vue-tsc через vite напрямую)
-npx vite build                                       # → frontend/dist/
+npm.cmd run build --workspace=frontend                 # → frontend/dist/
 
 # Dev для playtest
-npm run dev --workspace=frontend                     # http://localhost:3001
+npm.cmd run dev --workspace=frontend                   # http://localhost:3001
 
 # Backend — ВАЖНО: npm run start = node dist/index.js, нужен свежий dist!
 node <path-to-typescript>/bin/tsc -p backend/tsconfig.json   # пересобрать dist/
-npm run start                                         # перезапустить сервер (порт 3000)
+npm.cmd run start --workspace=backend                  # перезапустить сервер (порт 3000)
 curl -s localhost:3000/api/scores                     # TestPlayer/5000
 curl -s -X POST localhost:3000/api/score -H 'Content-Type: application/json' \
      -d '{"playerName":"Test","score":100}'           # {"success":true} + запись в scores.json
@@ -586,7 +586,7 @@ curl -s -X POST localhost:3000/api/score -H 'Content-Type: application/json' \
 ### Окружение / ловушки (важно при продолжении)
 - **E1 — `vue-tsc@1.8.27` vs Node v26:** падает с «Search string not found: "/supportedTSExtensions...". Это
   ошибка окружения, не проекта. Типизируйте через обычный `tsc --noEmit`; для production-бандла используйте
-  `npx vite build` напрямую (esbuild сам разбирает `.vue`, vue-tsc не нужен).
+  `npm.cmd run build` во frontend (esbuild сам разбирает `.vue`, vue-tsc не нужен).
 - **Stale dist:** `npm run start` запускает `node dist/index.js`. После правки backend'а пересоберите `tsc`
   и перезапустите сервер, иначе валидный POST будет отклонён старым кодом.
 - **Sandbox EPERM:** esbuild/tsc как subprocess могут падать (`spawn EPERM`, `optimizeSafeRealPathSync`) —
