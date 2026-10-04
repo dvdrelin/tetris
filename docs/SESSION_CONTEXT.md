@@ -73,6 +73,23 @@
   неиспользуемый `ssh-mcp`. Конфиг Vite — `frontend/vite.config.mts` (ESM, alias через `import.meta.url`).
   Проверено после обновления: `npm run build` → exit 0, `npm run test` → 109 + 21, `npm run test:e2e` → 16/16
   (подробности: `docs/AUDIT_REPORT.md` §12.7)
+- **Актуальные цифры тестов (после добавления `GET /api/health`):** `npm.cmd run test` →
+  **109 frontend + 34 backend** (backend: `scoreService`, `gameRouter`, `health`), `npm.cmd run test:e2e` →
+  **19/19** (добавлен `tests/e2e/health.test.ts`), `npm.cmd run build` → exit 0, `npm.cmd audit` → 0 уязвимостей
+
+### Эндпоинт самодиагностики `GET /api/health`
+- Маршрут `backend/src/routes/healthRouter.ts`, подключён в `index.ts` **до** `express.static` и SPA
+  catch-all — иначе `GET /api/health` отдавал бы HTML вместо JSON (так и было до этого коммита:
+  маршрута не существовало вообще).
+- Ответ всегда JSON: `200` когда все проверки ok, `503` + `"status":"degraded"` когда хотя бы одна упала.
+  Проверки: `db` (`ScoreService.health()`: каталог данных, парсинг `scores.json`, запись через отдельный
+  `.health-probe`, удаляемый в `finally`), `static` (`frontend/dist/index.html` + файлы в `assets/`),
+  `websocket` (`wss.clients.size`, путь `/ws`), `runtime` (Node, uptime, RSS, `NODE_ENV`, `PORT`),
+  `api` (самопроверка `/api/scores` и `/api/leaderboard` через тот же `ScoreService`).
+- Проверено на реальном образе (`docker build` + `docker run`, `node:22-alpine`): `GET /api/health` →
+  `200 application/json`, `"status":"ok"`, `"version":"1.0.0"`, `static.assetCount: 2`, `runtime.node: v22.23.3`;
+  после `mv /app/frontend/dist/index.html` → `503` + `"status":"degraded"` с `static.error`; после возврата файла → `200`.
+  `GET /` при этом остаётся HTML, каталог `/app/backend/data` после проверок пуст (probe удалён).
 
 ### Известные файлы
 - `docs/PLAN.md` — главный план, обновлён
@@ -115,10 +132,19 @@ cd /opt/neon-tetris && docker compose build && docker compose up -d
 
 Что проверять после `up -d`:
 - `docker ps` → `neon-tetris  neon-tetris-neon-tetris  Up`; `docker logs --tail 15 neon-tetris` → `Neon Tetris server running on port 3000`
+- `curl -s https://ntetris.ddns.net/api/health` → `200` и JSON вида
+  `{"status":"ok","uptimeSec":…,"version":"1.0.0","checks":{"db":{"ok":true,"writable":true,"count":…},"static":{"ok":true,"indexHtml":"present","assetCount":2},"websocket":{"ok":true,"clients":0,"path":"/ws"},"runtime":{"ok":true,"node":"v22…"},"api":{"ok":true,…}}}`.
+  `503` + `"status":"degraded"` означает реальную проблему (хранилище, собранный SPA или websocket),
+  а не HTML-заглушку. Эндпоинт добавлен коммитом `feat(backend): GET /api/health…`; до него
+  `/api/health` не был маршрутом и SPA catch-all возвращал HTML.
 - `curl -s https://ntetris.ddns.net | grep -o 'assets/[^"]*'` → новые хэши бандла
 - `/api/scores` и `/api/leaderboard` → JSON сохранных рекордов; `wss://ntetris.ddns.net/ws` → успешный handshake
 - хэши артефактов в контейнере должны совпадать с локальной сборкой: `frontend/dist/assets/index-B04z4d71.js` →
   `c84daf18…`, `backend/dist/index.js` → `1a45f215…` (совпали байт в байт)
+
+`deploy.sh` повторяет эти проверки сам: `https://$HOST/` → 200, `https://$HOST/api/health` → 200,
+`GET /api/health` изнутри контейнера (`docker exec … node -e fetch`), и сравнение хэша бандла
+«отдаётся / в образе».
 
 ### Один контур на сервере (PM2-контур удалён 2026-10-04)
 

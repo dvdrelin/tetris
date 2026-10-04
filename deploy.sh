@@ -162,13 +162,25 @@ if [[ "$HTTP_CODE" != "200" ]]; then
 fi
 ok "https://$HOST/ → 200"
 
+log "Проверяю GET https://$HOST/api/health..."
+HEALTH_RAW=$(run "curl -s -w '\n%{http_code}' https://$HOST/api/health" || echo $'\n000')
+HEALTH_CODE=$(echo "$HEALTH_RAW" | tail -1)
+HEALTH_BODY=$(echo "$HEALTH_RAW" | head -n -1 | head -c 400)
+if [[ "$HEALTH_CODE" != "200" ]]; then
+    warn "Ответ ($HEALTH_CODE): $HEALTH_BODY"
+    run "docker logs --tail 20 $APP_CONTAINER" || true
+    err "GET /api/health вернул $HEALTH_CODE — ожидался 200 со статусом ok"
+fi
+ok "https://$HOST/api/health → 200: $(echo "$HEALTH_BODY" | tr -d '\n' | cut -c1-160)"
+echo ""
+
 log "Проверяю логи контейнера..."
 run "docker logs --tail 15 $APP_CONTAINER"
 echo ""
 
 log "Проверяю внутренний порт приложения ($PORT) изнутри контейнера..."
-if ! run "docker exec $APP_CONTAINER node -e 'fetch(\"http://127.0.0.1:$PORT/api/scores\").then(r=>console.log(\"api/scores\", r.status, r.headers.get(\"content-type\"))).catch(e=>{console.error(e.message);process.exit(1)})'"; then
-    err "Запрос /api/scores внутри контейнера не прошёл — приложение на порту $PORT не отвечает"
+if ! run "docker exec $APP_CONTAINER node -e 'fetch(\"http://127.0.0.1:$PORT/api/health\").then(r=>r.json().then(b=>{console.log(\"api/health\", r.status, r.headers.get(\"content-type\"), b.status, JSON.stringify(b.checks)); if(r.status!==200){process.exit(1)}})).catch(e=>{console.error(e.message);process.exit(1)})'"; then
+    err "GET /api/health внутри контейнера не вернул 200 ok — приложение на порту $PORT нездорово"
 fi
 echo ""
 
@@ -198,6 +210,7 @@ echo "════════════════════════�
 echo ""
 echo -e " Приложение доступно по адресу:"
 echo -e "   ${GREEN}https://${HOST}/${NC}  (HTTP → HTTPS редирект)"
+echo -e "   ${GREEN}https://${HOST}/api/health${NC}  (JSON: статус, db, статика, websocket, runtime)"
 echo -e "   ${GREEN}https://${HOST}/api/scores${NC}  (JSON рекордов)"
 echo ""
 echo -e " Управление (всё через Docker, PM2 на сервере нет):"

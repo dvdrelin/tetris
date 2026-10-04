@@ -71,7 +71,8 @@ bash deploy.sh root <HOST> 3000        # SSH key по умолчанию: ~/.ssh
 
 `deploy.sh` работает только через Docker: клонирует репозиторий на сервер, синхронизирует
 `rsync`-ом (не трогая `backend/data` и `nginx-proxy`), выполняет `docker compose build && up -d`
-и сам проверяет ответ сайта, JSON API и совпадение хэша бандла «отдаётся / в образе».
+и сам проверяет ответ сайта, `GET /api/health` (снаружи и изнутри контейнера), JSON API
+и совпадение хэша бандла «отдаётся / в образе».
 PM2 в скрипте больше нет — этого контура на сервере тоже нет. Процедура и проверки:
 `docs/SESSION_CONTEXT.md` → «Боевое окружение (действующий деплой)».
 
@@ -86,7 +87,7 @@ tetris/
 │   └── shared/            # GameEngine, BoardManager, PieceFactory, types
 ├── backend/src/           # Express + WebSocket
 │   ├── servers/           # GameServer, WebSocket handling
-│   ├── routes/            # API endpoints (score, leaderboard)
+│   ├── routes/            # API endpoints (score, leaderboard, health)
 │   └── services/          # ScoreService
 ├── nginx-proxy/           # Nginx proxy + Let's Encrypt
 │   ├── docker-compose.yml
@@ -121,9 +122,10 @@ npm run test:e2e        # Playwright E2E
 
 **Результаты (перепроверено после обновления зависимостей — jest 30 / vite 8 / tsx):**
 - Frontend unit: **109 тестов** в 6 сюитах (engine, board, pieces, renderer, `rotation-geometry`, `rotation-kicks`)
-- Backend unit: **21 тест** в 2 сюитах (scoreService, `gameRouter` — границы HTTP-API)
-- E2E (Playwright): **16 тестов** в 2 файлах (game flow, keyboard controls, пауза/рестарт, leaderboard,
-  реальный поворот и hard drop на канвасе) — webServer поднимает backend через `tsx watch`, frontend через `vite 8`
+- Backend unit: **34 теста** в 3 сюитах (scoreService, `gameRouter` — границы HTTP-API,
+  `health` — `GET /api/health`: ok/degraded, отсутствие HTML, неизменяемость `scores.json`)
+- E2E (Playwright): **19 тестов** в 3 файлах (game flow, keyboard controls, пауза/рестарт, leaderboard,
+  реальный поворот и hard drop на канвасе, smoke-проверка `GET /api/health`) — webServer поднимает backend через `tsx watch`, frontend через `vite 8`
 
 ## 🔒 Зависимости
 
@@ -148,8 +150,8 @@ npm run test:e2e        # Playwright E2E
 - **OOP** — GameEngine, BoardManager, PieceFactory
 - **SOLID** — каждая ответственность в отдельном классе
 - **Pinia** — state management (gameStore, leaderboardStore)
-- **Express + WebSocket** — REST API (`/api/score`, `/api/scores`, `/api/leaderboard`, `/api/player/:name`)
-  работает; WebSocket-сервер (`backend/src/servers/gameServer.ts`) поднят и проксируется (`/ws`), но
+- **Express + WebSocket** — REST API (`/api/score`, `/api/scores`, `/api/leaderboard`, `/api/player/:name`,
+  `/api/health`) работает; WebSocket-сервер (`backend/src/servers/gameServer.ts`) поднят и проксируется (`/ws`), но
   **real-time синхронизации игры нет**: фронтенд не открывает ни одного сокета (0 упоминаний
   `WebSocket|ws://|wss://` в `frontend/src`), а `GameServer.handleAction` — заглушка. Мультиплеер —
   не начатая Фаза 3 (`docs/PHASE3_MULTIPLAYER.md`)

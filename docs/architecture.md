@@ -175,12 +175,37 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 ### 4.5 Backend
 - **`index.ts`** — Express + HTTP-сервер (порт `PORT || 3000`), роутинг `/api`,
   WebSocket-сервер (`ws`, режим `noServer`) и хендлер `upgrade` для подключения по `/ws`.
+  Один экземпляр `ScoreService` создаётся в `index.ts` и передаётся обоим роутерам
+  (`/api/health` и `/api`), чтобы health-проверка описывала ровно то хранилище, которым
+  пользуется игра. Порядок подключения критичен: `/api/health` → `createGameRouter` →
+  `express.static(frontend/dist)` → SPA catch-all `app.get('*')`. Если поставить health
+  после статики, `GET /api/health` вернёт HTML вместо JSON.
 - **`gameServer.ts`** — управление сессиями игроков (`players`, `gameStates` maps):
   обработка сообщений `join / action / leave`, broadcast всем клиентам.
 - **`scoreService.ts`** — persistence очков в `data/scores.json`: сохранение, топ-очки,
-  лидерборд (по игроку/режиму), статистика по игроку.
+  лидерборд (по игроку/режиму), статистика по игроку; плюс read-only `health()` —
+  проверка, что каталог данных существует, `scores.json` парсится как массив
+  (отсутствующий файл = чистая установка, `count: 0`, а не ошибка) и что каталог
+  доступен для записи. Проверка записи пишёт в отдельный файл `.health-probe` рядом с
+  `scores.json` и удаляет его в `finally`: `health()` никогда не трогает `scores.json`
+  и не меняет его mtime.
 - **`gameRouter.ts`** — REST: `POST /api/score`, `GET /api/scores`, `/leaderboard`,
   `/player/:name`.
+- **`healthRouter.ts`** — `GET /api/health`: всегда JSON, `200` когда все проверки ok и
+  `503` когда хотя бы одна degraded. Ответ: `{ status, timestamp, uptimeSec, version,
+  checks: { db, static, websocket, runtime, api } }`.
+  - `db` — из `ScoreService.health()`: `writable`, `count`, `bytes`, `mtimeMs`;
+  - `static` — `frontend/dist/index.html` существует и в `frontend/dist/assets` есть
+    хотя бы один файл (иначе собранный SPA не отдаётся → degraded);
+  - `websocket` — число живых клиентов (`wss.clients.size`, провайдером передаёт
+    `index.ts`) и путь апгрейда `/ws`;
+  - `runtime` — версия Node, uptime, RSS, `NODE_ENV`, `PORT`;
+  - `api` — самопроверка `/api/scores` и `/api/leaderboard` через тот же `ScoreService`
+    (без HTTP-запроса к самому себе), с числом записей.
+  Версия берётся из `APP_VERSION` (если задан), иначе из `backend/package.json`,
+  иначе `unknown`. Каждая проверка обёрнута в `try/catch`: упавшая проверка делает
+  отчёт degraded, но никогда не роняет эндпоинт; в payload нет ни абсолютных путей,
+  ни секретов.
 
 ---
 
