@@ -29,10 +29,16 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     loading.value = true
     try {
       const res = await fetch(`/api/scores?mode=${m}&limit=10`)
-      const data = await res.json()
-      topScores.value = data.scores || []
+      if (!res.ok) {
+        // A failed read is a degraded leaderboard, not a crash: report it and render "no data".
+        console.warn(`Could not load scores: HTTP ${res.status}`)
+        topScores.value = []
+      } else {
+        const data = await res.json()
+        topScores.value = data.scores || []
+      }
     } catch (e) {
-      console.error('Failed to fetch scores:', e)
+      console.warn('Failed to fetch scores:', e)
       topScores.value = []
     }
     loading.value = false
@@ -43,10 +49,15 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     loading.value = true
     try {
       const res = await fetch(`/api/leaderboard?mode=${m}`)
-      const data = await res.json()
-      leaderboard.value = data.leaderboard || []
+      if (!res.ok) {
+        console.warn(`Could not load leaderboard: HTTP ${res.status}`)
+        leaderboard.value = []
+      } else {
+        const data = await res.json()
+        leaderboard.value = data.leaderboard || []
+      }
     } catch (e) {
-      console.error('Failed to fetch leaderboard:', e)
+      console.warn('Failed to fetch leaderboard:', e)
       leaderboard.value = []
     }
     loading.value = false
