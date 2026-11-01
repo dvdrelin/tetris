@@ -70,6 +70,8 @@ tetris/                          (корень monorepo, npm workspaces: fronten
         │   └── gameServer.ts    # WebSocket: join/action/leave, broadcast
         ├── routes/
         │   └── gameRouter.ts    # REST: POST /score, GET /scores,/leaderboard,/player/:name
+        ├── middleware/
+        │   └── rate-limit.ts    # RateLimiter: скользящее окно на IP (без зависимостей)
         └── services/
             └── scoreService.ts  # persistence в data/scores.json + лидерборды
 ```
@@ -373,6 +375,8 @@ placePiece() → clearLines() > 0
 | Один `togglePause` и одна кнопка (C2) | ⏸/▶ — один элемент под управлением `isPaused`; второй обработчик (`resumeGame`) удалён: два пути паузы неизбежно разъезжаются. |
 | Подсказки клавиш как данные (`CONTROL_HINTS`) | Меню и HUD рендерят один список; тест требует, чтобы каждый заявленный ключ был в `KEY_MAP` или в `VIEW_HINT_KEYS`. Минус: список надо руками синхронизировать с картой. |
 | Имя игрока в `localStorage` (C4) | Клиентская нормализка повторяет потолок бэкенда (32), но доверять ей нельзя: настоящая защита очков — потолок и rate-limit (D1/D2, блок 7). |
+| Скользящее окно на `POST /score` (D1) | `RateLimiter` свой, без `express-rate-limit`: 60 с / 30 запросов на IP, `429` + `Retry-After`, проверка до разбора тела (отклонённый запрос не доходит до `ScoreService`). Честная подпись результата требует серверной сессии — это решение отложено до мультиплеера, поэтому окно, а не аутентификация. |
+| `app.set('trust proxy', 1)` | Без него за nginx-proxy ключом лимита стал бы адрес контейнера-прокси, и лимит гасил бы весь сайт разом. Компромисс: заголовок `X-Forwarded-For` доверяется на одном хопе — при запуске без прокси (напрямую) нужно `TRUST_PROXY=0`. |
 | `engine.stop()` без `onGameOver` (C5) | Заброшенная партия не имеет права на `POST /api/score`. Компромисс: продолжить прерванную партию нельзя — только новая. |
 | 7-bag рандомизатор | Гарантирует равномерное распределение фигур; реализован вручную (Fisher–Yates). |
 | Файловая persistence вместо БД | Простота; запись теперь атомарная (temp+rename, D3). Зависимости `better-sqlite3`/`uuid` удалены из deps (C3). |

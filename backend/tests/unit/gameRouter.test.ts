@@ -52,7 +52,9 @@ describe('gameRouter validation', () => {
   })
 
   test('negative, fractional, non-numeric and absurd scores are rejected', async () => {
-    for (const score of [-5, 1.5, 'abc', 1_000_001, null]) {
+    // D2 moved the ceiling from 1 000 000 to 10 000 000, so 1 000 001 is legal now and
+    // 10 000 001 is the new boundary (asserted explicitly in tests/unit/rateLimit.test.ts).
+    for (const score of [-5, 1.5, 'abc', 10_000_001, null]) {
       const res = await request(app).post('/api/score').send({ playerName: 'Bob', score })
       expect(res.status).toBe(400)
     }

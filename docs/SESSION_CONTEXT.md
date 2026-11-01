@@ -378,9 +378,9 @@ E2E-счёт не вырос: нового браузерного поведен
 Новые тесты: `frontend/tests/unit/ui-block6.test.ts` (13), `tests/e2e/ui.test.ts` (4),
 `tests/e2e/player-name.test.ts` (3). Бэкенд не менялся, прод не пересобирается.
 
-**Актуальные цифры тестов на HEAD этого блока: 196 frontend unit (11 сюит) + 36 backend unit
-(3 сюиты) + 37 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
-в выводе прогона 37 строк «ok» — это и есть `37 passed`; исторические «19 passed» в записях
+**Актуальные цифры тестов на HEAD этого блока: 196 frontend unit (11 сюит) + 49 backend unit
+(4 сюиты: `scoreService`, `gameRouter`, `health`, `rateLimit`) + 38 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
+в выводе прогона 37 строк «ok» — это и есть `38 passed`; исторические «19 passed» в записях
 блоков 2–3 соответствовали тому же полному прогону того времени.
 
 ## Граф проекта (Graphify)
@@ -408,22 +408,54 @@ graphify update C:\GIT\tetris
 репорта, вторая останавливается на `graph.json` и не пересобирает `GRAPH_REPORT.md` и имена.
 `graphify-out/` — генерируемый артефакт, в git не попадает (`.gitignore`).
 
+## Что сделано в блоке 7 (бэкенд: D1, D2)
+
+Новый модуль `backend/src/middleware/rate-limit.ts` — `RateLimiter`: скользящее окно на инъекционных
+часах (тестируется без реального ожидания), без внешних зависимостей и таймеров; `check(key)` →
+`{allowed, retryAfterMs, remaining}`, геттеры `limit`/`window`/`size`, cap на число ключей с чисткой
+устаревших. `gameRouter.ts`: `LIMITS.scoreMax` поднят с `1_000_000` до **`10_000_000`** (D2), фабрика
+`createGameRouter(scoreService, { scoreLimiter })` — лимитер опционален, на `POST /score` перед
+валидацией тела отказ отдаётся как **429** + `Retry-After` (сек) + `X-RateLimit-Limit/-Remaining`.
+`index.ts`: `app.set('trust proxy', 1)` (иначе за nginx-proxy все игроки — один «IP» контейнера-прокси;
+снимается `TRUST_PROXY=0`), `new RateLimiter({ windowMs: SCORE_RATE_LIMIT_WINDOW_MS || 60000,
+max: SCORE_RATE_LIMIT_MAX || 30 })`, лимитер передаётся в роутер и в health-отчёт.
+`healthRouter.ts`: новая опция `scoreRateLimit()`, в `checks.api` появился
+`scoreRateLimit: { max, windowMs, trackedKeys }` — состояние ограничения видно из `GET /api/health`.
+
+Тесты: новая сюита `backend/tests/unit/rateLimit.test.ts` (+13: 7 чистых тестов `RateLimiter` на
+фейковых часах — окно скользит, `Retry-After` уменьшается 1000→600 мс, ключи независимы, устаревшие
+ключи выметаются (`maxKeys`), невалидная конфигурация → `RangeError`; 6 тестов маршрута — 429 с
+заголовками и **без записи в хранилище**, разные `X-Forwarded-For` → независимые окна,
+`GET`-роуты и health не лимитируются, без лимитера поведение прежнее), новый E2E
+`tests/e2e/zz-score-rate-limit.test.ts` (+1; префикс `zz-` — запуск последним, потому что тест добивает
+окно текущего клиента; лимит и окно читаются из `checks.api.scoreRateLimit`, а не хардкодом). В
+`gameRouter.test.ts` переприкручена граница: `1_000_001` теперь легален, нелегален `10_000_001`.
+
+Корректность проверена на фронте: `1_500_000` (выше старого потолка) проходит, `10_000_001` → 400.
+Два моих же первоначальных теста оказались неправы, а не код: (1) второй `check('fresh')` при `max: 1`
+закономерно даёт `false` — ожидание было «с twice-разрешённым» ключом; (2) я ждал `400` от запроса с
+невалидным телом, находясь в исчерпанном окне, — лимитер стоит **до** валидации и отказ отдаёт раньше
+разбора тела (это и есть его смысл); плюс `sweepIfTooLarge` имел нестрогое условие (`<=` вместо `<`)
+и карта могла уехать за `maxKeys` — исправлено в коде. Фронтенд в этом блоке не менялся; известный
+хвост: `fetch('/api/score')` в `gameStore` не проверяет `res.ok` → 429/400 молча означают «рекорд не
+ушёл» (править через `console.warn`: E2E-сюиты считают `window.__consoleErrors`, `console.error`
+сломал бы их assertions).
+
 ## Следующий шаг
 
-### Блок 7: бэкенд + деплой (D1, D2)
+### Блок 7 (остаток): деплой + мелкий хвост фронтенда
 
-1. **`scoreMax` (D2):** потолок `POST /api/score` 1 000 000 → **10 000 000** (`LIMITS` в
-   `backend/src/routes/gameRouter.ts`); frontend-нормализка имени из блока 6 к этому уже готова.
-2. **Rate-limit (D1):** ограничение частоты `POST /api/score` на IP с ответом **429** и
-   `Retry-After`; тесты на 429 и на то, что остальные роуты лимитом не задевает.
-3. Тесты: backend unit (`gameRouter`/новый модуль лимита) + E2E на 429 при серии запросов.
-4. Проверки: `npx.cmd tsc --noEmit` и `npx.cmd jest --runInBand` в `backend/`, полный frontend
-   jest, `npx.cmd playwright test --config tests/playwright.config.ts`, `npm.cmd run build`.
-5. **Деплой:** `bash deploy.sh root ntetris.ddns.net 3000`; после него проверить `docker ps`,
-   `https://ntetris.ddns.net/api/health` (`version` = `1.<YYMMDD>.<git short hash>` коммита),
-   `wss://ntetris.ddns.net/ws`, неизменность `/opt/neon-tetris/backend/data/scores.json`.
-6. Документация (PLAN.md, SINGLE_PLAYER_DECISIONS.md, SESSION_CONTEXT.md) — в том же коммите;
-   затем `git commit` + `git push origin main` и бесплатное обновление графа.
+Бэкенд-часть D1/D2 сделана, тесты зелёные (backend 4 сюиты / 49 тестов, E2E 38). Осталось:
+
+1. **Деплой:** `bash deploy.sh root ntetris.ddns.net 3000`; после него проверить `docker ps`,
+   `https://ntetris.ddns.net/api/health` (`version` = `1.<YYMMDD>.<git short hash>` коммита,
+   `checks.api.scoreRateLimit` = `{max: 30, windowMs: 60000, …}`), `wss://ntetris.ddns.net/ws`,
+   неизменность `/opt/neon-tetris/backend/data/scores.json`. На проде `TRUST_PROXY` по умолчанию
+   включён (приложение за nginx-proxy) — если когда-нибудь откроется напрямую, ставить `TRUST_PROXY=0`.
+2. **Хвост фронтенда (по желанию):** `submitScore`/`onGameOver` в `gameStore` реагирует только на
+   сетевой промах `fetch`; добавить обработку `!res.ok` (429/400) с `console.warn`, чтобы пропущенный
+   рекорд был виден, не ломая E2E-проверку «нет console.error».
+3. Затем `git commit` + `git push origin main` (деплой-правки тоже) и бесплатное обновление графа.
 
 Напоминание про C5: `engine.stop()` уже не даёт заброшенной партии уходить в лидерборд, так что
 rate-limit в блоке 7 закрывает оставшийся риск — частые `POST /api/score` от живой игры, а не

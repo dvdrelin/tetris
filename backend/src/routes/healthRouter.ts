@@ -42,6 +42,8 @@ export interface HealthRouterOptions {
   distPath: string
   /** Live WebSocket connection count, provided by the caller (wss.clients.size). */
   clients?: () => number
+  /** Score rate-limit posture (D1), reported so a deploy can be verified from /api/health. */
+  scoreRateLimit?: () => { max: number; windowMs: number; trackedKeys: number }
   /** WebSocket upgrade path advertised in the report. */
   wsPath?: string
   /** Overrides the version read from package.json (used by tests). */
@@ -140,6 +142,7 @@ export const createHealthRouter = (options: HealthRouterOptions): Router => {
         routes: ['/api/scores', '/api/leaderboard'],
         scoreRecords: Array.isArray(scores) ? scores.length : 0,
         leaderboardEntries: Array.isArray(leaderboard) ? leaderboard.length : 0,
+        ...(options.scoreRateLimit ? { scoreRateLimit: options.scoreRateLimit() } : {}),
         ...(ok ? {} : { error: 'score queries did not return arrays' }),
       }
     } catch (err) {

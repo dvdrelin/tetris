@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { ScoreService } from '../services/scoreService'
+import { RateLimiter } from '../middleware/rate-limit'
 
 function toInt(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
@@ -12,9 +13,12 @@ function toInt(value: unknown): number | null {
 
 // Hard bounds: this API is public, so every numeric field is range-checked before it
 // reaches the store (an unbounded score or limit is a storage/memory vector).
+// D2: scoreMax used to be 1 000 000, which a real (if skilled) session can legitimately exceed;
+// the ceiling now guards only against absurd values, while the frequency limit (D1) does the
+// actual abuse control.
 export const LIMITS = {
   playerNameMax: 32,
-  scoreMax: 1_000_000,
+  scoreMax: 10_000_000,
   levelMax: 999,
   linesClearedMax: 1000,
   queryLimitMax: 100,
@@ -28,13 +32,45 @@ function toBoundedInt(value: unknown, min: number, max: number): number | null {
 
 /**
  * The router is built by a factory so callers (and tests) can inject their own
- * ScoreService instead of sharing one module-level instance.
+ * ScoreService instead of sharing one module-level instance. `scoreLimiter` is optional:
+ * when it is absent the route behaves exactly as before (useful for unit tests that POST a lot).
  */
-export const createGameRouter = (scoreService: ScoreService = new ScoreService()): Router => {
+export interface GameRouterOptions {
+  scoreLimiter?: RateLimiter;
+}
+
+/**
+ * The app runs behind nginx-proxy, so `req.ip` is only meaningful when Express is told to trust
+ * one proxy hop (`app.set('trust proxy', ...)` in index.ts). Without that the limiter would key
+ * every player by the proxy container's address and throttle the whole site as one client.
+ */
+function clientKey(req: Request): string {
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+export const createGameRouter = (
+  scoreService: ScoreService = new ScoreService(),
+  options: GameRouterOptions = {},
+): Router => {
   const router = Router()
+  const { scoreLimiter } = options
 
   // Save score
   router.post('/score', (req: Request, res: Response) => {
+    if (scoreLimiter) {
+      const verdict = scoreLimiter.check(clientKey(req))
+      if (!verdict.allowed) {
+        const retryAfterSec = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000))
+        res.setHeader('Retry-After', String(retryAfterSec))
+        res.setHeader('X-RateLimit-Limit', String(scoreLimiter.limit))
+        res.setHeader('X-RateLimit-Remaining', '0')
+        res.status(429).json({ error: 'too many score submissions', retryAfter: retryAfterSec })
+        return
+      }
+      res.setHeader('X-RateLimit-Limit', String(scoreLimiter.limit))
+      res.setHeader('X-RateLimit-Remaining', String(verdict.remaining))
+    }
+
     const body = req.body || {}
     const playerName = typeof body.playerName === 'string' ? body.playerName.trim() : ''
     if (playerName.length === 0 || playerName.length > LIMITS.playerNameMax) {

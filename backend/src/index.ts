@@ -6,12 +6,28 @@ import { ScoreService } from './services/scoreService'
 import { GameServer } from './servers/gameServer'
 import { createGameRouter } from './routes/gameRouter'
 import { createHealthRouter } from './routes/healthRouter'
+import { RateLimiter } from './middleware/rate-limit'
 
 const app = express()
 const httpServer = createHttpServer(app)
 const PORT = process.env.PORT || 3000
 
+// Production runs behind nginx-proxy (see nginx-proxy/ + VIRTUAL_HOST), so req.socket.address()
+// is the proxy container for everyone. Trusting exactly one hop makes req.ip the real client,
+// which the score rate limiter needs; TRUST_PROXY=0 restores the strict behaviour if the app is
+// ever exposed directly.
+const TRUST_PROXY = process.env.TRUST_PROXY !== '0'
+if (TRUST_PROXY) app.set('trust proxy', 1)
+
 app.use(express.json())
+
+// D1: frequency, not authenticity, is what protects the public score endpoint for now
+// (a server-side verified result is a multiplayer-era decision). Defaults: 30 submissions
+// per minute per IP — far above any honest session (one score per finished game), low enough
+// to make scripted spam pointless.
+const SCORE_WINDOW_MS = Number(process.env.SCORE_RATE_LIMIT_WINDOW_MS) || 60_000
+const SCORE_MAX = Number(process.env.SCORE_RATE_LIMIT_MAX) || 30
+const scoreLimiter = new RateLimiter({ windowMs: SCORE_WINDOW_MS, max: SCORE_MAX })
 
 // One ScoreService for the whole process: the game API and the health self-check
 // must describe the same store, not two independently created ones.
@@ -32,11 +48,12 @@ app.use(
     scoreService,
     distPath: FRONTEND_DIST,
     clients: () => wss.clients.size,
+    scoreRateLimit: () => ({ max: scoreLimiter.limit, windowMs: scoreLimiter.window, trackedKeys: scoreLimiter.size }),
   }),
 )
 
 // Game API routes (must come BEFORE catch-all)
-app.use('/api', createGameRouter(scoreService))
+app.use('/api', createGameRouter(scoreService, { scoreLimiter }))
 
 // Serve frontend static files in production
 app.use(express.static(FRONTEND_DIST))
