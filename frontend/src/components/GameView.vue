@@ -92,6 +92,10 @@ export default defineComponent({
       if (inputFrame !== null) cancelAnimationFrame(inputFrame)
       inputFrame = null
       input.releaseAll()
+      // C5: the view is leaving, so the play ends here. Without this the engine stays "running":
+      // the gravity loop stops only because GameBoard unmounts, and the game silently resumes on
+      // the next visit to the board.
+      gameStore.stopGame()
     })
 
     return {

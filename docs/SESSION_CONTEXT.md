@@ -355,9 +355,32 @@ MP (старый и новый дизайн) — отдельная тема, б
 E2E-счёт не вырос: нового браузерного поведения нет, прогон подтверждает целость канала
 `engine → store → renderer`.
 
-**Актуальные цифры тестов на HEAD этого блока: 183 frontend unit (10 сюит) + 36 backend unit
-(3 сюиты) + 30 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
-в выводе прогона 30 строк «ok» — это и есть `30 passed`; исторические «19 passed» в записях
+**Блок 6 (коммит этого блока): UI (C2, C3, C4, C5, C6).** `GameEngine.stop()` — новый публичный
+метод: снимает `isRunning`/`isPaused`, шлёт `onStateChange`, но не `onGameOver`, поэтому заброшенная
+партия не отправляет `POST /api/score`. `GameView.onUnmounted` теперь вызывает
+`gameStore.stopGame()`: без этого движок оставался «бегущим», а партия возобновлялась при следующем
+заходе на доску. В `HudView.vue` — **одна** кнопка паузы под управлением `isPaused` (⏸/▶, класс
+`resume-btn`, `title`); старая ветка `▶` была недостижима (`v-else-if` за уже ложным условием),
+`store.resumeGame()` удалён как мёртвый код — паузу и возобновление переключает один `togglePause`.
+Подсказки клавиш: новый `shared/config/control-hints.ts` (`CONTROL_HINTS`, 11 пар; `VIEW_HINT_KEYS`
+для `ESC`/`ENTER`, которые обрабатывает `GameView`, а не `KEY_MAP`) — читают и меню, и HUD;
+в `input-actions.ts` добавлен экспорт `KEY_MAP_KEYS` для теста «каждая заявленная клавиша
+существует». Имя игрока: новый `shared/domain/player-name.ts` (`PLAYER_NAME_MAX = 32` — потолок
+бэкенда, `normalizePlayerName`, `load/savePlayerName` с `try/catch`), поле `.name-input` в
+`MenuView.vue` с локальным `nameDraft` (коммит при `blur`/`Enter`/`ИГРАТЬ`), в сторе —
+`playerName` из `loadPlayerName()` + `watch`, нормализующий и сохраняющий значение. Из
+`MenuView.vue` удалён `gameStore.init()` (C6): единственный `init()` — в `App.vue onMounted`,
+иначе каждый монтаж меню подменял экземпляр движка.
+Проверки блока: `npx.cmd vue-tsc --noEmit` → exit 0; `npx.cmd jest --runInBand` во `frontend/` →
+`11 suites / 196 tests`; в `backend/` → `3 suites / 36 tests`, `npx.cmd tsc --noEmit` → exit 0;
+`npx.cmd playwright test --config tests/playwright.config.ts` → `37 passed (33.8s)`;
+`npm.cmd run build` → exit 0, `dist/assets/index-DMKMGquF.js` 109.87 kB.
+Новые тесты: `frontend/tests/unit/ui-block6.test.ts` (13), `tests/e2e/ui.test.ts` (4),
+`tests/e2e/player-name.test.ts` (3). Бэкенд не менялся, прод не пересобирается.
+
+**Актуальные цифры тестов на HEAD этого блока: 196 frontend unit (11 сюит) + 36 backend unit
+(3 сюиты) + 37 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
+в выводе прогона 37 строк «ok» — это и есть `37 passed`; исторические «19 passed» в записях
 блоков 2–3 соответствовали тому же полному прогону того времени.
 
 ## Граф проекта (Graphify)
@@ -367,7 +390,8 @@ E2E-счёт не вырос: нового браузерного поведен
 `graph_stats`, `shortest_path`). Актуальное состояние (пересобран на HEAD блока 5):
 **1029 узлов · 1744 ребра · 51 сообщество**, в `GRAPH_REPORT.md` стоит
 `Built from commit` = HEAD. Узлы блока 5: `getGhostY()`, `landingRow()`, `GhostQuery`,
-`ghost.test.ts`.
+`ghost.test.ts`. Узлы блока 6: `stop()`, `stopGame()`, `CONTROL_HINTS`, `normalizePlayerName()`,
+`KEY_MAP_KEYS`, `ui-block6.test.ts`.
 
 Обновление графа — **только вручную**, наблюдателей нет. Бесплатная перезагрузка кода
 (AST + кластеризация + репорт, 0 LLM-вызовов):
@@ -386,20 +410,24 @@ graphify update C:\GIT\tetris
 
 ## Следующий шаг
 
-### Блок 6: UI (C2, C3, C4, C5, C6)
+### Блок 7: бэкенд + деплой (D1, D2)
 
-1. **Кнопка паузы по `isPaused` (C2):** один элемент ⏸/▶ вместо `isRunning && !isGameOver`
-   и недостижимой ветки `▶`.
-2. **Общие подсказки клавиш (C3):** единый `CONTROL_HINTS`, который читают меню и HUD
-   (сейчас в меню написано «↑ / ↓ — Вращение / Сброс», чего в коде нет).
-3. **Имя игрока (C4):** поле ввода + `localStorage`, валидация 1–32 символа (потолок бэкенда);
-   сейчас жёстко `'Игрок'`.
-4. **Заброшенная игра (C5):** `engine.stop()` на `beforeUnmount` в `GameView` — партия без
-   завершения не должна попадать в лидерборд. Метода `stop()` в движке ещё нет, появится в этом блоке.
-5. **Один `init()` (C6):** убрать дублирующий `gameStore.init()` из `MenuView.vue`.
-6. Тесты на новое поведение — в том же коммите; затем `git commit` + `git push origin main`.
+1. **`scoreMax` (D2):** потолок `POST /api/score` 1 000 000 → **10 000 000** (`LIMITS` в
+   `backend/src/routes/gameRouter.ts`); frontend-нормализка имени из блока 6 к этому уже готова.
+2. **Rate-limit (D1):** ограничение частоты `POST /api/score` на IP с ответом **429** и
+   `Retry-After`; тесты на 429 и на то, что остальные роуты лимитом не задевает.
+3. Тесты: backend unit (`gameRouter`/новый модуль лимита) + E2E на 429 при серии запросов.
+4. Проверки: `npx.cmd tsc --noEmit` и `npx.cmd jest --runInBand` в `backend/`, полный frontend
+   jest, `npx.cmd playwright test --config tests/playwright.config.ts`, `npm.cmd run build`.
+5. **Деплой:** `bash deploy.sh root ntetris.ddns.net 3000`; после него проверить `docker ps`,
+   `https://ntetris.ddns.net/api/health` (`version` = `1.<YYMMDD>.<git short hash>` коммита),
+   `wss://ntetris.ddns.net/ws`, неизменность `/opt/neon-tetris/backend/data/scores.json`.
+6. Документация (PLAN.md, SINGLE_PLAYER_DECISIONS.md, SESSION_CONTEXT.md) — в том же коммите;
+   затем `git commit` + `git push origin main` и бесплатное обновление графа.
 
-Блок 7 (бэкенд): `scoreMax` → 10 000 000, rate-limit на `POST /api/score` (429) + деплой
-на ntetris.ddns.net (`bash deploy.sh root ntetris.ddns.net 3000`, проверка `version` в
-`/api/health`). Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) —
-отдельная тема, решается на старте MP.
+Напоминание про C5: `engine.stop()` уже не даёт заброшенной партии уходить в лидерборд, так что
+rate-limit в блоке 7 закрывает оставшийся риск — частые `POST /api/score` от живой игры, а не
+фантомные партии.
+
+Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) — отдельная тема,
+решается на старте MP.

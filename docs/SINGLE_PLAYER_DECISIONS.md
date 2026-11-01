@@ -46,10 +46,10 @@ MP (старый и новый дизайн) — отдельная тема, б
 | # | Вопрос | Что показал аудит | Решение | Статус |
 |---|---|---|---|---|
 | C1 | Цвет превью очереди | `HudView.vue` брал форму из `PIECE_SHAPES[nextPieceType]`, а цвет — из `CELL_COLORS[nextPieceType as unknown as number]`: строковый enum → `undefined` → всегда `CELL_COLORS[1]` (циан) | **Индекс цвета экспортируется из `pieces.ts`** и используется и в canvas, и в HUD | ✅ блок 3 (`PIECE_COLOR_INDEX`, общий с доской) |
-| C2 | Кнопка паузы | `⏸` рендерился при `isRunning && !isGameOver`, `▶` — во `v-else-if="isPaused"`, куда поток не доходил | **Кнопка управляется `isPaused`:** один элемент, ⏸/▶ | ⏳ блок 6 |
-| C3 | Подсказки клавиш | В меню было написано «↑ / ↓ — Вращение / Сброс», что не соответствует коду | **Общий `CONTROL_HINTS`**, который читают и меню, и HUD | ⏳ блок 6 |
-| C4 | Имя игрока | `playerName` жёстко `'Игрок'`, поля ввода нет | **Поле ввода + `localStorage`**, валидация 1–32 символа (потолок бэкенда) | ⏳ блок 6 |
-| C5 | Заброшенная игра | При выходе из игры движок не останавливался | **`engine.stop()` при `beforeUnmount`** `GameView`; заброшенная партия не уходит в лидерборд | ⏳ блок 6 |
+| C2 | Кнопка паузы | `⏸` рендерился при `isRunning && !isGameOver`, `▶` — во `v-else-if="isPaused"`, куда поток не доходил | **Кнопка управляется `isPaused`:** один элемент, ⏸/▶ | ✅ блок 6 |
+| C3 | Подсказки клавиш | В меню было написано «↑ / ↓ — Вращение / Сброс», что не соответствует коду | **Общий `CONTROL_HINTS`**, который читают и меню, и HUD | ✅ блок 6 |
+| C4 | Имя игрока | `playerName` жёстко `'Игрок'`, поля ввода нет | **Поле ввода + `localStorage`**, валидация 1–32 символа (потолок бэкенда) | ✅ блок 6 |
+| C5 | Заброшенная игра | При выходе из игры движок не останавливался | **`engine.stop()` при `beforeUnmount`** `GameView`; заброшенная партия не уходит в лидерборд | ✅ блок 6 |
 | C6 | Двойной `init()` | `gameStore.init()` вызывался и в `App.vue`, и в `MenuView.vue` | **Дублирующий вызов из `MenuView.vue` убран** | ⏳ блок 6 |
 | C7 | Поведение `Esc` | `Esc`: пауза → снять паузу, иначе → меню | **Оставить как есть** | ✅ принято, правок нет |
 
@@ -326,3 +326,84 @@ MP (старый и новый дизайн) — отдельная тема, б
 Граница блока 5 (осознанно): только источник `ghostY`. `engine.stop()` при выходе, кнопка
 паузы по `isPaused`, `CONTROL_HINTS`, имя игрока + `localStorage` и один `init()` — блок 6;
 бэкенд (`scoreMax`, rate-limit 429, деплой) — блок 7.
+
+---
+
+## Проверка блока 6 (команды и их вывод)
+
+| Команда | Вывод |
+|---|---|
+| `npx.cmd vue-tsc --noEmit` (в `frontend/`) | пустой вывод, `vue-tsc exit: 0` |
+| `npx.cmd jest --runInBand` (в `frontend/`) | `Test Suites: 11 passed, 11 total` · `Tests: 196 passed, 196 total` · `jest exit: 0` |
+| `npx.cmd jest --runInBand` (в `backend/`) | `Test Suites: 3 passed, 3 total` · `Tests: 36 passed, 36 total` · `backend jest exit: 0` |
+| `npx.cmd tsc --noEmit` (в `backend/`) | пустой вывод, `exit: 0` (бэкенд в этом блоке не менялся) |
+| `npx.cmd playwright test --config tests/playwright.config.ts` (в корне) | `37 passed (33.8s)` · `playwright exit: 0` |
+| `npm.cmd run build` (в `frontend/`) | `✓ built`, `dist/assets/index-DMKMGquF.js` 109.87 kB, `build exit: 0` |
+| grep `gameStore.init()` по `frontend/src/**.vue` | одно совпадение: `App.vue` (`onMounted`) — дубль из `MenuView.vue` удалён |
+| grep `handleResume\|store.resumeGame` по `frontend/src` | ни одного совпадения: паузу и возобновление обслуживает один `togglePause` |
+
+Прирост тестов: `196 − 183 = 13` юнит-тестов — все в новой сюите
+`frontend/tests/unit/ui-block6.test.ts` (3 — `engine.stop()`, 4 — имя игрока, 4 — `CONTROL_HINTS`,
+2 — DTO-контракты стора). E2E: `37 − 30 = 7` тестов — 4 в `tests/e2e/ui.test.ts` (кнопка паузы,
+синхронизация с `P`, одинаковые подсказки, заброшенная игра) и 3 в `tests/e2e/player-name.test.ts`
+(сохранение/восстановление имени, обрезка до 32, пустое имя → дефолт).
+
+Как доказаны ключевые факты C2–C5:
+
+- **Кнопка одна и она действительно работает.** До блока 6 `▶` висел в ветке `v-else-if` за уже
+  ложным условием `isRunning && !isGameOver` — до него нельзя было дойти ни при каком состоянии.
+  E2E берёт `.pause-btn` (`toHaveCount(1)`), жмёт → `isPaused === true` и текст `▶`, жмёт ещё раз →
+  `isPaused === false` и текст `⏸`. Тот же тест проверяет, что `P` и кнопка не разъезжаются:
+  после `P` кнопка показывает `▶`, после `Esc` (снятие паузы, C7) — снова `⏸`.
+- **Подсказкиmenu и HUD — один список.** `CONTROL_HINTS` читается обоими представлениями; E2E
+  сравнивает списки `key + label` (пробелы игнорируются — это оформление, не содержание) и
+  отдельно проверяет, что старой строки «Вращение / Сброс» больше нет. Юнит-тест ходит по всем
+  подсказкам и требует, чтобы каждый буквальный ключ либо был в `KEY_MAP` (экспортирован
+  `KEY_MAP_KEYS`), либо значился в `VIEW_HINT_KEYS` (`ESC`/`ENTER` — их держит `GameView`,
+  а не слой ввода). Именно эта проверка поймала, что `ENTER` не входит в `KEY_MAP`, — подсказка
+  оказалась правдой только после явного разделения «действие ввода» и «навигация представления».
+- **Заброшенная партия не попадает в лидерборд.** `GameEngine.stop()` гасит `_isRunning` и
+  **намеренно не вызывает `onGameOver`**, то есть не отправляет `POST /api/score`. Юнит: счётчик
+  `onGameOver` остаётся 0, `isRunning === false`, команды после `stop()` не меняют доску и счёт,
+  а `StartGame` снова запускает партию. E2E: `Esc` из игры → `__vueStores.game.gameState.isRunning`
+  равен `false` при `isGameOver === false`, затем старт с меню снова даёт `isRunning === true`.
+- **Имя живёт в `localStorage` и нормализуано под потолок бэкенда.** `PLAYER_NAME_MAX = 32`
+  совпадает с `LIMITS.playerNameMax` в `backend/src/routes/gameRouter.ts`. E2E: ввёл `  Маша  ` →
+  в хранилище `Маша`, после `reload()` поле снова `Маша`; 40 символов → сохранено ровно 32;
+  поле из пробелов → `Игрок`. Нормализация (trim/clip/фолбэк) проверяется и в юнитах, включая
+  испорченное значение в хранилище.
+
+## Что изменено в коде блока 6
+
+- `frontend/src/shared/engine/game-engine.ts` — публичный `stop()`: снимает `_isRunning`/`_isPaused`,
+  дёргает `onStateChange`, но **не** `onGameOver` (C5). Идемпотентен: повторный вызов молчит.
+- `frontend/src/stores/gameStore.ts` — новое действие `stopGame()` (движок + `updateState`),
+  вызываемое из `GameView.onUnmounted`; `resumeGame()` удалён как мёртвый код (паузу и возобновление
+  переключает один `togglePause`); `playerName` инициализируется из `loadPlayerName()`, а `watch`
+  нормализует и пишет значение в `localStorage` — одна точка записи для всех писателей.
+- `frontend/src/shared/domain/player-name.ts` (новый) — `PLAYER_NAME_KEY`, `PLAYER_NAME_MAX = 32`,
+  `DEFAULT_PLAYER_NAME`, `normalizePlayerName()` (trim → clip → фолбэк), `loadPlayerName()`/
+  `savePlayerName()` с `try/catch`: приватный режим или запрещённое хранилище не роняют игру.
+- `frontend/src/shared/config/control-hints.ts` (новый) — `CONTROL_HINTS` (11 пар «клавиша →
+  подпись») и `VIEW_HINT_KEYS` (`ESC`, `ENTER` — ключи представления, не действия ввода).
+- `frontend/src/shared/input/input-actions.ts` — экспорт `KEY_MAP_KEYS` (замороженные ключи карты)
+  только для того, чтобы тест подсказок мог доказать: заявленная клавиша либо мапится, либо
+  относится к представлению.
+- `frontend/src/components/HudView.vue` — одна кнопка: секция рендерится при
+  `isRunning && !isGameOver`, сам элемент управляется `isPaused` (⏸/▶, класс `resume-btn` и
+  `title` переключаются), обработчик один — `togglePause`; список подсказок — `v-for` по
+  `CONTROL_HINTS` (7 вручную переписанных строк удалены).
+- `frontend/src/components/MenuView.vue` — удалён `gameStore.init()` (C6: движок создаёт только
+  `App.vue`, иначе каждый монтаж меню подменял экземпляр движка); добавлено поле `.name-input`
+  с `maxlength` и локальным `nameDraft` (правка — в драфте, коммит при `blur`/`Enter`/`ИГРАТЬ`,
+  иначе нормализация съела бы пробел между словами прямо во время ввода); список подсказок —
+  общий `CONTROL_HINTS` вместо четырёх устаревших строк.
+- `frontend/src/components/GameView.vue` — в `onUnmounted` добавлен `gameStore.stopGame()`:
+  без него цикл гравитации `GameBoard` умирал только вместе с размонтированием, движок оставался
+  `isRunning`, и партия молча возобновлялась при следующем заходе на доску.
+- `frontend/tests/unit/ui-block6.test.ts` (новый, 13 тестов), `tests/e2e/ui.test.ts` (новый,
+  4 теста), `tests/e2e/player-name.test.ts` (новый, 3 теста).
+- Бэкенд, `types.ts`, `renderer.ts`, `GameBoard.vue`, `TouchControls.vue` — не менялись.
+
+Граница блока 6 (осознанно): только UI и то, что ему нужно от движка (`stop()`). Бэкенд
+(`scoreMax`, rate-limit 429, деплой) — блок 7.

@@ -4,6 +4,7 @@ import { useGameStore } from '../stores/gameStore'
 import { CELL_COLORS } from '../stores/gameStore'
 import { PieceType } from '../shared/domain/types'
 import { PIECE_SHAPES, PIECE_COLOR_INDEX } from '../shared/domain/pieces'
+import { CONTROL_HINTS } from '../shared/config/control-hints'
 
 // A6: the further a queued piece is from the active one, the more transparent it is.
 const QUEUE_OPACITY = [1, 0.6, 0.35]
@@ -111,19 +112,17 @@ export default defineComponent({
     onMounted(renderPreviews)
     watch(previewKey, renderPreviews, { flush: 'post' })
 
+    // C2: one button driven by isPaused (⏸ while playing, ▶ while paused). The old pair was
+    // unreachable: the ▶ branch sat behind `v-else-if` of a condition that was already false.
     function handlePause() {
       gameStore.togglePause()
-    }
-
-    function handleResume() {
-      gameStore.resumeGame()
     }
 
     return {
       gameStore,
       formatNumber,
       handlePause,
-      handleResume,
+      CONTROL_HINTS,
       setQueueCanvas,
       setHoldCanvas,
       queueOpacity: QUEUE_OPACITY,
@@ -177,20 +176,18 @@ export default defineComponent({
     </div>
     <div class="hud-section controls-section">
       <div class="hud-title">УПРАВЛЕНИЕ</div>
-      <div class="control-item"><span class="key">← →</span> Движение</div>
-      <div class="control-item"><span class="key">↑</span> Вращение</div>
-      <div class="control-item"><span class="key">R</span> Поворот 180°</div>
-      <div class="control-item"><span class="key">↓</span> Soft Drop</div>
-      <div class="control-item"><span class="key">SPACE</span> Hard Drop</div>
-      <div class="control-item"><span class="key">C</span> Удержание</div>
-      <div class="control-item"><span class="key">P</span> Пауза</div>
+      <div class="control-item" v-for="(hint, index) in CONTROL_HINTS" :key="index">
+        <span class="key">{{ hint.key }}</span> {{ hint.label }}
+      </div>
     </div>
-    <div class="hud-section pause-btn-section">
-      <button v-if="gameStore.gameState.isRunning && !gameStore.gameState.isGameOver" class="pause-btn" @click="handlePause()">
-        ⏸
-      </button>
-      <button v-else-if="gameStore.gameState.isPaused" class="pause-btn resume-btn" @click="handleResume()">
-        ▶
+    <div class="hud-section pause-btn-section" v-if="gameStore.gameState.isRunning && !gameStore.gameState.isGameOver">
+      <button
+        class="pause-btn"
+        :class="{ 'resume-btn': gameStore.gameState.isPaused }"
+        :title="gameStore.gameState.isPaused ? 'Продолжить (P)' : 'Пауза (P)'"
+        @click="handlePause()"
+      >
+        {{ gameStore.gameState.isPaused ? '▶' : '⏸' }}
       </button>
     </div>
   </div>

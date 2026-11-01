@@ -59,6 +59,13 @@ export function actionForKey(key: string): InputAction | null {
 }
 
 /**
+ * The literal key spellings the map really contains (lower-case KeyboardEvent.key form).
+ * Exported only so the CONTROL_HINTS tests can prove that every advertised key exists here —
+ * a hint list that names an unmapped key is a lie about the controls.
+ */
+export const KEY_MAP_KEYS: readonly string[] = Object.freeze(Object.keys(KEY_MAP));
+
+/**
  * A modifier combination (Ctrl+C, Alt+D, Cmd+S) is never a game action: the browser owns those
  * shortcuts, and the game must not swallow them.
  */

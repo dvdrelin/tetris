@@ -1,7 +1,9 @@
 <script lang="ts">
-import { defineComponent, ref, onMounted } from 'vue'
+import { defineComponent, ref } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import { GameMode } from '../shared/domain/types'
+import { CONTROL_HINTS } from '../shared/config/control-hints'
+import { PLAYER_NAME_MAX } from '../shared/domain/player-name'
 
 export default defineComponent({
   name: 'MenuView',
@@ -10,10 +12,19 @@ export default defineComponent({
     const gameStore = useGameStore()
     const selectedMode = ref<'arcade' | 'hardcore'>('arcade')
     const hoveredMode = ref<string | null>(null)
+    // The field holds the raw input; the store keeps the normalized name. Normalizing on every
+    // keystroke would eat the space the user has just typed between two words.
+    const nameDraft = ref<string>(gameStore.playerName)
 
-    gameStore.init()
+    function commitName() {
+      gameStore.playerName = nameDraft.value
+      nameDraft.value = gameStore.playerName
+    }
 
+    // C6: gameStore.init() used to be called here as well as in App.vue, which replaced the engine
+    // instance every time the menu mounted. App.vue owns the single init().
     function startGame() {
+      commitName()
       const mode = selectedMode.value === 'arcade' ? GameMode.Arcade : GameMode.Hardcore
       gameStore.startGame(mode)
       emit('start')
@@ -26,6 +37,11 @@ export default defineComponent({
     return {
       selectedMode,
       hoveredMode,
+      gameStore,
+      nameDraft,
+      commitName,
+      PLAYER_NAME_MAX,
+      CONTROL_HINTS,
       startGame,
       goToLeaderboard,
     }
@@ -63,25 +79,26 @@ export default defineComponent({
         <div class="mode-desc">Реальное время, максимальная сложность</div>
       </div>
     </div>
+    <div class="name-section">
+      <label class="name-label" for="player-name">Имя игрока</label>
+      <input
+        id="player-name"
+        class="name-input"
+        type="text"
+        :maxlength="PLAYER_NAME_MAX"
+        v-model="nameDraft"
+        @blur="commitName"
+        @keyup.enter="commitName"
+        placeholder="Игрок"
+      />
+    </div>
     <button class="start-btn" @click="startGame">
       <span>ИГРАТЬ</span>
     </button>
     <div class="controls">
-      <div class="control-row">
-        <span class="key">← →</span>
-        <span class="action">Движение</span>
-      </div>
-      <div class="control-row">
-        <span class="key">↑ / ↓</span>
-        <span class="action">Вращение / Сброс</span>
-      </div>
-      <div class="control-row">
-        <span class="key">SPACE</span>
-        <span class="action">Hard Drop</span>
-      </div>
-      <div class="control-row">
-        <span class="key">P</span>
-        <span class="action">Пауза</span>
+      <div class="control-row" v-for="(hint, index) in CONTROL_HINTS" :key="index">
+        <span class="key">{{ hint.key }}</span>
+        <span class="action">{{ hint.label }}</span>
       </div>
     </div>
     <button class="leaderboard-btn" @click="goToLeaderboard">
@@ -193,6 +210,39 @@ export default defineComponent({
 .start-btn:hover {
   transform: scale(1.05);
   box-shadow: 0 0 40px rgba(0, 245, 255, 0.5);
+}
+
+.name-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.name-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #888;
+}
+
+.name-input {
+  width: 260px;
+  padding: 12px 16px;
+  font-size: 16px;
+  color: #00f5ff;
+  text-align: center;
+  background: rgba(26, 26, 46, 0.8);
+  border: 2px solid #2a2a3e;
+  border-radius: 10px;
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.name-input:focus {
+  border-color: #00f5ff;
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
 }
 
 .controls {

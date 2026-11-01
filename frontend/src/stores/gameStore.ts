@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { GameEngine } from '../shared/engine/game-engine'
 import { GameMode, Particle } from '../shared/domain/types'
 import { AnyCommand, CommandType } from '../shared/cqrs/commands'
 import { GAME_CONFIG } from '../shared/config/game-config'
+import { loadPlayerName, savePlayerName } from '../shared/domain/player-name'
 
 const CELL_SIZE = 24
 const BOARD_WIDTH = GAME_CONFIG.boardWidth
@@ -71,7 +72,15 @@ export const useGameStore = defineStore('game', () => {
   })
 
   const particles = ref<Particle[]>([])
-  const playerName = ref<string>('Игрок')
+  // C4: the name is typed by the player (MenuView) and remembered in localStorage.
+  const playerName = ref<string>(loadPlayerName())
+
+  // One place to persist the name: every writer (the menu field, tests) goes through the same
+  // normalization and the same storage write.
+  watch(playerName, (name) => {
+    playerName.value = savePlayerName(name)
+  })
+
   let engineInstance: GameEngine | null = null
 
   function init() {
@@ -205,9 +214,14 @@ export const useGameStore = defineStore('game', () => {
     updateState()
   }
 
-  function resumeGame() {
+  // Pause and resume deliberately share one action (C2): the HUD button and the `P` key both
+  // toggle, so they can never disagree about the current state.
+
+  // C5: leaving the play (Esc / «Меню») stops the engine without a game-over report, so an
+  // abandoned game never reaches the leaderboard.
+  function stopGame() {
     if (!engineInstance) return
-    engineInstance.handleCommand({ type: CommandType.ResumeGame })
+    engineInstance.stop()
     updateState()
   }
 
@@ -223,7 +237,7 @@ export const useGameStore = defineStore('game', () => {
     getCellBorder,
     getCellText,
     togglePause,
-    resumeGame,
+    stopGame,
     updateState,
     getEngine,
     updateParticles,

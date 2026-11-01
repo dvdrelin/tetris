@@ -223,6 +223,18 @@ export class GameEngine {
     this.callbacks.onStateChange?.();
   }
 
+  /**
+   * C5: leave the play without finishing it. The engine stops running, but deliberately does NOT
+   * fire onGameOver — an abandoned game has no right to enter the leaderboard or to spend the
+   * score POST. Only a real game over (blocked spawn, hardcore death) reports the score.
+   */
+  stop(): void {
+    if (!this._isRunning) return;
+    this._isRunning = false;
+    this._isPaused = false;
+    this.callbacks.onStateChange?.();
+  }
+
   reset(): void {
     this.boardManager.reset();
     this.board = this.boardManager.getCells();

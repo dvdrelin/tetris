@@ -56,7 +56,7 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │       ├── stores/              # pinia-хранилище
 │       │   └── gameStore.ts     # мост UI <-> engine, ввод с клавиатуры, частицы
 │       └── components/          # представления
-│           ├── App-level:        MenuView.vue (меню, выбор режима)
+│           ├── App-level:        MenuView.vue (меню, выбор режима, поле имени)
 │           │                     GameView.vue (контейнер + обработка нажатий)
 │           │                     GameBoard.vue (canvas-рендер + игровой цикл)
 │           └── HudView.vue      # HUD: счёт/уровень/линии/комбо/следующая фигура
@@ -196,6 +196,11 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   `nextQueue: string[]`, `holdType: string | null`, `canHold: boolean`), читает из движка позицию
   «призрачной» фигуры (`engine.getGhostY()`), не ведя свою копию обхода доски. Обработкой клавиатуры стор **больше не занимается** — метод
   `handleKey` удалён в блоке 4 сингла, единственный путь ввода — слой `shared/input/` (см. 4.4.1).
+  Экземпляр движка создаёт **только** `App.vue` в `onMounted` (C6: дублирующий `init()` из `MenuView`
+  удалён — каждый монтаж меню подменял бы движок). Действия стора: `init`, `startGame`,
+  `handleCommand`, `togglePause` (пауза и возобновление одним переключателем, C2), `stopGame`
+  (C5: выход в меню гасит движок без отправки счёта), `updateState`, `spawnParticles`,
+  `updateParticles`; `playerName` — ref из `localStorage` с нормализацией под потолок бэкенда (C4).
 - **4.4.1 Слой ввода `frontend/src/shared/input/` (блок 4 сингла, B1/B2/B3):**
   - `input-actions.ts` — словарь `InputAction` и `KEY_MAP` (клавиша → действие), `HELD_ACTIONS`
     (`left`, `right`, `softDrop` — только они автоповторяются), `isModifiedCombo()` (Ctrl/Alt/Cmd
@@ -298,6 +303,15 @@ gameStore.updateState() → gameState.value = {...}  → watch() → GameBoard.r
 тач-кнопки (TouchControls) идут тем же путём: pressAction()/releaseAction() → тот же RepeatController
 ```
 
+### 5.2.1 Выход в меню и заброс партии (C5/C6, блок 6)
+```
+Esc / «📋 Меню» → App currentView='menu' → GameView unmount
+   → gameStore.stopGame() → engine.stop(): _isRunning=false, onStateChange()
+     onGameOver НЕ вызывается → POST /api/score не происходит (заброшенная партия вне лидерборда)
+   → GameBoard unmount → cancelAnimationFrame (цикл гравитации больше не крутится)
+повторный «ИГРАТЬ» → gameStore.startGame(mode) → engine.StartGame → обычная новая партия
+```
+
 ### 5.3 Игровой цикл рендера (GameBoard.vue)
 `requestAnimationFrame(gameLoop)` каждую итерацию:
 1. вычисляет `dt`;
@@ -355,7 +369,11 @@ placePiece() → clearLines() > 0
 |---------|--------------------------|
 | CQRS в движке | Чёткое разделение мутаций/чтения; но добавляет обёртку `handlerMap`/switch и касты `any`. |
 | Домен «в frontend» | Логика живёт в UI-проекте, а не вынесена в отдельный пакет. Задуман alias `@shared/*`, но он **не используется** — импорт идёт по относительным путям. |
-| Ghost через вычисление в store | Позиция ghost считалась в Pinia (`getGhostY`) своей копией проверки коллизий; координаты были рассинхронизованы (B2). С блока 5 (A7) единственная реализация — `GameEngine.landingRow()`/`getGhostY()`, общий шаг с `hardDrop`; стор отдаёт рендереру только число `ghostY`. — совпадает с размещением в движке. |
+| Ghost через вычисление в store | Позиция ghost считалась в Pinia (`getGhostY`) своей копией проверки коллизий; координаты были рассинхронизованы (B2). С блока 5 (A7) единственная реализация — `GameEngine.landingRow()`/`getGhostY()`, общий шаг с `hardDrop`; стор отдаёт рендереру только число `ghostY`. |
+| Один `togglePause` и одна кнопка (C2) | ⏸/▶ — один элемент под управлением `isPaused`; второй обработчик (`resumeGame`) удалён: два пути паузы неизбежно разъезжаются. |
+| Подсказки клавиш как данные (`CONTROL_HINTS`) | Меню и HUD рендерят один список; тест требует, чтобы каждый заявленный ключ был в `KEY_MAP` или в `VIEW_HINT_KEYS`. Минус: список надо руками синхронизировать с картой. |
+| Имя игрока в `localStorage` (C4) | Клиентская нормализка повторяет потолок бэкенда (32), но доверять ей нельзя: настоящая защита очков — потолок и rate-limit (D1/D2, блок 7). |
+| `engine.stop()` без `onGameOver` (C5) | Заброшенная партия не имеет права на `POST /api/score`. Компромисс: продолжить прерванную партию нельзя — только новая. |
 | 7-bag рандомизатор | Гарантирует равномерное распределение фигур; реализован вручную (Fisher–Yates). |
 | Файловая persistence вместо БД | Простота; запись теперь атомарная (temp+rename, D3). Зависимости `better-sqlite3`/`uuid` удалены из deps (C3). |
 | WebSocket без маппинга ws→player | Привязка действий/выхода к конкретному сокету была сломана (D1); теперь Map<WebSocket, playerId> — действия и leave корректны. Broadcast всем клиентам сохранён. |
