@@ -410,22 +410,23 @@ MP (старый и новый дизайн) — отдельная тема, б
 
 ---
 
-## Проверка блока 7 (бэкенд; деплой — отдельно)
+## Проверка блока 7 (бэкенд + хвост фронтенда; деплой — отдельно)
 
 | Команда | Вывод |
 |---|---|
 | `npx.cmd tsc --noEmit` (в `backend/`) | пустой вывод, `exit: 0` |
 | `npx.cmd jest --runInBand` (в `backend/`) | `Test Suites: 4 passed, 4 total` · `Tests: 49 passed, 49 total` · `jest exit: 0` |
-| `npx.cmd jest --runInBand` (в `frontend/`) | `Test Suites: 11 passed, 11 total` · `Tests: 196 passed, 196 total` · `jest exit: 0` (фронтенд в этом блоке не менялся) |
-| `npx.cmd playwright test --config tests/playwright.config.ts` (в корне) | `38 passed (34.0s)` · `playwright exit: 0` |
+| `npx.cmd jest --runInBand` (в `frontend/`) | `Test Suites: 11 passed, 11 total` · `Tests: 196 passed, 196 total` · `jest exit: 0` (unit-поведение стора не менялось) |
+| `npx.cmd playwright test --config tests/playwright.config.ts` (в корне) | `39 passed (34.9s)` · `playwright exit: 0` |
 | серия `POST /api/score` (E2E-клиент) | успешные ответы несут `X-RateLimit-Limit: 30`; дальше `429` + `Retry-After` + `{"error":"too many score submissions"}` |
 | `GET /api/health` → `checks.api.scoreRateLimit` | `{"max":30,"windowMs":60000,"trackedKeys":N}` — лимит виден из самомониторинга |
 
 Прирост тестов: `49 − 36 = 13` backend unit-тестов в новой сюите
 `backend/tests/unit/rateLimit.test.ts` (7 — чистый `RateLimiter` на инъекционных часах,
 6 — `POST /api/score`: 429/заголовки/«не сохранилось», независимость клиентов по IP,
-«только `/score`», «без лимитера поведение прежнее»). E2E: `38 − 37 = 1` —
-`tests/e2e/zz-score-rate-limit.test.ts`. Один старый тест в `gameRouter.test.ts`
+«только `/score`», «без лимитера поведение прежнее»). E2E: `39 − 37 = 2` —
+`tests/e2e/zz-score-rate-limit.test.ts` (бэкенд) и `tests/e2e/ui-score-feedback.test.ts`
+(реакция клиента на отказ). Один старый тест в `gameRouter.test.ts`
 переприкручен: `1_000_001` больше не граница, граница `10_000_001`.
 
 Что именно доказано:
@@ -465,9 +466,21 @@ MP (старый и новый дизайн) — отдельная тема, б
   префикс `zz-` — чтобы Playwright при `workers: 1` и алфавитном порядке файлов запускал его
   **последним**: тест намеренно добивает окно текущего клиента), правка границы в
   `backend/tests/unit/gameRouter.test.ts`.
-- Фронтенд не менялся. Известный хвост: `fetch('/api/score')` в сторе не проверяет `res.ok`,
-  поэтому 429/400 молча означают «рекорд не ушёл» — правка в следующем блоке (E2E-сюиты
-  считают `window.__consoleErrors`, поэтому фикс делают через `console.warn`, а не `console.error`).
+- `frontend/src/stores/gameStore.ts` — хвост честности: `onGameOver` проверяет `res.ok` и при
+  отказе пишет `console.warn("Score was not saved: HTTP <статус> <тело>")` (429 с телом
+  `{"error":"too many score submissions","retryAfter":…}` становится видимым); сетевой промах
+  `fetch` переведён с `console.error` на `console.warn`. Осознанно **не** `console.error`: E2E-сюиты
+  утверждают `getErrors(page)).toHaveLength(0)`, а отклонённая отправка — деградация, а не падение;
+  `main.ts` уже собирает предупреждения отдельно в `window.__consoleWarnings`.
+- Новый E2E `tests/e2e/ui-score-feedback.test.ts`: `page.route('**/api/score')` отдаёт мок `429`
+  (`Retry-After: 37`, тело как у лимитера), игра доводится до `isGameOver` серией `Space`, затем
+  проверяется, что в `__consoleWarnings` появилась строка с `Score was not saved` + `429` + текстом
+  причины, а `__consoleErrors` осталась пустой. Файл назван без `zz-`, чтобы идти раньше пробника
+  лимита: он не тратит реальную квоту (запрос подменён на уровне сети), а `zz-…` из-за
+  `workers: 1` и алфавитного порядка запускается последним.
+  Защита от ложного провала: тест лимита читает `max` из health и сначала измеряет, сколько окна
+  уже потрачено предыдущими тестами, — при медленном CI (окно 60 с) можно не менять дефолт, а
+  поднять лимит конкретной сборке через `SCORE_RATE_LIMIT_MAX`/`SCORE_RATE_LIMIT_WINDOW_MS`.
 
 Граница блока 7 (осознанно): бэкенд готов и покрыт тестами; **деплой на ntetris.ddns.net не
 выполнялся** — он отдельным шагом по запросу, с проверкой `version` и `scoreRateLimit` в

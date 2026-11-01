@@ -92,7 +92,7 @@ export const useGameStore = defineStore('game', () => {
       onGameOver: async (score: number) => {
         try {
           const engine = engineInstance
-          await fetch('/api/score', {
+          const res = await fetch('/api/score', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -103,8 +103,15 @@ export const useGameStore = defineStore('game', () => {
               linesCleared: engine?.getLinesCleared() ?? 0,
             }),
           })
+          // A rejected submission is a degraded outcome, not a crash: the score just did not
+          // reach the leaderboard. console.warn (not .error) on purpose — the E2E suite asserts
+          // that the console is free of errors, and main.ts collects warnings separately.
+          if (!res.ok) {
+            const detail = await res.text().catch(() => '')
+            console.warn(`Score was not saved: HTTP ${res.status} ${detail}`.trim())
+          }
         } catch (e) {
-          console.error('Failed to save score:', e)
+          console.warn('Failed to save score:', e)
         }
       },
     })

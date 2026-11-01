@@ -379,7 +379,7 @@ E2E-счёт не вырос: нового браузерного поведен
 `tests/e2e/player-name.test.ts` (3). Бэкенд не менялся, прод не пересобирается.
 
 **Актуальные цифры тестов на HEAD этого блока: 196 frontend unit (11 сюит) + 49 backend unit
-(4 сюиты: `scoreService`, `gameRouter`, `health`, `rateLimit`) + 38 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
+(4 сюиты: `scoreService`, `gameRouter`, `health`, `rateLimit`) + 39 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
 в выводе прогона 37 строк «ok» — это и есть `38 passed`; исторические «19 passed» в записях
 блоков 2–3 соответствовали тому же полному прогону того времени.
 
@@ -439,23 +439,31 @@ max: SCORE_RATE_LIMIT_MAX || 30 })`, лимитер передаётся в ро
 и карта могла уехать за `maxKeys` — исправлено в коде. Фронтенд в этом блоке не менялся; известный
 хвост: `fetch('/api/score')` в `gameStore` не проверяет `res.ok` → 429/400 молча означают «рекорд не
 ушёл» (править через `console.warn`: E2E-сюиты считают `window.__consoleErrors`, `console.error`
-сломал бы их assertions).
+сломал бы их assertions). **Хвост закрыт в этом же блоке:** `onGameOver` проверяет `res.ok` и пишет
+`console.warn("Score was not saved: HTTP <код> <тело>")`, сетевой промах `fetch` переведён на warn
+(`main.ts` собирает `window.__consoleWarnings` отдельно от `__consoleErrors`); новый E2E
+`tests/e2e/ui-score-feedback.test.ts` подменяет `**/api/score` моком `429` (`Retry-After: 37`),
+доводит игру до `isGameOver` серией `Space` и требует строку предупреждения при пустом
+`__consoleErrors`. Итог прогона: `39 passed (34.9s)`. Не тронуто осознанно: `console.error` в
+`leaderboardStore` (деградация GET-чтений) — хвост на отдельный блок.
 
 ## Следующий шаг
 
-### Блок 7 (остаток): деплой + мелкий хвост фронтенда
+### Блок 7 (остаток): только деплой
 
-Бэкенд-часть D1/D2 сделана, тесты зелёные (backend 4 сюиты / 49 тестов, E2E 38). Осталось:
+Бэкенд-часть D1/D2 и хвост фронтенда (`res.ok` + warn) сделаны и закоммичены (`bb2e066` + этот
+коммит), тесты зелёные (backend 4 сюиты / 49, frontend 11 / 196, E2E 39). Осталось:
 
 1. **Деплой:** `bash deploy.sh root ntetris.ddns.net 3000`; после него проверить `docker ps`,
    `https://ntetris.ddns.net/api/health` (`version` = `1.<YYMMDD>.<git short hash>` коммита,
    `checks.api.scoreRateLimit` = `{max: 30, windowMs: 60000, …}`), `wss://ntetris.ddns.net/ws`,
    неизменность `/opt/neon-tetris/backend/data/scores.json`. На проде `TRUST_PROXY` по умолчанию
    включён (приложение за nginx-proxy) — если когда-нибудь откроется напрямую, ставить `TRUST_PROXY=0`.
-2. **Хвост фронтенда (по желанию):** `submitScore`/`onGameOver` в `gameStore` реагирует только на
-   сетевой промах `fetch`; добавить обработку `!res.ok` (429/400) с `console.warn`, чтобы пропущенный
-   рекорд был виден, не ломая E2E-проверку «нет console.error».
-3. Затем `git commit` + `git push origin main` (деплой-правки тоже) и бесплатное обновление графа.
+2. После деплоя — `GET /api/score`-данные в прод-лидерборде не должны измениться; при необходимости
+   подстроить лимит под живой трафик можно через `SCORE_RATE_LIMIT_MAX` / `SCORE_RATE_LIMIT_WINDOW_MS`
+   в контейнере, без правки кода.
+3. Дальше по желанию: `console.error` → warn в `leaderboardStore` (деградация GET-чтений) и выход
+   на мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`) — отдельное решение.
 
 Напоминание про C5: `engine.stop()` уже не даёт заброшенной партии уходить в лидерборд, так что
 rate-limit в блоке 7 закрывает оставшийся риск — частые `POST /api/score` от живой игры, а не
