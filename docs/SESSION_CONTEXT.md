@@ -387,8 +387,8 @@ E2E-счёт не вырос: нового браузерного поведен
 
 `graphify-out/graph.json` — knowledge-граф этого репозитория, доступен через MCP-сервер
 `graphify-tetris` (`query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`,
-`graph_stats`, `shortest_path`). Актуальное состояние (пересобран на HEAD блока 5):
-**1029 узлов · 1744 ребра · 51 сообщество**, в `GRAPH_REPORT.md` стоит
+`graph_stats`, `shortest_path`). Актуальное состояние (пересобран на HEAD блока 6, коммит `7468176`):
+**1061 узел · 1892 ребра · 61 сообщество**, в `GRAPH_REPORT.md` стоит
 `Built from commit` = HEAD. Узлы блока 5: `getGhostY()`, `landingRow()`, `GhostQuery`,
 `ghost.test.ts`. Узлы блока 6: `stop()`, `stopGame()`, `CONTROL_HINTS`, `normalizePlayerName()`,
 `KEY_MAP_KEYS`, `ui-block6.test.ts`.
