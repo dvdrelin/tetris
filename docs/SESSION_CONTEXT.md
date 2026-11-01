@@ -451,7 +451,51 @@ max: SCORE_RATE_LIMIT_MAX || 30 })`, лимитер передаётся в ро
 
 ## Следующий шаг
 
-### Блок 7 (остаток): только деплой
+### Деплой блока 7 (2026-11-01) — фаза 5 закрыта
+
+`bash deploy.sh root ntetris.ddns.net 3000` через Git Bash (`& 'C:\Program Files\Git\bin\bash.exe'
+/c/GIT/tetris/deploy.sh root ntetris.ddns.net 3000`), exit 0. Прод: `1.261004.4344f3d` →
+**`1.261101.b3659bc`** (= HEAD на момент деплоя), хэш бандла `assets/index-lAConWCo.js` совпал
+«отдаётся == в образе», `nginx-proxy`/`nginx-proxy-letsencrypt` не тронуты.
+
+Проверки на проде: `checks.api.scoreRateLimit = {max: 30, windowMs: 60000, trackedKeys: 0}`;
+серия из 40 `POST /api/score` → ровно 30 × 200 и первый **429 на 31-м** (`retry-after: 59`,
+`remaining: 29 → 1`); `GET /api/scores|leaderboard|health` при исчерпанном окне → 200;
+`wss://ntetris.ddns.net/ws` — handshake open (встроенный WebSocket-клиент node 22:
+`require('ws')` из `/app` в контейнере не резолвится, зависимости в `backend/node_modules`).
+
+Верификация лимита писала в прод по-настоящему: `scores.json` 36 → 66 записей (+30 `DeployProbe`).
+По согласованию вычищено: бэкап `backend/data/scores.json.bak-before-probe-cleanup` (13 813 байт),
+`node`-скрипт убрал записи `player_name === "DeployProbe"` (66 → 36), затем
+`docker compose up -d --force-recreate` — потому что `ScoreService` держит весь массив в памяти
+и полной перезаписью на диске его не обновить. Итог: `count: 36`, `DeployProbe` в API больше нет,
+файл вернулся ровно к 7543 байтам (размер до пробы).
+
+### Куда дальше
+
+1. Фаза 5 закрыта полностью (блоки 1–7 + деплой). Дальше — **мультиплеер** как отдельная фаза:
+   `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`, и там же отдельным решением закрывается D1
+   (подпись/сессия результата) — сейчас у `POST /api/score` только потолок и частотное ограничение.
+2. Мелкий хвост (не блоковый): `console.error` в `leaderboardStore` при неудачных GET-чтениях —
+   деградация, а не падение; если править, то на `console.warn` ради чистоты `__consoleErrors`.
+3. Бытовое: удалённые команды на сервере запускать через `bash -s` + heredoc (Git Bash), а не
+   `-c` из PowerShell — иначе кавычки и `{{.Format}}` у docker ломаются; скрипты в `tmp-audit/`
+   нужно сохранять с LF (write-инструмент пишет CRLF).
+
+### Справочно: процедура прод-деплоя (что именно сверяет deploy.sh)
+
+1. `ssh root@ntetris.ddns.net` (ключ `~/.ssh/id_ed25519`) + наличие на сервере `git rsync docker curl`
+   и `docker compose` v2.
+2. `git clone --depth 1 https://github.com/dvdrelin/tetris.git /opt/neon-tetris-new` →
+   `rsync -a --delete --exclude=.git --exclude=node_modules --exclude=dist --exclude=backend/data
+   --exclude=nginx-proxy /opt/neon-tetris-new/ /opt/neon-tetris/` (оба последних исключения
+   обязательны: сохраняют `scores.json` и `nginx-proxy/.env` с Let's Encrypt).
+3. `APP_VERSION=1.<YYMMDD>.<git short hash>` (из клона, до его удаления) →
+   `docker compose build && up -d`.
+4. `200` на `/`, `200` на `/api/health` c `version == APP_VERSION`, `200` на `/api/health` **изнутри**
+   контейнера, сравнение sha256 отдаваемого бандла с бандлом в образе — всё это делает сам скрипт.
+5. Отдельно (не входит в скрипт): `wss://…/ws` встроенным клиентом node, `scoreRateLimit` в health,
+   md5/размер `scores.json` до и после.
 
 Бэкенд-часть D1/D2 и хвост фронтенда (`res.ok` + warn) сделаны и закоммичены (`bb2e066` + этот
 коммит), тесты зелёные (backend 4 сюиты / 49, frontend 11 / 196, E2E 39). Осталось:
