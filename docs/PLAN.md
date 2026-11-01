@@ -14,7 +14,7 @@
 | Фаза 5: Сингл — полностью (блоки 1–7) | ✅ Завершена (деплой `1.261101.b3659bc` на ntetris.ddns.net) |
 
 > **Поправка аудита (рабочее состояние после блока 7; база `2f3ee35`).** Цифры фазы 2 исторические: актуально
-> 212 frontend unit (12 сюит) + 49 backend unit (4 сюиты: `scoreService`, `gameRouter`, `health`, `rateLimit`) + 45 E2E
+> 220 frontend unit (12 сюит) + 49 backend unit (4 сюиты: `scoreService`, `gameRouter`, `health`, `rateLimit`) + 46 E2E
 > (`docs/AUDIT_REPORT.md` §11, §12.1; проверка блока 3 — `docs/SINGLE_PLAYER_DECISIONS.md`). Фазы 1–2 **не** включали
 > починку вращения боевого фронтенда: «финальная» система вращения из
 > `docs/ROTATION_SYSTEM_REFERENCE.md` была закоммичена только в legacy `app.js` (`04be72a`), тогда как
