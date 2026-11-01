@@ -666,6 +666,7 @@ wall/stack) — **задеплоено `1.261101.5bb9a73`**, бандл `index-Y
    нужно сохранять с LF (write-инструмент пишет CRLF).
 
 ### Справочно: процедура прод-деплоя (что именно сверяет deploy.sh)
+/api/health отдаёт `{status: 'ok', version, checks: {db: {ok, writable, count, bytes, mtimeMs}, …}, timestamp, uptimeSec}` — поля `ok` верхнего уровня нет, версию сверять по `version`.
 
 1. `ssh root@ntetris.ddns.net` (ключ `~/.ssh/id_ed25519`) + наличие на сервере `git rsync docker curl`
    и `docker compose` v2.
