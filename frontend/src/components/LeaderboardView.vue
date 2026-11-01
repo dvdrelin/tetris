@@ -25,6 +25,11 @@ export default defineComponent({
       switchTab(activeTab.value)
     }
 
+    function retry() {
+      // Re-asks the same tab with the same mode; the store clears `error` on a good read.
+      switchTab(activeTab.value)
+    }
+
     onMounted(() => {
       lbStore.fetchTopScores(lbStore.mode)
     })
@@ -33,6 +38,7 @@ export default defineComponent({
       lbStore,
       activeTab,
       switchTab,
+      retry,
       toggleMode,
       goMenu,
     }
@@ -65,6 +71,12 @@ export default defineComponent({
 
     <div class="content">
       <div v-if="lbStore.loading" class="loading">Загрузка...</div>
+
+      <!-- A failed read must be visible: an empty table would look like "no records yet". -->
+      <div v-if="lbStore.error" class="load-error">
+        <span>{{ lbStore.error }}</span>
+        <button class="retry-btn" @click="retry">↻ Повторить</button>
+      </div>
 
       <div v-else-if="activeTab === 'scores'">
         <table class="score-table">
@@ -235,5 +247,38 @@ td {
 
 tr:hover td {
   background: rgba(0, 245, 255, 0.05);
+}
+
+/* Degraded read: the data is not unavailable, it was refused — say so and offer a retry. */
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  border: 1px dashed rgba(255, 45, 85, 0.5);
+  border-radius: 6px;
+  color: #ff6b85;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.retry-btn {
+  cursor: pointer;
+  padding: 8px 14px;
+  background: rgba(255, 45, 85, 0.12);
+  border: 1px solid rgba(255, 45, 85, 0.6);
+  border-radius: 4px;
+  color: #ff9db0;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.retry-btn:hover {
+  background: rgba(255, 45, 85, 0.25);
+  color: #fff;
 }
 </style>
