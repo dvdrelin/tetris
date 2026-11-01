@@ -104,6 +104,10 @@ export class GameEngine {
   // Why the game ended (null until it does). Hardcore deaths are invisible in Arcade, so the
   // cause is part of the state and reaches the overlay verbatim.
   private _overReason: GameOverReason | null = null;
+  // Hardcore crash rule: one lethal attempt per axis per piece (see movePiece / crashIsLethal).
+  // Engine-internal bookkeeping — never exposed in a snapshot, never handed to the UI.
+  private blockedLeftCrash: boolean = false;
+  private blockedRightCrash: boolean = false;
   private mode: GameMode;
   // Gravity timing lives here, not in the UI: Tick carries elapsed milliseconds and the
   // engine decides how many rows the piece falls.
@@ -283,12 +287,41 @@ export class GameEngine {
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x + dx, y: this.currentPos.y + dy })) {
       this.currentPos.x += dx;
       this.currentPos.y += dy;
+      this.blockedLeftCrash = false;
+      this.blockedRightCrash = false;
       this.onSuccessfulManipulation();
-    } else if (this.mode === GameMode.Hardcore) {
-      // Hardcore mode: any move into a wall/block is instant death.
+    } else if (this.mode === GameMode.Hardcore && this.crashIsLethal(dx)) {
+      // Hardcore rule (A2): a sideways move into a wall or a block is death — but only the FIRST
+      // attempt in that direction after the piece last moved along it. DAS/ARR (B2) keeps firing the
+      // same MovePiece while a key is held and the engine cannot tell a fresh press from an
+      // auto-repeat, so the old rule turned holding a key against the wall into an unavoidable
+      // death. That is what players read as a bug: prod records `dvdrelin` with score 0, no lines,
+      // level 1 — a crash delivered by the auto-repeat of a held key.
       this.hardcoreDeath(GameOverReason.HardcoreWallCrash);
     }
+    // Otherwise the move is refused: always in Arcade, and in Hardcore once that axis is spent.
     this.callbacks.onStateChange?.();
+  }
+
+  /**
+   * Per piece and per axis the first refused sideways attempt is lethal in Hardcore; every further
+   * attempt against the same obstacle is a no-op. The flag is set here and cleared by a successful
+   * sideways move (above) or by the next spawn (spawnPiece), so the shape of the obstacle never has
+   * to be guessed — the input sequence decides. A player who releases the key, moves the piece the
+   * other way and pushes into the wall again is back under the original rule: crash, die.
+   */
+  private crashIsLethal(dx: number): boolean {
+    if (dx < 0) {
+      if (this.blockedLeftCrash) return false;
+      this.blockedLeftCrash = true;
+      return true;
+    }
+    if (dx > 0) {
+      if (this.blockedRightCrash) return false;
+      this.blockedRightCrash = true;
+      return true;
+    }
+    return true; // sideways only: a downward move is a soft drop and never kills
   }
 
   private rotatePiece(rotationIndex: number, direction: number): void {
@@ -460,6 +493,9 @@ export class GameEngine {
     this.gravityAccumulator = 0;
     this.lockAccumulator = 0;
     this.lockResets = 0;
+    // A new piece is a new chance: both axes are armed for one lethal crash attempt again.
+    this.blockedLeftCrash = false;
+    this.blockedRightCrash = false;
 
     // Check game over
     if (!this.isValidPosition(piece, this.currentPos)) {

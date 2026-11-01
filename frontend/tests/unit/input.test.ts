@@ -11,6 +11,10 @@ import { HELD_ACTIONS, actionForKey, actionToCommand, isHeldAction } from '../..
 import { DAS_CONFIG } from '../../src/shared/config/game-config';
 import { CommandType } from '../../src/shared/cqrs/commands';
 import { InputAction } from '../../src/shared/input/input-actions';
+import { GameEngine } from '../../src/shared/engine/game-engine';
+import { BoardManager } from '../../src/shared/domain/board';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
+import { GameMode, GameOverReason, PieceType } from '../../src/shared/domain/types';
 
 beforeAll(() => jest.useFakeTimers());
 afterAll(() => jest.useRealTimers());
@@ -333,5 +337,94 @@ describe('InputController: keyboard glue', () => {
     input.update();
     expect(fired.length).toBe(before);
     expect(input.heldActions()).toEqual([]);
+  });
+});
+
+describe('RepeatController wired to GameEngine: holding a key against an obstacle', () => {
+  // The layer-crossing case: DAS/ARR emits the same MovePiece over and over while a key is held,
+  // and the engine cannot tell a press from a repeat. The rule now spends exactly one lethal
+  // attempt per axis per piece, so the repeats that follow the fatal one are ignored.
+  function makeEngine(mode: GameMode) {
+    const engine = new GameEngine({ onStateChange: () => {}, onLineClear: () => {}, onGameOver: () => {} });
+    (engine as any).boardManager = new BoardManager(10, 20);
+    (engine as any).pieceFactory = new PieceFactoryProvider();
+    (engine as any).width = 10;
+    (engine as any).height = 20;
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode } });
+    return engine;
+  }
+  function placeO(engine: GameEngine, x: number, y: number) {
+    (engine as any).currentPiece = buildPiece(PieceType.O, PIECE_SHAPES[PieceType.O][0]);
+    (engine as any).currentRotation = { index: 0 };
+    (engine as any).currentPos = { x, y };
+  }
+  // Drive the controller the way GameView does: one update per animation frame.
+  const frames = (n: number, controller: RepeatController) => {
+    for (let i = 0; i < n; i++) {
+      jest.advanceTimersByTime(16);
+      controller.update();
+    }
+  };
+
+  test('Hardcore: the crash delivered by a repeat is fatal, and the hold adds nothing after it', () => {
+    const engine = makeEngine(GameMode.Hardcore);
+    ((engine as any).boardManager as BoardManager).setCell(7, 6, 5, true); // one block in the path
+    placeO(engine, 4, 5); // cells (4,5)(5,5)(4,6)(5,6)
+    const controller = new RepeatController(
+      (action) => engine.handleCommand(actionToCommand(action)),
+      DAS_CONFIG,
+      clock,
+    );
+
+    controller.press('right'); // the press moves the piece: x=5
+    expect(engine.isGameOver()).toBe(false);
+    expect(engine.getCurrentPos().x).toBe(5);
+
+    frames(38, controller); // DAS + ARR at 60 fps ≈ 14 repeated moves into the block
+    expect(controller.heldActions()).toEqual(['right']); // the key was held the whole time
+    expect(engine.isGameOver()).toBe(true); // the first attempt in that axis is the crash
+    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
+    expect(engine.getCurrentPos().x).toBe(5); // the piece never entered the block
+
+    frames(38, controller); // the repeats after it cannot stack another death
+    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
+  });
+
+  test('Hardcore: a key held while the piece is already pressed spends one attempt, no more', () => {
+    const engine = makeEngine(GameMode.Hardcore);
+    placeO(engine, 7, 5); // flush against the right wall: cells (7,5)(8,5)(7,6)(8,6)
+    const controller = new RepeatController(
+      (action) => engine.handleCommand(actionToCommand(action)),
+      DAS_CONFIG,
+      clock,
+    );
+
+    controller.press('right'); // one free step exists (cells 8..9), so the press is a move
+    expect(engine.isGameOver()).toBe(false);
+    expect(engine.getCurrentPos().x).toBe(8);
+
+    frames(38, controller); // the first repeat is the attempt into the wall: fatal
+    expect(engine.isGameOver()).toBe(true);
+    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
+    expect(engine.getCurrentPos().x).toBe(8);
+    const deaths = [engine.isGameOver(), engine.getOverReason()];
+    frames(38, controller); // and the rest of the hold adds nothing
+    expect([engine.isGameOver(), engine.getOverReason()]).toEqual(deaths);
+  });
+
+  test('Arcade: the same hold is harmless — refused moves, no cause, no death', () => {
+    const engine = makeEngine(GameMode.Arcade);
+    ((engine as any).boardManager as BoardManager).setCell(7, 6, 5, true);
+    placeO(engine, 4, 5);
+    const controller = new RepeatController(
+      (action) => engine.handleCommand(actionToCommand(action)),
+      DAS_CONFIG,
+      clock,
+    );
+    controller.press('right');
+    frames(38, controller);
+    expect(engine.isGameOver()).toBe(false);
+    expect(engine.getOverReason()).toBeNull();
+    expect(engine.getCurrentPos().x).toBe(5);
   });
 });

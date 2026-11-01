@@ -41,6 +41,48 @@ test.describe('Hardcore death cause', () => {
     expect(await getWarnings(page)).toHaveLength(0);
   });
 
+  test('a held key spends exactly one lethal attempt: the reason appears once and never changes', async ({ page }) => {
+    await startInMode(page, 'Хардкор');
+    expect((await getGameState(page)).isGameOver).toBe(false);
+
+    // Playwright's `keyboard.down` emits browser auto-repeat keydowns; the app ignores `e.repeat`
+    // (B2) and runs its own DAS/ARR, so the same MovePiece keeps reaching the engine either way.
+    // The first attempt into the wall is fatal (rule A2); the repeats of the same hold must not
+    // rewrite the cause or move the piece anywhere else.
+    await page.keyboard.down('ArrowRight');
+    await expect
+      .poll(async () => (await getGameState(page))?.isGameOver, { timeout: 5000 })
+      .toBe(true);
+    const first = await getGameState(page);
+    expect(first.overReason).toBe('hardcore-wall-crash');
+    expect(first.mode).toBe(1);
+
+    await page.waitForTimeout(400); // the key is still held: ~12 further MovePiece commands
+    const later = await getGameState(page);
+    expect(later.overReason).toBe('hardcore-wall-crash');
+    expect(later.currentPos).toEqual(first.currentPos);
+    await page.keyboard.up('ArrowRight');
+
+    // A fresh game, and this time the key is released as soon as the piece reaches the wall: the
+    // press is the crash, and a deliberate hold of a flush piece cannot kill a second time.
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await getGameState(page))?.isRunning, { timeout: 5000 })
+      .toBe(true);
+    expect((await getGameState(page)).overReason).toBeNull();
+
+    await expect
+      .poll(
+        async () => {
+          await page.keyboard.press('ArrowRight');
+          return (await getGameState(page))?.isGameOver;
+        },
+        { timeout: 5000 },
+      )
+      .toBe(true);
+    expect((await getGameState(page)).overReason).toBe('hardcore-wall-crash');
+  });
+
   test('the same wall press in Arcade is ignored: no death, no cause', async ({ page }) => {
     await startInMode(page, 'Аркадный');
 

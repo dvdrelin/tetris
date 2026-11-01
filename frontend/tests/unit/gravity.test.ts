@@ -269,11 +269,26 @@ describe('Down is a soft drop, not a death', () => {
     expect(lockedCells(engine)).toBe(4);
   });
 
-  test('Hardcore still kills on a blocked sideways move', () => {
+  test('Hardcore kills on a sideways move that crashes into the wall', () => {
     const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 0, 5);
+    forceState(engine, PieceType.O, 0, 1, 5); // one cell from the wall: the move is a real bump
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    expect(engine.getCurrentPos()).toEqual({ x: 0, y: 5 });
     engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
     expect(engine.isGameOver()).toBe(true);
+  });
+
+  test('Hardcore spends one lethal attempt per axis: the hold after it cannot kill again', () => {
+    // B2 (DAS/ARR) fires the same MovePiece over and over while a key is held, and the engine
+    // cannot tell a fresh press from an auto-repeat. The press against the wall is the crash (fatal
+    // per A2); the repeats that follow the same hold must not pile up more deaths.
+    const engine = createEngine(GameMode.Hardcore);
+    forceState(engine, PieceType.O, 0, 0, 5);
+    for (let i = 0; i < 5; i++) {
+      engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    }
+    expect(engine.isGameOver()).toBe(true);
+    expect(engine.getCurrentPos()).toEqual({ x: 0, y: 5 });
   });
 
   test('a gravity landing in Hardcore starts the lock delay and does not kill', () => {
