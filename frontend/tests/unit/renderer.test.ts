@@ -109,14 +109,17 @@ describe('renderer', () => {
     expect(ctx.fillText).toHaveBeenCalledWith('Счёт: 5000', expect.any(Number), expect.any(Number));
   });
 
-  test('game over names the Hardcore wall-crash cause and explains the Arcade rule', () => {
+  test('game over names the Hardcore stack-crash cause and explains how Arcade behaves', () => {
     const ctx = createMockCtx();
     const state = createRenderState({ isGameOver: true, score: 100, overReason: GameOverReason.HardcoreWallCrash });
     render(ctx, state, 240, 480);
     const drawn = (ctx.fillText as jest.Mock).mock.calls.map((c) => String(c[0]));
-    expect(drawn).toContain('СТОЛКНОВЕНИЕ СО СТЕНОЙ');
-    // The explanation must state how Arcade behaves — that is the whole point of the panel.
-    expect(drawn.some((t) => t.includes('Аркада'))).toBe(true);
+    expect(drawn).toContain('СТОЛКНОВЕНИЕ СО СТОПКОЙ');
+    // The explanation must state how Arcade behaves — that is the whole point of the panel — and it
+    // must match the rule as implemented: the wall is safe, the stack is what kills (A13).
+    expect(drawn.some((t) => t.includes('аркаде'))).toBe(true);
+    expect(drawn.some((t) => t.includes('стена') || t.includes('стену'))).toBe(true);
+    expect(drawn.some((t) => t.includes('фигуру'))).toBe(true);
   });
 
   test('game over names the refused-rotation cause for Hardcore', () => {

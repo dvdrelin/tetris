@@ -269,28 +269,26 @@ describe('Down is a soft drop, not a death', () => {
     expect(lockedCells(engine)).toBe(4);
   });
 
-  test('Hardcore kills on a sideways move that crashes into the wall', () => {
+  test('Hardcore kills on a sideways move into a placed block', () => {
     const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 1, 5); // one cell from the wall: the move is a real bump
-    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
-    expect(engine.getCurrentPos()).toEqual({ x: 0, y: 5 });
-    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    ((engine as any).boardManager as BoardManager).setCell(0, 6, 5, true);
+    forceState(engine, PieceType.O, 0, 2, 5); // cells (2,5)(3,5)(2,6)(3,6)
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } }); // x=1
+    expect(engine.getCurrentPos()).toEqual({ x: 1, y: 5 });
+    expect(engine.isGameOver()).toBe(false);
+    engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } }); // (0,6) locked
     expect(engine.isGameOver()).toBe(true);
   });
 
-  test('Hardcore spends one lethal attempt per axis: the hold after it cannot kill again', () => {
-    // B2 (DAS/ARR) fires the same MovePiece over and over while a key is held, and the engine
-    // cannot tell a fresh press from an auto-repeat. The press against the wall is the crash (fatal
-    // per A2); the repeats that follow the same hold must not pile up more deaths.
+  test('Hardcore does not die from pushing into the side wall, however long the key is held', () => {
     const engine = createEngine(GameMode.Hardcore);
     forceState(engine, PieceType.O, 0, 0, 5);
     for (let i = 0; i < 5; i++) {
       engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
     }
-    expect(engine.isGameOver()).toBe(true);
+    expect(engine.isGameOver()).toBe(false);
     expect(engine.getCurrentPos()).toEqual({ x: 0, y: 5 });
   });
-
   test('a gravity landing in Hardcore starts the lock delay and does not kill', () => {
     const engine = createEngine(GameMode.Hardcore);
     forceState(engine, PieceType.O, 0, 4, 17);

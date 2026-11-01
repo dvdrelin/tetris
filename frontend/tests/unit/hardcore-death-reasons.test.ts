@@ -61,95 +61,94 @@ const lock = (engine: GameEngine, x: number, y: number) => {
 const reason = (engine: GameEngine) => engine.getGameState().overReason;
 
 describe('Hardcore death causes', () => {
-  // The Arcade contrast is unchanged: a sideways move into an obstacle is simply refused, in any
-  // quantity, and no cause is ever reported.
+  // Arcade is the contrast in every case below: a refused sideways move is a no-op, in any quantity,
+  // and no cause is ever reported.
   test('Arcade: a move into the wall does not end the game and reports no cause', () => {
     const engine = createEngine(GameMode.Arcade);
     forceState(engine, PieceType.O, 0, 1, 5);
-    move(engine, 'left'); // now flush
-    move(engine, 'left'); // the crash attempt
-    move(engine, 'left'); // and the auto-repeats that follow it
+    for (let i = 0; i < 3; i++) move(engine, 'left');
     expect(engine.isGameOver()).toBe(false);
     expect(engine.getOverReason()).toBeNull();
     expect(reason(engine)).toBeNull();
     expect(engine.getCurrentPos()).toEqual({ x: 0, y: 5 });
   });
 
-  test('Hardcore: a piece already flush dies on the first attempt and survives every repeat', () => {
-    // The held-key case: the press is the first attempt (fatal), the DAS/ARR (B2) repeats that
-    // follow within the same hold are ignored.
+  test('Hardcore: the side wall never ends the game — a held key is a no-op', () => {
+    // The A13 refinement, and the exact prod symptom: holding `←`/`→` against the wall (DAS/ARR, B2)
+    // used to be an unavoidable death on an almost empty board. Grinding on the wall is now harmless
+    // in both modes; only the stack kills.
     const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 0, 5);
-    move(engine, 'left');
-    expect(engine.isGameOver()).toBe(true);
-    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
-    expect(reason(engine)).toBe(GameOverReason.HardcoreWallCrash);
-    for (let i = 0; i < 5; i++) move(engine, 'left');
+    forceState(engine, PieceType.O, 0, 1, 5);
+    for (let i = 0; i < 8; i++) move(engine, 'left');
+    expect(engine.isGameOver()).toBe(false);
+    expect(engine.getOverReason()).toBeNull();
     expect(engine.getCurrentPos()).toEqual({ x: 0, y: 5 });
   });
 
-  test('Hardcore: a bump after a successful move is fatal too (the classic A2 crash)', () => {
-    const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 1, 5);
-    move(engine, 'left'); // flush against the wall, alive
-    expect(engine.isGameOver()).toBe(false);
-    move(engine, 'left'); // the crash attempt
-    expect(engine.isGameOver()).toBe(true);
-    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
-  });
-
-  test('Hardcore: a single locked cell in the path is the same cause', () => {
+  test('Hardcore: crashing into a single placed block is death with the crash cause', () => {
     const engine = createEngine(GameMode.Hardcore);
     // Horizontal I lies on row 10, columns 5..8 at x=5 (rotation 0 puts its cells on bounding-box
-    // row 1). The obstacle sits low on purpose: the opening T spawn lands on rows 0..1 and must
-    // stay untouched.
+    // row 1). The obstacle sits low on purpose: the opening T spawn lands on rows 0..1 and must stay
+    // untouched.
     lock(engine, 9, 10);
     forceState(engine, PieceType.I, 0, 4, 9);
-    move(engine, 'right'); // x=5: still free
+    move(engine, 'right'); // x=5: cells 5..8, free
     expect(engine.isGameOver()).toBe(false);
-    move(engine, 'right'); // x=6: a cell would enter the locked (9,10) -> the crash attempt
+    move(engine, 'right'); // x=6: a cell would enter the locked (9,10) → the stack stopped it
     expect(engine.isGameOver()).toBe(true);
     expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
   });
 
-  test('Hardcore: pushes against a wall of locked cells spend one attempt, then stay harmless', () => {
+  test('Hardcore: a wall of locked cells is lethal on every attempt, press or repeat alike', () => {
     const engine = createEngine(GameMode.Hardcore);
     for (let y = 10; y < 14; y++) lock(engine, 9, y);
-    forceState(engine, PieceType.I, 0, 6, 9); // flush: x=7 would put a cell into the locked column
+    forceState(engine, PieceType.I, 0, 5, 9); // flush: x=6 would put a cell into the locked column
     move(engine, 'right');
-    expect(engine.isGameOver()).toBe(true); // the press kills, as the rule says
+    expect(engine.isGameOver()).toBe(true);
+    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
     for (let i = 0; i < 4; i++) move(engine, 'right');
     expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
-    expect(engine.getCurrentPos()).toEqual({ x: 6, y: 9 });
+    expect(engine.getCurrentPos()).toEqual({ x: 5, y: 9 });
 
-    // Same geometry one step further out: the piece can travel, and the attempt that follows is
-    // lethal - the rule did not become "walls are free".
+    // One step further out the piece can travel first, and the attempt that follows still kills.
     const bump = createEngine(GameMode.Hardcore);
     for (let y = 10; y < 14; y++) lock(bump, 9, y);
-    forceState(bump, PieceType.I, 0, 4, 9); // cells 4..7 on row 10: one free step (x=5) exists
-    move(bump, 'right'); // x=5: cells 5..8 on row 10, free
+    forceState(bump, PieceType.I, 0, 4, 9);
+    move(bump, 'right'); // x=5: a free step existed
     expect(bump.isGameOver()).toBe(false);
-    move(bump, 'right'); // x=6: cells 6..9 -> (9,10) is locked: the attempt
+    move(bump, 'right'); // x=6: into the locked column
     expect(bump.isGameOver()).toBe(true);
   });
 
-  test('Hardcore: an internal block kills on the attempt, and a held key adds nothing after it', () => {
+  test('Hardcore: a piece pressed against both the wall and a block dies (the stack stopped it)', () => {
+    const engine = createEngine(GameMode.Hardcore);
+    lock(engine, 9, 6); // the block sits at the very edge: wall and stack at once
+    forceState(engine, PieceType.O, 0, 7, 5); // cells (7,5)(8,5)(7,6)(8,6)
+    move(engine, 'right'); // (9,5) is the wall, (9,6) is a locked cell → lethal
+    expect(engine.isGameOver()).toBe(true);
+    expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
+  });
+
+  test('Hardcore: an internal block is lethal, the floor and the side walls are not', () => {
     const engine = createEngine(GameMode.Hardcore);
     lock(engine, 8, 6); // a single locked cell in the O's path
     forceState(engine, PieceType.O, 0, 5, 5); // cells (5,5)(6,5)(5,6)(6,6)
     move(engine, 'right'); // x=6: (7,6) is free, so the move happens
     expect(engine.isGameOver()).toBe(false);
-    move(engine, 'right'); // (8,6) blocks the next step -> the crash attempt
+    move(engine, 'right'); // (8,6) blocks the next step → death
     expect(engine.isGameOver()).toBe(true);
     expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
 
-    const hold = createEngine(GameMode.Hardcore);
-    lock(hold, 8, 6);
-    forceState(hold, PieceType.O, 0, 6, 5); // already one step from the block
-    move(hold, 'right'); // x=7 would put a cell into the locked (8,6) -> refused, fatal
-    expect(hold.isGameOver()).toBe(true);
-    for (let i = 0; i < 4; i++) move(hold, 'right');
-    expect(hold.getCurrentPos()).toEqual({ x: 6, y: 5 });
+    const floor = createEngine(GameMode.Hardcore);
+    forceState(floor, PieceType.O, 0, 4, 18); // on the floor: sideways is wall-free
+    move(floor, 'down'); // soft drop: locks instead of killing
+    expect(floor.isGameOver()).toBe(false);
+
+    const wall = createEngine(GameMode.Hardcore);
+    forceState(wall, PieceType.O, 0, 8, 5);
+    for (let i = 0; i < 4; i++) move(wall, 'right'); // into the right wall, repeatedly
+    expect(wall.isGameOver()).toBe(false);
+    expect(wall.getCurrentPos()).toEqual({ x: 8, y: 5 });
   });
 
   test('Arcade: a refused rotation is not a death and leaves the piece unchanged', () => {
@@ -214,10 +213,10 @@ describe('Hardcore death causes', () => {
 
   test('a restart clears the cause: a fresh game reports no reason', () => {
     const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 2, 5);
-    move(engine, 'left');
-    move(engine, 'left');
-    move(engine, 'left');
+    lock(engine, 9, 10);
+    forceState(engine, PieceType.I, 0, 4, 9);
+    move(engine, 'right'); // x=5: free
+    move(engine, 'right'); // x=6: into the locked column → death
     expect(engine.getOverReason()).toBe(GameOverReason.HardcoreWallCrash);
     engine.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Hardcore } });
     expect(engine.isGameOver()).toBe(false);
@@ -232,10 +231,10 @@ describe('Hardcore death causes', () => {
 
   test('a snapshot after death carries the cause — the renderer reads it from there', () => {
     const engine = createEngine(GameMode.Hardcore);
-    forceState(engine, PieceType.O, 0, 2, 5);
-    move(engine, 'left');
-    move(engine, 'left');
-    move(engine, 'left');
+    lock(engine, 9, 10);
+    forceState(engine, PieceType.I, 0, 4, 9);
+    move(engine, 'right');
+    move(engine, 'right');
     expect(engine.getGameState().isGameOver).toBe(true);
     expect(engine.getGameState().overReason).toBe(GameOverReason.HardcoreWallCrash);
   });
