@@ -1,4 +1,4 @@
-import { render, RenderState } from '../../src/engine/renderer';
+import { render, RenderState, GAME_OVER_TEXT } from '../../src/engine/renderer';
 import { GameStateDTO, CELL_COLORS } from '../../src/stores/gameStore';
 import { GameOverReason } from '../../src/shared/domain/types';
 
@@ -125,7 +125,7 @@ describe('renderer', () => {
     render(ctx, state, 240, 480);
     const drawn = (ctx.fillText as jest.Mock).mock.calls.map((c) => String(c[0]));
     expect(drawn).toContain('ПОВОРОТ НЕКУДА ВЫПОЛНИТЬ');
-    expect(drawn.some((t) => t.includes('аркаде'))).toBe(true);
+    expect(drawn.some((t) => t.includes('в аркаде'))).toBe(true);
   });
 
   test('block-out is explained as the shared cause (no Arcade/Hardcore difference claimed)', () => {
@@ -133,8 +133,17 @@ describe('renderer', () => {
     const state = createRenderState({ isGameOver: true, overReason: GameOverReason.BlockOut });
     render(ctx, state, 240, 480);
     const drawn = (ctx.fillText as jest.Mock).mock.calls.map((c) => String(c[0]));
-    expect(drawn).toContain('НЕТ МЕСТА ДЛЯ НОВОЙ ФИГУРЫ');
-    expect(drawn.some((t) => t.includes('обоих режимах'))).toBe(true);
+    expect(drawn).toContain('НЕТ МЕСТА ДЛЯ ФИГУРЫ');
+    expect(drawn.some((t) => t.includes('обоих режимах'))).toBe(true);  });
+
+  test('cause texts are short enough for a 240px canvas at 11px monospace', () => {
+    // A 41-char line was drawn off the right edge in the prod screenshot check; 11px monospace is
+    // ~6.6px per char, so 240px buys ~36 chars. Cap everything at 34 with margin for the title too.
+    for (const [reason, text] of Object.entries(GAME_OVER_TEXT)) {
+      const offenders = [text.title, ...text.lines].filter((s) => s.length > 34);
+      // jest's `expect` takes one argument — put the payload in the matcher, not in a message.
+      expect({ reason, offenders }).toEqual({ reason, offenders: [] });
+    }
   });
 
   test('every cause block, with the restart hint, stays inside the canvas', () => {

@@ -16,20 +16,21 @@ export interface RenderState {
   overReason: GameOverReason | null
 }
 
-// Russian, two short lines each: the board canvas is ~300px wide, so every line must fit in ~12px
-// monospace. The second line always states the Arcade rule, which is exactly where the modes diverge.
-const GAME_OVER_TEXT: Record<GameOverReason, { title: string; lines: string[] }> = {
+// Russian, two short lines each. HARD limit: the board canvas is boardWidth × 24 = 240 px, and
+// 11px monospace is ~6.6 px per char → lines stay under ~34 chars (a 41-char line visibly
+// overflowed the canvas in the prod screenshot check). Every cause also states the Arcade rule.
+export const GAME_OVER_TEXT: Record<GameOverReason, { title: string; lines: string[] }> = {
   [GameOverReason.BlockOut]: {
-    title: 'НЕТ МЕСТА ДЛЯ НОВОЙ ФИГУРЫ',
-    lines: ['Стопка выросла до строки появления.', 'В обоих режимах это обычная смерть.'],
+    title: 'НЕТ МЕСТА ДЛЯ ФИГУРЫ',
+    lines: ['Стопка дошла до строки спавна.', 'В обоих режимах — обычная смерть.'],
   },
   [GameOverReason.HardcoreWallCrash]: {
     title: 'СТОЛКНОВЕНИЕ СО СТЕНОЙ',
-    lines: ['Хардкор: ход в стену или фигуру', 'убивает сразу. Аркада такой ход просто', 'игнорирует.'],
+    lines: ['Хардкор: ход в стену или в блок', 'убивает. Аркада его игнорирует.'],
   },
   [GameOverReason.HardcoreRotationStuck]: {
     title: 'ПОВОРОТ НЕКУДА ВЫПОЛНИТЬ',
-    lines: ['Хардкор: поворот без свободного места', '(даже с wall kick) убивает.', 'В аркаде поворот лишь отменяется.'],
+    lines: ['Хардкор: поворот без места', 'убивает; в аркаде — лишь отмена.'],
   },
 }
 
@@ -149,7 +150,7 @@ export function render(ctx: CanvasRenderingContext2D, state: RenderState, width:
       ctx.font = 'bold 13px monospace'
       ctx.fillText(text.title, width / 2, cy + 48)
       ctx.fillStyle = '#9a9ab0'
-      ctx.font = '12px monospace'
+      ctx.font = '11px monospace'
       text.lines.forEach((line, i) => ctx.fillText(line, width / 2, cy + 66 + i * 15))
     }
 
