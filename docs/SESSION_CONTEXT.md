@@ -380,15 +380,17 @@ E2E-счёт не вырос: нового браузерного поведен
 
 **Актуальные цифры тестов на HEAD этого блока: 196 frontend unit (11 сюит) + 49 backend unit
 (4 сюиты: `scoreService`, `gameRouter`, `health`, `rateLimit`) + 39 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
-в выводе прогона 37 строк «ok» — это и есть `38 passed`; исторические «19 passed» в записях
+в выводе прогона 39 строк «ok» — это и есть `39 passed`; исторические «19 passed» в записях
 блоков 2–3 соответствовали тому же полному прогону того времени.
 
 ## Граф проекта (Graphify)
 
 `graphify-out/graph.json` — knowledge-граф этого репозитория, доступен через MCP-сервер
 `graphify-tetris` (`query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`,
-`graph_stats`, `shortest_path`). Актуальное состояние (пересобран на HEAD блока 7, коммит `bb2e066`):
-**1081 узел · 1946 рёбер · 70 сообществ**, в `GRAPH_REPORT.md` стоит
+`graph_stats`, `shortest_path`). Граф пересобран после последнего коммита блока 7; точный
+`Built from commit` в шапке `GRAPH_REPORT.md` — авторитетнее этой строки. Текущий масштаб:
+**~1081 узел · ~1946 рёбер · 70 сообществ**, плейсхолдеров в именах 0 (`label --missing-only`
+после каждого `update`), `GRAPH_REPORT.md` стоит
 `Built from commit` = HEAD. Узлы блока 5: `getGhostY()`, `landingRow()`, `GhostQuery`,
 `ghost.test.ts`. Узлы блока 6: `stop()`, `stopGame()`, `CONTROL_HINTS`, `normalizePlayerName()`,
 `KEY_MAP_KEYS`, `ui-block6.test.ts`.
