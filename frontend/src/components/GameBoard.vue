@@ -30,6 +30,7 @@ export default defineComponent({
         ghostY: state.ghostY,
         isPaused: state.isPaused,
         isGameOver: state.isGameOver,
+        overReason: state.overReason,
         score: state.score,
       }
 

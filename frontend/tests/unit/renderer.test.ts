@@ -1,5 +1,6 @@
 import { render, RenderState } from '../../src/engine/renderer';
 import { GameStateDTO, CELL_COLORS } from '../../src/stores/gameStore';
+import { GameOverReason } from '../../src/shared/domain/types';
 
 describe('renderer', () => {
   function createMockCtx(): CanvasRenderingContext2D {
@@ -50,6 +51,7 @@ describe('renderer', () => {
       isPaused: false,
       isGameOver: false,
       score: 0,
+      overReason: null,
       ...overrides,
     };
   }
@@ -105,6 +107,51 @@ describe('renderer', () => {
     render(ctx, state, 240, 480);
     expect(ctx.fillText).toHaveBeenCalledWith('GAME OVER', expect.any(Number), expect.any(Number));
     expect(ctx.fillText).toHaveBeenCalledWith('Счёт: 5000', expect.any(Number), expect.any(Number));
+  });
+
+  test('game over names the Hardcore wall-crash cause and explains the Arcade rule', () => {
+    const ctx = createMockCtx();
+    const state = createRenderState({ isGameOver: true, score: 100, overReason: GameOverReason.HardcoreWallCrash });
+    render(ctx, state, 240, 480);
+    const drawn = (ctx.fillText as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(drawn).toContain('СТОЛКНОВЕНИЕ СО СТЕНОЙ');
+    // The explanation must state how Arcade behaves — that is the whole point of the panel.
+    expect(drawn.some((t) => t.includes('Аркада'))).toBe(true);
+  });
+
+  test('game over names the refused-rotation cause for Hardcore', () => {
+    const ctx = createMockCtx();
+    const state = createRenderState({ isGameOver: true, overReason: GameOverReason.HardcoreRotationStuck });
+    render(ctx, state, 240, 480);
+    const drawn = (ctx.fillText as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(drawn).toContain('ПОВОРОТ НЕКУДА ВЫПОЛНИТЬ');
+    expect(drawn.some((t) => t.includes('аркаде'))).toBe(true);
+  });
+
+  test('block-out is explained as the shared cause (no Arcade/Hardcore difference claimed)', () => {
+    const ctx = createMockCtx();
+    const state = createRenderState({ isGameOver: true, overReason: GameOverReason.BlockOut });
+    render(ctx, state, 240, 480);
+    const drawn = (ctx.fillText as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(drawn).toContain('НЕТ МЕСТА ДЛЯ НОВОЙ ФИГУРЫ');
+    expect(drawn.some((t) => t.includes('обоих режимах'))).toBe(true);
+  });
+
+  test('every cause block, with the restart hint, stays inside the canvas', () => {
+    for (const reason of [GameOverReason.BlockOut, GameOverReason.HardcoreWallCrash, GameOverReason.HardcoreRotationStuck]) {
+      const ctx = createMockCtx();
+      render(ctx, createRenderState({ isGameOver: true, overReason: reason }), 240, 480);
+      const ys = (ctx.fillText as jest.Mock).mock.calls.map((c) => Number(c[2]));
+      expect(Math.max(...ys)).toBeLessThan(480);
+      expect(Math.min(...ys)).toBeGreaterThan(0);
+    }
+  });
+
+  test('an unknown cause degrades to the plain overlay instead of throwing', () => {
+    const ctx = createMockCtx();
+    expect(() => render(ctx, createRenderState({ isGameOver: true, score: 7, overReason: null }), 240, 480)).not.toThrow();
+    expect(ctx.fillText).toHaveBeenCalledWith('GAME OVER', expect.any(Number), expect.any(Number));
+    expect(ctx.fillText).toHaveBeenCalledWith('Счёт: 7', expect.any(Number), expect.any(Number));
   });
 
   test('should render safely without infinite recursion (100 calls)', () => {

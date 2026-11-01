@@ -1,5 +1,5 @@
 import {
-  GameState, Position, RotationState, GameMode,
+  GameState, Position, RotationState, GameMode, GameOverReason,
   Cell, Piece, PieceType
 } from '../domain/types';
 import { BoardManager } from '../domain/board';
@@ -101,6 +101,9 @@ export class GameEngine {
   private _isRunning: boolean = false;
   private _isPaused: boolean = false;
   private _isGameOver: boolean = false;
+  // Why the game ended (null until it does). Hardcore deaths are invisible in Arcade, so the
+  // cause is part of the state and reaches the overlay verbatim.
+  private _overReason: GameOverReason | null = null;
   private mode: GameMode;
   // Gravity timing lives here, not in the UI: Tick carries elapsed milliseconds and the
   // engine decides how many rows the piece falls.
@@ -246,6 +249,7 @@ export class GameEngine {
     this.linesCleared = 0;
     this.combo = 0;
     this._isGameOver = false;
+    this._overReason = null;
     this.gravityAccumulator = 0;
     this.elapsedMs = 0;
     this.lockAccumulator = 0;
@@ -282,15 +286,8 @@ export class GameEngine {
       this.onSuccessfulManipulation();
     } else if (this.mode === GameMode.Hardcore) {
       // Hardcore mode: any move into a wall/block is instant death.
-      this.hardcoreDeath();
+      this.hardcoreDeath(GameOverReason.HardcoreWallCrash);
     }
-    this.callbacks.onStateChange?.();
-  }
-
-  private hardcoreDeath(): void {
-    this._isGameOver = true;
-    this._isRunning = false;
-    this.callbacks.onGameOver?.(this.score);
     this.callbacks.onStateChange?.();
   }
 
@@ -320,8 +317,16 @@ export class GameEngine {
 
     // No valid position after all kicks → instant death in hardcore mode.
     if (this.mode === GameMode.Hardcore) {
-      this.hardcoreDeath();
+      this.hardcoreDeath(GameOverReason.HardcoreRotationStuck);
     }
+  }
+
+  private hardcoreDeath(reason: GameOverReason): void {
+    this._isGameOver = true;
+    this._isRunning = false;
+    this._overReason = reason;
+    this.callbacks.onGameOver?.(this.score);
+    this.callbacks.onStateChange?.();
   }
 
   private softDrop(): void {
@@ -460,6 +465,9 @@ export class GameEngine {
     if (!this.isValidPosition(piece, this.currentPos)) {
       this._isGameOver = true;
       this._isRunning = false;
+      // The same cause in both modes: the stack reached the spawn row. Arcade and Hardcore die
+      // here identically — it is the only death an Arcade player sees.
+      this._overReason = GameOverReason.BlockOut;
       this.callbacks.onGameOver?.(this.score);
       this.callbacks.onStateChange?.();
       return;
@@ -574,6 +582,7 @@ export class GameEngine {
       isRunning: this._isRunning,
       isPaused: this._isPaused,
       isGameOver: this._isGameOver,
+      overReason: this._overReason,
       mode: this.mode,
     };
   }
@@ -636,6 +645,10 @@ export class GameEngine {
 
   isGameOver(): boolean {
     return this._isGameOver;
+  }
+
+  getOverReason(): GameOverReason | null {
+    return this._overReason;
   }
 
   getMode(): GameMode {

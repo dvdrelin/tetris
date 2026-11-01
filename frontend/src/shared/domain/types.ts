@@ -39,9 +39,22 @@ export interface GameState {
   isPaused: boolean;
   isGameOver: boolean;
   mode: GameMode;
+  // Why the game ended. Set only together with `isGameOver`, cleared on restart. Hardcore kills
+  // for reasons Arcade never has (wall crash, refused rotation), so the UI needs the cause to
+  // explain the difference instead of leaving the player with a mysterious GAME OVER.
+  overReason: GameOverReason | null;
 }
 
 export enum GameMode { Arcade, Hardcore }
+
+export enum GameOverReason {
+  /** A newly spawned/held piece had nowhere to appear — the only cause present in both modes. */
+  BlockOut = 'block-out',
+  /** Hardcore: a left/right move was blocked by a wall or by locked cells. */
+  HardcoreWallCrash = 'hardcore-wall-crash',
+  /** Hardcore: a rotation had no valid position, not even with a wall kick. */
+  HardcoreRotationStuck = 'hardcore-rotation-stuck',
+}
 
 export interface Piece {
   type: PieceType;

@@ -164,7 +164,7 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 Сердце логики. Хранит приватное состояние (сетка, текущая фигура, позицию, вращение,
 счёт, уровень, линии, комбо, флаги) и exposes его через:
 - **Команды** — `handleCommand()` = `switch` с сужением типа (не `handlerMap`): StartGame, MovePiece
-  (`left`/`right`/`down`, где `down` = soft drop), RotatePiece (`cw` / `ccw` / `180`, wall-kick SRS + мгновенная смерть в Hardcore), SoftDrop,
+  (`left`/`right`/`down`, где `down` = soft drop), RotatePiece (`cw` / `ccw` / `180`, wall-kick SRS + мгновенная смерть в Hardcore, причина пишется в `overReason`), SoftDrop,
   HardDrop, HoldPiece, Tick (`payload: { dt: number }`), Pause/Resume. Вращение больше не проходит через `MovePiece`
   (блок 1 сингла, B4).
 - **Гравитация принадлежит движку** (блок 2 сингла, A1/A2/A8): `tick(dtMs)` копит `gravityAccumulator`

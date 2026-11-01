@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { GameEngine } from '../shared/engine/game-engine'
-import { GameMode, Particle } from '../shared/domain/types'
+import { GameMode, GameOverReason, Particle } from '../shared/domain/types'
 import { AnyCommand, CommandType } from '../shared/cqrs/commands'
 import { GAME_CONFIG } from '../shared/config/game-config'
 import { loadPlayerName, savePlayerName } from '../shared/domain/player-name'
@@ -28,6 +28,7 @@ export interface GameStateDTO {
   isPaused: boolean
   isGameOver: boolean
   mode: GameMode
+  overReason: GameOverReason | null
   ghostY: number
 }
 
@@ -68,6 +69,7 @@ export const useGameStore = defineStore('game', () => {
     isPaused: false,
     isGameOver: false,
     mode: GameMode.Arcade,
+    overReason: null,
     ghostY: -1,
   })
 
@@ -156,6 +158,8 @@ export const useGameStore = defineStore('game', () => {
       isPaused: state.isPaused,
       isGameOver: state.isGameOver,
       mode: state.mode,
+      // The engine owns the cause; the store only transports it (same rule as ghostY, A7).
+      overReason: engineInstance.getOverReason(),
       ghostY,
     }
   }

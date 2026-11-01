@@ -1,4 +1,5 @@
 import { GameStateDTO, CELL_COLORS } from '../stores/gameStore'
+import { GameOverReason } from '../shared/domain/types'
 
 const CELL_SIZE = 24
 
@@ -10,6 +11,26 @@ export interface RenderState {
   isPaused: boolean
   isGameOver: boolean
   score: number
+  // Cause of the game over, transported from the engine. Without it a Hardcore death looks like an
+  // Arcade one: the player sees "GAME OVER" on a nearly empty board and no way to learn why.
+  overReason: GameOverReason | null
+}
+
+// Russian, two short lines each: the board canvas is ~300px wide, so every line must fit in ~12px
+// monospace. The second line always states the Arcade rule, which is exactly where the modes diverge.
+const GAME_OVER_TEXT: Record<GameOverReason, { title: string; lines: string[] }> = {
+  [GameOverReason.BlockOut]: {
+    title: 'НЕТ МЕСТА ДЛЯ НОВОЙ ФИГУРЫ',
+    lines: ['Стопка выросла до строки появления.', 'В обоих режимах это обычная смерть.'],
+  },
+  [GameOverReason.HardcoreWallCrash]: {
+    title: 'СТОЛКНОВЕНИЕ СО СТЕНОЙ',
+    lines: ['Хардкор: ход в стену или фигуру', 'убивает сразу. Аркада такой ход просто', 'игнорирует.'],
+  },
+  [GameOverReason.HardcoreRotationStuck]: {
+    title: 'ПОВОРОТ НЕКУДА ВЫПОЛНИТЬ',
+    lines: ['Хардкор: поворот без свободного места', '(даже с wall kick) убивает.', 'В аркаде поворот лишь отменяется.'],
+  },
 }
 
 export function render(ctx: CanvasRenderingContext2D, state: RenderState, width: number, height: number): void {
@@ -110,16 +131,31 @@ export function render(ctx: CanvasRenderingContext2D, state: RenderState, width:
   if (state.isGameOver) {
     ctx.fillStyle = 'rgba(10, 10, 26, 0.9)'
     ctx.fillRect(0, 0, width, height)
+    ctx.textAlign = 'center'
+
+    const text = state.overReason ? GAME_OVER_TEXT[state.overReason] : undefined
+    // With a known cause the block grows upward: title, score, cause, explanation, restart hint.
+    const cy = height / 2 + (text ? 28 : 0)
+
     ctx.fillStyle = '#ff00ff'
     ctx.font = 'bold 32px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText('GAME OVER', width / 2, height / 2 - 20)
+    ctx.fillText('GAME OVER', width / 2, cy - 20)
     ctx.fillStyle = '#00f5ff'
     ctx.font = '20px monospace'
-    ctx.fillText(`Счёт: ${state.score}`, width / 2, height / 2 + 20)
+    ctx.fillText(`Счёт: ${state.score}`, width / 2, cy + 20)
+
+    if (text) {
+      ctx.fillStyle = '#ff6b85'
+      ctx.font = 'bold 13px monospace'
+      ctx.fillText(text.title, width / 2, cy + 48)
+      ctx.fillStyle = '#9a9ab0'
+      ctx.font = '12px monospace'
+      text.lines.forEach((line, i) => ctx.fillText(line, width / 2, cy + 66 + i * 15))
+    }
+
     ctx.fillStyle = '#888'
     ctx.font = '16px monospace'
-    ctx.fillText('Нажмите ENTER для рестарта', width / 2, height / 2 + 50)
+    ctx.fillText('Нажмите ENTER для рестарта', width / 2, cy + (text ? 66 + text.lines.length * 15 + 10 : 50))
   }
 }
 
