@@ -50,7 +50,8 @@ export enum GameMode { Arcade, Hardcore }
 export enum GameOverReason {
   /** A newly spawned/held piece had nowhere to appear — the only cause present in both modes. */
   BlockOut = 'block-out',
-  /** Hardcore: a left/right move was blocked by a wall or by locked cells. */
+  /** Hardcore: a left/right move was stopped by a placed block (the stack). The side wall is
+   *  safe — see A13. The id keeps the historical name 'wall-crash'. */
   HardcoreWallCrash = 'hardcore-wall-crash',
   /** Hardcore: a rotation had no valid position, not even with a wall kick. */
   HardcoreRotationStuck = 'hardcore-rotation-stuck',

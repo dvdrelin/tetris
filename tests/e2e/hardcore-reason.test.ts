@@ -18,69 +18,42 @@ async function startInMode(page: Page, mode: 'Аркадный' | 'Хардко�
 }
 
 test.describe('Hardcore death cause', () => {
-  test('a wall crash in Hardcore reports the cause and explains the Arcade difference', async ({ page }) => {
+  test('walking to the right wall with discrete presses: Hardcore no longer dies there', async ({ page }) => {
     await startInMode(page, 'Хардкор');
-    expect((await getGameState(page)).overReason).toBeNull();
-
-    // The active piece is walked into the right wall: the moves stop being valid, and in Hardcore an
-    // invalid sideways move is instant death. 15 presses is far more than the 4 columns needed for
-    // any piece, and they happen well inside the level-1 gravity interval.
     for (let i = 0; i < 15; i++) await page.keyboard.press('ArrowRight');
 
-    await expect
-      .poll(async () => (await getGameState(page))?.isGameOver, { timeout: 5000 })
-      .toBe(true);
-
     const state = await getGameState(page);
-    expect(state.overReason).toBe('hardcore-wall-crash');
-    // The cause is part of the state the renderer draws, and it is mode-consistent.
+    expect(state.isGameOver).toBe(false); // A13: the side wall is safe in both modes
+    expect(state.isRunning).toBe(true);
+    expect(state.overReason).toBeNull();
     expect(state.mode).toBe(1);
-
-    // No console noise: a designed death must not look like a runtime error.
-    expect(await getErrors(page)).toHaveLength(0);
-    expect(await getWarnings(page)).toHaveLength(0);
+    expect(state.currentPos.x).toBeGreaterThan(0); // the piece really travelled to the wall
+    expect(await getErrors(page)).toEqual([]);
+    expect(await getWarnings(page)).toEqual([]);
   });
 
-  test('a held key spends exactly one lethal attempt: the reason appears once and never changes', async ({ page }) => {
+  test('holding the key against the wall cannot kill and leaves no cause', async ({ page }) => {
     await startInMode(page, 'Хардкор');
-    expect((await getGameState(page)).isGameOver).toBe(false);
-
     // Playwright's `keyboard.down` emits browser auto-repeat keydowns; the app ignores `e.repeat`
-    // (B2) and runs its own DAS/ARR, so the same MovePiece keeps reaching the engine either way.
-    // The first attempt into the wall is fatal (rule A2); the repeats of the same hold must not
-    // rewrite the cause or move the piece anywhere else.
+    // (B2) and runs its own DAS/ARR, so the same MovePiece reaches the engine either way. This is the
+    // exact prod symptom that used to end the run with score 0: a held key against the wall.
     await page.keyboard.down('ArrowRight');
-    await expect
-      .poll(async () => (await getGameState(page))?.isGameOver, { timeout: 5000 })
-      .toBe(true);
-    const first = await getGameState(page);
-    expect(first.overReason).toBe('hardcore-wall-crash');
-    expect(first.mode).toBe(1);
-
-    await page.waitForTimeout(400); // the key is still held: ~12 further MovePiece commands
-    const later = await getGameState(page);
-    expect(later.overReason).toBe('hardcore-wall-crash');
-    expect(later.currentPos).toEqual(first.currentPos);
+    await page.waitForTimeout(900);
+    const held = await getGameState(page);
+    expect(held.isGameOver).toBe(false);
+    expect(held.isRunning).toBe(true);
+    expect(held.overReason).toBeNull();
+    expect(held.currentPos.x).toBeGreaterThan(0);
     await page.keyboard.up('ArrowRight');
 
-    // A fresh game, and this time the key is released as soon as the piece reaches the wall: the
-    // press is the crash, and a deliberate hold of a flush piece cannot kill a second time.
-    await page.keyboard.press('Enter');
-    await expect
-      .poll(async () => (await getGameState(page))?.isRunning, { timeout: 5000 })
-      .toBe(true);
-    expect((await getGameState(page)).overReason).toBeNull();
-
-    await expect
-      .poll(
-        async () => {
-          await page.keyboard.press('ArrowRight');
-          return (await getGameState(page))?.isGameOver;
-        },
-        { timeout: 5000 },
-      )
-      .toBe(true);
-    expect((await getGameState(page)).overReason).toBe('hardcore-wall-crash');
+    // Stepping away and pressing fresh is equally safe: the wall never stops the game.
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    const after = await getGameState(page);
+    expect(after.isGameOver).toBe(false);
+    expect(after.overReason).toBeNull();
+    expect(await getErrors(page)).toEqual([]);
   });
 
   test('the same wall press in Arcade is ignored: no death, no cause', async ({ page }) => {
@@ -95,16 +68,50 @@ test.describe('Hardcore death cause', () => {
     expect(await getErrors(page)).toHaveLength(0);
   });
 
-  test('restart after a Hardcore death clears the cause', async ({ page }) => {
+  test('restart after a Hardcore stack crash clears the cause', async ({ page }) => {
     await startInMode(page, 'Хардкор');
-    for (let i = 0; i < 15; i++) await page.keyboard.press('ArrowRight');
-    await expect.poll(async () => (await getGameState(page))?.isGameOver, { timeout: 5000 }).toBe(true);
+
+    // The wall no longer kills, so the death has to come from the stack. Build a two-level ledge:
+    // three pieces hard-dropped against the right wall, then two a column and a half to the left.
+    // The next piece then walks sideways into the side of the tall column — a real crash. (Piece
+    // types are bag-random, so the push counts are generous: every piece ends flush at the wall.)
+    // Every press must be awaited: an un-awaited ArrowRight can land *after* the following hard
+    // drop, and the "ledge" ends up in the middle of the board instead of against the wall.
+    const press = async (key: string) => {
+      await page.keyboard.press(key);
+    };
+    for (let i = 0; i < 3; i++) {
+      for (let k = 0; k < 8; k++) await press('ArrowRight');
+      await press('Space');
+    }
+    for (let i = 0; i < 2; i++) {
+      for (let k = 0; k < 5; k++) await press('ArrowRight');
+      await press('Space');
+    }
+
+    // Walk a fresh piece sideways while it descends: the moment one of its cells targets a locked
+    // cell, the engine ends the run with the crash cause.
+    let over: boolean | undefined;
+    for (let attempt = 0; attempt < 3 && over !== true; attempt++) {
+      for (let row = 0; row < 18 && over !== true; row++) {
+        await press('ArrowDown');
+        for (let k = 0; k < 3 && over !== true; k++) {
+          await press('ArrowRight');
+          over = (await getGameState(page))?.isGameOver;
+        }
+      }
+      if (over !== true) await press('Space');
+    }
+    expect(over).toBe(true);
     expect((await getGameState(page)).overReason).toBe('hardcore-wall-crash');
 
     await page.keyboard.press('Enter');
-    await expect.poll(async () => (await getGameState(page))?.isRunning, { timeout: 5000 }).toBe(true);
+    await expect
+      .poll(async () => (await getGameState(page))?.isRunning, { timeout: 5000 })
+      .toBe(true);
     const state = await getGameState(page);
     expect(state.isGameOver).toBe(false);
     expect(state.overReason).toBeNull();
+    expect(await getErrors(page)).toEqual([]);
   });
 });

@@ -25,8 +25,8 @@ export const GAME_OVER_TEXT: Record<GameOverReason, { title: string; lines: stri
     lines: ['Стопка дошла до строки спавна.', 'В обоих режимах — обычная смерть.'],
   },
   [GameOverReason.HardcoreWallCrash]: {
-    title: 'СТОЛКНОВЕНИЕ СО СТЕНОЙ',
-    lines: ['Хардкор: ход в стену или в блок', 'убивает. Аркада его игнорирует.'],
+    title: 'СТОЛКНОВЕНИЕ СО СТОПКОЙ',
+    lines: ['Хардкор: ход в фигуру убивает.', 'В стену — можно: как в аркаде.'],
   },
   [GameOverReason.HardcoreRotationStuck]: {
     title: 'ПОВОРОТ НЕКУДА ВЫПОЛНИТЬ',
