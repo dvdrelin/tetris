@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { GameEngine } from '../shared/engine/game-engine'
-import { GameMode, GameState, Particle } from '../shared/domain/types'
+import { GameMode, Particle } from '../shared/domain/types'
 import { AnyCommand, CommandType } from '../shared/cqrs/commands'
 import { GAME_CONFIG } from '../shared/config/game-config'
 
@@ -114,7 +114,9 @@ export const useGameStore = defineStore('game', () => {
   function updateState() {
     if (!engineInstance) return
     const state = engineInstance.getGameState()
-    const ghostY = getGhostY(state)
+    // A7: the ghost row is computed by the engine — the only place a collision rule exists.
+    // The store just carries the number to the renderer; it must not rescan the board itself.
+    const ghostY = engineInstance.getGhostY()
 
     gameState.value = {
       board: state.board.map(row => row.map(cell => cell.value)),
@@ -140,30 +142,6 @@ export const useGameStore = defineStore('game', () => {
       mode: state.mode,
       ghostY,
     }
-  }
-
-  function getGhostY(state: GameState): number {
-    if (!state.currentPiece || !state.currentPos) return -1
-
-    const piece = state.currentPiece
-    let y = state.currentPos.y
-
-    // Move the piece down one row at a time until it can no longer fall.
-    while (true) {
-      let canMoveDown = true
-      for (let r = 0; r < piece.shape.length; r++) {
-        for (let c = 0; c < piece.shape[r].length; c++) {
-          if (!piece.shape[r][c]) continue
-          const boardX = state.currentPos!.x + c
-          const boardY = y + r + 1
-          if (boardY >= state.boardHeight || boardX < 0 || boardX >= state.boardWidth) { canMoveDown = false; break }
-          if (state.board[boardY]?.[boardX]?.value !== 0) { canMoveDown = false; break }
-        }
-      }
-      if (!canMoveDown) break
-      y++
-    }
-    return y
   }
 
   function handleCommand(cmd: AnyCommand) {
@@ -250,6 +228,5 @@ export const useGameStore = defineStore('game', () => {
     getEngine,
     updateParticles,
     spawnParticles,
-    getGhostY,
   }
 })

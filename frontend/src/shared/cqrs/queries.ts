@@ -2,6 +2,7 @@ export enum QueryType {
   GetGameState = 'GetGameState',
   GetNextPiece = 'GetNextPiece',
   GetBoardState = 'GetBoardState',
+  GetGhost = 'GetGhost',
 }
 
 export interface Query {
@@ -21,4 +22,8 @@ export interface BoardStateQuery extends Query {
   type: QueryType.GetBoardState;
 }
 
-export type AnyQuery = GameStateQuery | NextPieceQuery | BoardStateQuery;
+export interface GhostQuery extends Query {
+  type: QueryType.GetGhost;
+}
+
+export type AnyQuery = GameStateQuery | NextPieceQuery | BoardStateQuery | GhostQuery;

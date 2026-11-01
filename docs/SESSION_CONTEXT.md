@@ -325,37 +325,81 @@ MP (старый и новый дизайн) — отдельная тема, б
 - `tick()` обрезает `dt` до `MAX_TICK_DELTA_MS = 250`: ожидание в 400–500 мс в тестах набирается
   несколькими вызовами `tick`, иначе время теряется.
 
+**Блок 4 (коммит `c78ab9f`): управление (B2, B3).** Изменены `shared/input/input-actions.ts`,
+`repeat-controller.ts`, `input-controller.ts`, `touch.ts` (все четыре — новые), `game-config.ts`
+(`DAS_CONFIG = { dasMs: 167, arrMs: 33 }`), `GameView.vue` (слушатели `keydown`/`keyup`, свой rAF-цикл
+ввода, `releaseAll()` на blur/visibilitychange/unmount), `TouchControls.vue` (новый), `HudView.vue`
+(медиа-запрос ≤ 900 px), `stores/gameStore.ts` (метод `handleKey` удалён — второй путь ввода больше
+не нужен); добавлены `tests/unit/input.test.ts` (25 тестов), `tests/e2e/input.test.ts` (7),
+`tests/e2e/touch.test.ts` (4), `tests/e2e/helpers.ts`. Проверялось на этом HEAD:
+`npx.cmd vue-tsc --noEmit` → exit 0, `npx.cmd jest --runInBand` во `frontend/` →
+`9 suites / 173 tests`, в `backend/` → `3 suites / 36 tests`,
+`npx.cmd playwright test --config tests/playwright.config.ts` → `30 passed`. Подробные записи
+о командах и выводе — `docs/SINGLE_PLAYER_DECISIONS.md`, разделы «Проверка блока 4» и
+«Что изменено в коде блока 4». Прод не пересобирался.
+
+**Блок 5 (коммит этого блока): ghost в движке (A7).** `ghostY` больше не считается в сторе:
+в `game-engine.ts` появились приватный `landingRow(piece, from)` (спуск по строкам через
+единственное правило коллизий `isValidPosition`) и публичный `getGhostY()`; `hardDrop()` теперь
+использует `landingRow` (расстояние падения считается до сдвига якоря); в CQRS добавлен
+`QueryType.GetGhost`. Из `stores/gameStore.ts` удалена локальная копия расчёта (23 строки обхода
+доски с проверкой `value !== 0`, которая шла вразрез с правилом `locked`-клеток) и её экспорт;
+`updateState()` читает `engineInstance.getGhostY()`. Контракт с рендерером не менялся: `GameStateDTO.ghostY`
+тот же, дефолт `-1`, `renderer.ts` и `GameBoard.vue` не тронуты. Добавлен
+`frontend/tests/unit/ghost.test.ts` (10 тестов): призрак = точная клетка фиксации hard drop,
+остановка на `locked`-клетке, учёт поворота (`I` горизонталь `H−2` → вертикаль `H−4`) и сдвига,
+`-1` без активной фигуры, эквивалентность soft/hard drop.
+Проверки блока: `npx.cmd vue-tsc --noEmit` → exit 0, `npx.cmd jest --runInBand` во `frontend/` →
+`10 suites / 183 tests`, в `backend/` → `3 suites / 36 tests` и `npx.cmd tsc --noEmit` → exit 0
+(бэкенд не менялся), `npx.cmd playwright test --config tests/playwright.config.ts` → `30 passed (32.3s)`.
+E2E-счёт не вырос: нового браузерного поведения нет, прогон подтверждает целость канала
+`engine → store → renderer`.
+
+**Актуальные цифры тестов на HEAD этого блока: 183 frontend unit (10 сюит) + 36 backend unit
+(3 сюиты) + 30 E2E.** Playwright-конфиг даёт два проекта (`backend` + `frontend`), поэтому
+в выводе прогона 30 строк «ok» — это и есть `30 passed`; исторические «19 passed» в записях
+блоков 2–3 соответствовали тому же полному прогону того времени.
+
 ## Граф проекта (Graphify)
 
 `graphify-out/graph.json` — knowledge-граф этого репозитория, доступен через MCP-сервер
-`graphify-tetris` (`query_graph`, `get_node`, `get_neighbors`, `graph_stats`, `shortest_path`).
-Он уже отражает блок 3: узлы `mechanics.test.ts`, `PIECE_COLOR_INDEX`, `holdPiece()`, `fillQueue()`,
-`isGrounded()`, `onSuccessfulManipulation()`, `RotationState`.
+`graphify-tetris` (`query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`,
+`graph_stats`, `shortest_path`). Актуальное состояние (пересобран на HEAD блока 5):
+**1029 узлов · 1744 ребра · 51 сообщество**, в `GRAPH_REPORT.md` стоит
+`Built from commit` = HEAD. Узлы блока 5: `getGhostY()`, `landingRow()`, `GhostQuery`,
+`ghost.test.ts`.
 
-Обновление графа — **только вручную**, наблюдателей нет. Локальная перезагрузка без LLM
-(без расхода Polza-кредитов):
+Обновление графа — **только вручную**, наблюдателей нет. Бесплатная перезагрузка кода
+(AST + кластеризация + репорт, 0 LLM-вызовов):
 
 ```
-& "C:\Users\dvdre\AppData\Roaming\Python\Python313\Scripts\graphify.exe" C:\GIT\tetris --update --code-only
+graphify update C:\GIT\tetris
 ```
 
-Вывод последней такой перезагрузки: `3 code, 0 docs, 0 papers, 0 images changed; 52 unchanged; 0 deleted`,
-`wrote graph.json: 624 nodes, 1007 edges, 37 communities`, `LASTEXITCODE=0`.
+(в DSH-сессии — через обёртку `C:\Users\dvdre\.dsh\bin\graphify-build.ps1 update C:\GIT\tetris`).
+После `update` сообщества получают механические имена по хабам — дешёвая дозапись имён через Polza:
+пометка изменившихся (`graphify-mark-changed-labels.py` со снапшота `.graphify_labels.json`) и
+`graphify-build.ps1 label C:\GIT\tetris --backend=openai --missing-only`.
+**Не делать:** `graphify <path> --update` и `extract --code-only` — первая форма платная и без
+репорта, вторая останавливается на `graph.json` и не пересобирает `GRAPH_REPORT.md` и имена.
 `graphify-out/` — генерируемый артефакт, в git не попадает (`.gitignore`).
-`GRAPH_REPORT.md` и имена сообществ после `--code-only` не пересобираются: для этого нужен
-`graphify cluster-only C:\GIT\tetris` (требует LLM-бэкенд), по текущему решению — не запускать.
 
 ## Следующий шаг
 
-### Блок 4: управление (B2, B3)
+### Блок 6: UI (C2, C3, C4, C5, C6)
 
-1. **DAS 167 мс / ARR 33 мс** — собственный модуль автоповтора в `frontend/src` (не автоповтор ОС);
-   тесты на фиксированных таймерах jest (`jest.useFakeTimers()`).
-2. **`keyup`-слушатель** в `GameView.vue` + игнор `e.repeat` в `gameStore.handleKey`.
-3. Сохранить текущую карту клавиш (`A`/`D`/`S`/`W`, `↑`/`X`, `Z`/`Q`, `R`, `C`/`Shift`, `Space`, `P`, `Esc`).
-4. **Тач-контролы для мобильных (B3)** — обязательны: кнопки/жесты поверх canvas, чтобы в игру
-   можно было играть с телефона; существующие E2E (19) не должны сломаться.
-5. Тесты на новое поведение — в том же коммите; затем `git commit` + `git push origin main`.
+1. **Кнопка паузы по `isPaused` (C2):** один элемент ⏸/▶ вместо `isRunning && !isGameOver`
+   и недостижимой ветки `▶`.
+2. **Общие подсказки клавиш (C3):** единый `CONTROL_HINTS`, который читают меню и HUD
+   (сейчас в меню написано «↑ / ↓ — Вращение / Сброс», чего в коде нет).
+3. **Имя игрока (C4):** поле ввода + `localStorage`, валидация 1–32 символа (потолок бэкенда);
+   сейчас жёстко `'Игрок'`.
+4. **Заброшенная игра (C5):** `engine.stop()` на `beforeUnmount` в `GameView` — партия без
+   завершения не должна попадать в лидерборд. Метода `stop()` в движке ещё нет, появится в этом блоке.
+5. **Один `init()` (C6):** убрать дублирующий `gameStore.init()` из `MenuView.vue`.
+6. Тесты на новое поведение — в том же коммите; затем `git commit` + `git push origin main`.
 
-Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) — отдельная тема,
-решается на старте MP.
+Блок 7 (бэкенд): `scoreMax` → 10 000 000, rate-limit на `POST /api/score` (429) + деплой
+на ntetris.ddns.net (`bash deploy.sh root ntetris.ddns.net 3000`, проверка `version` в
+`/api/health`). Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) —
+отдельная тема, решается на старте MP.

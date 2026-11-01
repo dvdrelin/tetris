@@ -191,6 +191,8 @@ export class GameEngine {
         return this.getNextPieceType();
       case QueryType.GetBoardState:
         return this.getBoardSnapshot();
+      case QueryType.GetGhost:
+        return this.getGhostY();
       default:
         return null;
     }
@@ -331,10 +333,7 @@ export class GameEngine {
 
   private hardDrop(): void {
     if (!this.currentPiece || !this._isRunning || this._isPaused) return;
-    let dropDist = 0;
-    while (this.isValidPosition(this.currentPiece, { x: this.currentPos.x, y: this.currentPos.y + dropDist + 1 })) {
-      dropDist++;
-    }
+    const dropDist = this.landingRow(this.currentPiece, this.currentPos) - this.currentPos.y;
     this.currentPos.y += dropDist;
     this.score += SCORING_CONFIG.hardDrop * dropDist;
     this.placePiece();
@@ -521,6 +520,26 @@ export class GameEngine {
 
   isValidPosition(piece: Piece, pos: Position): boolean {
     return this.boardManager.isValidPosition(piece, pos);
+  }
+
+  /**
+   * The row the piece would occupy if it fell straight down from `from` — the exact place it
+   * locks on a hard drop. Uses the single collision rule (isValidPosition), so ghost and drop
+   * can never disagree. `from.y` is trusted as a valid placement; a piece already resting
+   * returns its own row.
+   */
+  private landingRow(piece: Piece, from: Position): number {
+    let y = from.y;
+    while (this.isValidPosition(piece, { x: from.x, y: y + 1 })) {
+      y++;
+    }
+    return y;
+  }
+
+  /** Row where the current piece would lock — the only place the ghost position is computed. */
+  getGhostY(): number {
+    if (!this.currentPiece) return -1;
+    return this.landingRow(this.currentPiece, this.currentPos);
   }
 
   // ====== Getters ======

@@ -95,13 +95,16 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │  │              Pinia: gameStore                   │          │
 │  │  gameState(ref) · particles(ref)                │          │
 │  │   • init / startGame / handleCommand            │          │
-│  │   • getGhostY, updateParticles/spawnParticles    │          │
+│  │   • ghostY только читает из движка (A7)         │          │
+│  │   • updateParticles/spawnParticles              │          │
 │  └────┬───────────────────────────────────────────┘          │
 │       │ callbacks: onStateChange / onLineClear / onGameOver   │
 │       ▼                                                        │
 │  ┌──────────────────────── GameEngine (CQRS) ───────────────┐ │
 │  │  handleCommand() → start/move/rotate/hold/drop/tick/pause…  │ │
-│  │  handleQuery()  → getGameState/getNextPiece/getBoardState  │ │
+│  │  handleQuery()  → getGameState/getNextPiece/getBoardState/  │ │
+│  │                    getGhost                                  │ │
+│  │  getGhostY()/landingRow() — единственный расчёт призрака    │ │
 │  │   ├─ BoardManager (сетка, коллизии, clearLines)           │ │
 │  │   ├─ PieceFactoryProvider / PieceFactory (7-bag)          │ │
 │  │   └─ GAME_CONFIG / SCORING_CONFIG (frozen)                │ │
@@ -134,8 +137,8 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   позиции (`isValidPosition`), коллизии (`hasCollision` = `!isValidPosition`, одно правило —
   одна реализация), `clearLines` (удаление заполненных строк),
   `getSnapshot`/`getCells`. **Ghost-расчёта здесь нет** (в предыдущей редакции документа он был
-  приписан `board.ts` ошибочно): позиция ghost вычисляется в Pinia-сторе — `stores/gameStore.ts:145`
-  (`getGhostY`), а движок `ghostY` не заполняет (перенос расчёта в движок — блок 5, A7). Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
+  приписан `board.ts` ошибочно): единственный расчёт — в движке: `GameEngine.landingRow()` + `getGhostY()` (общий шаг с `hardDrop`),
+  Стор и рендерер читают готовое `GameStateDTO.ghostY`. Проверка game-over вынесена в движок (`GameEngine.spawnNextPiece`).
 - **`pieces.ts`** — таблица форм всех 7 фигур (`PIECE_SHAPES`, каждая из 4 ориентаций =
   корректный тетромино по 4 клетки, все — истинные 90°-повороты) + экспортируемый
   **`PIECE_COLOR_INDEX`** (`PieceType` → индекс палитры `CELL_COLORS`; раньше был приватным `COLORS`,
@@ -190,8 +193,8 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 ### 4.4 Pinia + UI
 - **`gameStore.ts`** — мост между UI и движком: держит `gameState` (DTO) и `particles`,
   инстанцирует один `GameEngine`, переводит результат запроса в DTO (`GameStateDTO` включает
-  `nextQueue: string[]`, `holdType: string | null`, `canHold: boolean`), вычисляет позицию
-  «призрачной» фигуры (`getGhostY`). Обработкой клавиатуры стор **больше не занимается** — метод
+  `nextQueue: string[]`, `holdType: string | null`, `canHold: boolean`), читает из движка позицию
+  «призрачной» фигуры (`engine.getGhostY()`), не ведя свою копию обхода доски. Обработкой клавиатуры стор **больше не занимается** — метод
   `handleKey` удалён в блоке 4 сингла, единственный путь ввода — слой `shared/input/` (см. 4.4.1).
 - **4.4.1 Слой ввода `frontend/src/shared/input/` (блок 4 сингла, B1/B2/B3):**
   - `input-actions.ts` — словарь `InputAction` и `KEY_MAP` (клавиша → действие), `HELD_ACTIONS`
@@ -352,7 +355,7 @@ placePiece() → clearLines() > 0
 |---------|--------------------------|
 | CQRS в движке | Чёткое разделение мутаций/чтения; но добавляет обёртку `handlerMap`/switch и касты `any`. |
 | Домен «в frontend» | Логика живёт в UI-проекте, а не вынесена в отдельный пакет. Задуман alias `@shared/*`, но он **не используется** — импорт идёт по относительным путям. |
-| Ghost через вычисление в store | Позиция ghost считалась в Pinia (`getGhostY`); координаты были рассинхронизованы (B2), теперь getGhostY возвращает верхнюю строку приземления — совпадает с размещением в движке. |
+| Ghost через вычисление в store | Позиция ghost считалась в Pinia (`getGhostY`) своей копией проверки коллизий; координаты были рассинхронизованы (B2). С блока 5 (A7) единственная реализация — `GameEngine.landingRow()`/`getGhostY()`, общий шаг с `hardDrop`; стор отдаёт рендереру только число `ghostY`. — совпадает с размещением в движке. |
 | 7-bag рандомизатор | Гарантирует равномерное распределение фигур; реализован вручную (Fisher–Yates). |
 | Файловая persistence вместо БД | Простота; запись теперь атомарная (temp+rename, D3). Зависимости `better-sqlite3`/`uuid` удалены из deps (C3). |
 | WebSocket без маппинга ws→player | Привязка действий/выхода к конкретному сокету была сломана (D1); теперь Map<WebSocket, playerId> — действия и leave корректны. Broadcast всем клиентам сохранён. |
