@@ -67,7 +67,9 @@ tetris/                          (корень monorepo, npm workspaces: fronten
     └── src/
         ├── index.ts             # создание app/httpServer/ws + upgrade-роутинг /ws
         ├── servers/
-        │   └── gameServer.ts    # WebSocket: join/action/leave, broadcast
+        │   └── roomServer.ts    # WebSocket: комнаты, lifecycle, chat, relay piece_lock
+        ├── config/
+        │   └── mpConfig.ts      # транспортные лимиты/тайминги MP (env-перекрытия)
         ├── routes/
         │   └── gameRouter.ts    # REST: POST /score, GET /scores,/leaderboard,/player/:name
         ├── middleware/
@@ -122,7 +124,7 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 │  └──────┬──────┘                                                  │
 │         │ ScoreService                                            │
 │         ▼                                                         │
-│  data/scores.json   ←→   WebSocket gameServer (/ws)              │
+│  data/scores.json   ←→   WebSocket roomServer (/ws)               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -246,8 +248,9 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   пользуется игра. Порядок подключения критичен: `/api/health` → `createGameRouter` →
   `express.static(frontend/dist)` → SPA catch-all `app.get('*')`. Если поставить health
   после статики, `GET /api/health` вернёт HTML вместо JSON.
-- **`gameServer.ts`** — управление сессиями игроков (`players`, `gameStates` maps):
-  обработка сообщений `join / action / leave`, broadcast всем клиентам.
+- **`roomServer.ts`** — мультиплеерные комнаты (MP block B/C): коды комнат, lifecycle
+  `lobby→playing→over`, ready/старт с общим seed, grace/rejoin-токены, чат, лимиты на
+  соединение, ретрансляция `piece_lock` сопернику; heartbeat и `maxPayload` навешаны в `index.ts`.
 - **`scoreService.ts`** — persistence очков в `data/scores.json`: сохранение, топ-очки,
   лидерборд (по игроку/режиму), статистика по игроку; плюс read-only `health()` —
   проверка, что каталог данных существует, `scores.json` парсится как массив
@@ -389,5 +392,6 @@ placePiece() → clearLines() > 0
 - `App.vue` → `MenuView`, `GameView`; `main.ts` → `App`.
 - `gameStore` → `GameEngine`, домен, CQRS, конфиг; управляет движком через callbacks.
 - `GameBoard`/`HudView` → `gameStore.gameState` (watch/ref); `GameBoard` рисует canvas + цикл tick.
+- `RoomView`/`MultiplayerGameView` → `multiplayerStore` (WS-клиент, MP-движок с seed, тени соперников).
 - `GameEngine` → `BoardManager`, `PieceFactoryProvider`, `PIECE_SHAPES`, конфиги, CQRS.
-- Backend: `index.ts` → `GameServer`, `ScoreService`(через router), роутер; `gameRouter` → `ScoreService`.
+- Backend: `index.ts` → `RoomServer`, `ScoreService`(через router), роутер; `gameRouter` → `ScoreService`.

@@ -794,3 +794,41 @@ rate-limit в блоке 7 закрывает оставшийся риск — 
 app-ping 25 с, сверка часов по pong/startTime), `RoomView.vue` (код комнаты, список игроков,
 ready, чат), `MultiplayerGameView.vue` (два стакана + очередь входящего мусора — визуал),
 отправка `piece_lock` из `onPieceLocked` движка. Мусор/атаки считаются на сервере в блоке D.
+
+## Что сделано в мультиплеере, блок C (2026-11-02): фронтенд-мультиплеер
+
+1. **Релей `piece_lock` на сервере** (протокол: `piece_locked` + `PlayerPieceLockPayload`):
+   сервер shape-проверяет репорт (`sanitizeLock`: тип фигуры из 7, координаты, поворот 0..3,
+   lines 0..4), копит `reportedLines` и рассылает **чистый** объект остальным в комнате.
+   `room_created` теперь отдаёт клиенту его `playerId` (из снапшота он не выводится).
+2. **`frontend/src/stores/multiplayerStore.ts`** — WS-клиент комнаты: авто-реконнект с
+   backoff 1→8 с, rejoin по одноразовому токену из localStorage, app-ping каждые
+   `MP_CLIENT_PING_MS`, сверка часов по `pong.serverTs` (`serverNow()`), матч: `game_start` →
+   seeded `GameEngine` + `setTimeout` до общего `startTime`, тик из rAF-цикла вьюхи, каждый
+   lock → `piece_lock` (с `nextType` для чужих панелей), top-out → авто-`surrender`.
+   Перезагрузка страницы посреди матча: rejoin найден, движка нет → честный `surrender`
+   (реплея ещё нет — блок D). `leaveRoom/disconnect` чистят токены.
+3. **Теневые стаканы соперников** — из релеев локальным `BoardManager` (setCells по
+   pieceType+rotation+x/y → clearLines): кадр-в-кадр совпадает с зафиксированными фигурами;
+   пропущенные за обрыв релейные сообщения помечают тень `stale` (долечит gap-fill из D).
+4. **Вьюхи**: `RoomView.vue` (код комнаты по клику в буфер, ростер с host/ready/seat-бейджами,
+   ready/реванш, чат с cool-down, тосты ошибок/событий, панель результатов матча) и
+   `MultiplayerGameView.vue` (свой canvas через общий `renderer.ts` + DOM-сетка соперника,
+   общий обратный отсчёт до `startTime`, кнопка «Сдаться», оверлей результатов). Выход из
+   матча = forfeit сервером (GDD-семантика). Меню: кнопка «👥 МУЛЬТИПЛЕЕР»; App переключает
+   `room ⇄ mp-game` watch-ем фазы комнаты.
+5. **Тесты: FE 258 (17 сюит: +11 multiplayerStore — fake WebSocket, фазы матча, тени, реконнект
+   с rejoin, авто-сдаться после reload, часы), BE 76 (+релей: sanitize/без своего эха/битый
+   репорт), E2E 48 (+2: полный цикл на двух браузерных контекстах — создание/джойн/чат туда-
+   обратно/ready/отсчёт/сдача/результаты в обоих; room_full третьему).** Найден и починен при
+   E2E-отладке реальный баг: `beginMatch` обнулял `match` через `resetMatchLocal()`.
+   Playwright webServer теперь поднимает backend с `MP_START_DELAY_MS=6000` (wide-window для
+   медленных мульти-контекстных шагов). FE-бандл: `index-BM1H8PBp.js` (130 KB, +16 KB gzip ~5).
+
+### Куда дальше (мультиплеер, после C)
+
+Блок D — боёвка по `design.game/02_GAME_CONFIG.json`: сервер считает атаку из `piece_lock`
+(single/double/triple/tetris/perfect_clear, combo-множители, Queue Delay), шлёт `InsertGarbage`
+обеим сторонам; серверный **реплей** партии для верификации репортов (анти-чит и gap-fill
+после реконнекта: досать недостающие globalStep); сертифицированные результаты матчей →
+лидерборд. Быстрые фразы в чате матча (GDD). Затем E — лиги/ spectator / Glicko-2 (вне v1).

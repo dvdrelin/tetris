@@ -1,11 +1,14 @@
 <script lang="ts">
-import { defineComponent, ref, onMounted, onUnmounted } from 'vue'
+import { defineComponent, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useGameStore } from './stores/gameStore'
+import { useMultiplayerStore } from './stores/multiplayerStore'
 import MenuView from './components/MenuView.vue'
 import GameView from './components/GameView.vue'
 import LeaderboardView from './components/LeaderboardView.vue'
+import RoomView from './components/RoomView.vue'
+import MultiplayerGameView from './components/MultiplayerGameView.vue'
 
-type ViewName = 'menu' | 'game' | 'leaderboard'
+type ViewName = 'menu' | 'game' | 'leaderboard' | 'room' | 'mp-game'
 
 interface BgParticle {
   x: number
@@ -24,7 +27,30 @@ export default defineComponent({
   name: 'App',
   setup() {
     const gameStore = useGameStore()
+    const mpStore = useMultiplayerStore()
     const currentView = ref<ViewName>('menu')
+
+    // MP navigation: game_start switches the room screen to the versus board automatically;
+    // leaving a finished match (overlay button / Escape) returns to the room screen.
+    watch(
+      () => mpStore.inMatch,
+      (playing) => {
+        if (playing) currentView.value = 'mp-game'
+      },
+    )
+
+    function showRoom() {
+      currentView.value = 'room'
+    }
+
+    function backToRoom() {
+      currentView.value = 'room'
+    }
+
+    function showMainMenu() {
+      currentView.value = 'menu'
+    }
+
     let bgCanvas: HTMLCanvasElement | null = null
     let bgAnimId: number | null = null
     let bgCtx: CanvasRenderingContext2D | null = null
@@ -34,10 +60,6 @@ export default defineComponent({
 
     function showGame() {
       currentView.value = 'game'
-    }
-
-    function showMainMenu() {
-      currentView.value = 'menu'
     }
 
     function goToLeaderboard() {
@@ -151,6 +173,8 @@ export default defineComponent({
       currentView,
       showGame,
       showMainMenu,
+      showRoom,
+      backToRoom,
       goToLeaderboard,
     }
   },
@@ -158,14 +182,18 @@ export default defineComponent({
     MenuView,
     GameView,
     LeaderboardView,
+    RoomView,
+    MultiplayerGameView,
   },
 })
 </script>
 
 <template>
   <div id="app-root">
-    <MenuView v-if="currentView === 'menu'" @start="showGame" @leaderboard="goToLeaderboard" />
+    <MenuView v-if="currentView === 'menu'" @start="showGame" @leaderboard="goToLeaderboard" @multiplayer="showRoom" />
     <GameView v-else-if="currentView === 'game'" @menu="showMainMenu" />
+    <RoomView v-else-if="currentView === 'room'" @menu="showMainMenu" />
+    <MultiplayerGameView v-else-if="currentView === 'mp-game'" @room="backToRoom" />
     <LeaderboardView v-else @menu="showMainMenu" />
   </div>
 </template>

@@ -1,7 +1,7 @@
 # Фаза 3: Мультиплеер
 
 **Версия:** v1.1
-**Статус:** 🟨 Идёт (блок A завершён 2026-11-02, блок B — сервер комнат — 2026-11-02)
+**Статус:** 🟨 Идёт (блок A — 2026-11-02, блок B (сервер комнат) — 2026-11-02, блок C (MP-фронтенд) — 2026-11-02)
 **Дата:** 2025-09-08 (v1.0) → 2026-11-02 (v1.1)
 
 > **v1.1-уточнение:** реализация идёт по `docs/MP_RECON.md` (решения §6) и `design.game/*`.
@@ -43,7 +43,7 @@ frontend/src/components/
   MultiplayerGameView.vue — PvP-игра
 
 backend/src/servers/
-  gameServer.ts        — room, broadcasting, chat
+  roomServer.ts        — комнаты, lifecycle, broadcasting, chat (пришёл на смену gameServer.ts)
 backend/src/routes/
   gameRouter.ts        — room endpoints
 ```

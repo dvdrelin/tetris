@@ -7,7 +7,7 @@ import { PLAYER_NAME_MAX } from '@neon-tetris/shared/domain/player-name'
 
 export default defineComponent({
   name: 'MenuView',
-  emits: ['start', 'leaderboard'],
+  emits: ['start', 'leaderboard', 'multiplayer'],
   setup(_, { emit }) {
     const gameStore = useGameStore()
     const selectedMode = ref<'arcade' | 'hardcore'>('arcade')
@@ -34,6 +34,11 @@ export default defineComponent({
       emit('leaderboard')
     }
 
+    function goMultiplayer() {
+      commitName()
+      emit('multiplayer')
+    }
+
     return {
       selectedMode,
       hoveredMode,
@@ -44,6 +49,7 @@ export default defineComponent({
       CONTROL_HINTS,
       startGame,
       goToLeaderboard,
+      goMultiplayer,
     }
   },
 })
@@ -103,6 +109,9 @@ export default defineComponent({
     </div>
     <button class="leaderboard-btn" @click="goToLeaderboard">
       <span>🏆 РЕКОРДЫ</span>
+    </button>
+    <button class="multiplayer-btn" data-testid="menu-multiplayer" @click="goMultiplayer">
+      <span>👥 МУЛЬТИПЛЕЕР</span>
     </button>
   </div>
 </template>
@@ -289,6 +298,22 @@ export default defineComponent({
   cursor: pointer;
   transition: all 0.3s ease;
   letter-spacing: 2px;
+}
+
+.multiplayer-btn {
+  background: rgba(255, 0, 255, 0.1);
+  border: 2px solid #ff00ff;
+  border-radius: 12px;
+  padding: 14px 32px;
+  font-size: 16px;
+  font-weight: 900;
+  color: #ff66ff;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  letter-spacing: 2px;
+}
+.multiplayer-btn:hover {
+  box-shadow: 0 0 20px rgba(255, 0, 255, 0.4);
 }
 
 .leaderboard-btn:hover {

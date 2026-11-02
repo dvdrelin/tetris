@@ -18,6 +18,7 @@ import { randomUUID, randomInt } from 'crypto'
 import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
   RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchResult,
+  PieceLockPayload, PieceType,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
@@ -165,7 +166,7 @@ export class RoomServer {
     this.rooms.set(code, room)
     this.send(ws, {
       type: ServerMsgType.RoomCreated,
-      payload: { room: this.snapshot(room), token: slot.token },
+      payload: { room: this.snapshot(room), token: slot.token, playerId: slot.id },
     })
   }
 
@@ -191,7 +192,7 @@ export class RoomServer {
     const slot = this.addPlayer(room, ws, normalizePlayerName(payload?.name), false)
     this.send(ws, {
       type: ServerMsgType.RoomCreated, // joiner gets the same envelope: room + personal token
-      payload: { room: this.snapshot(room), token: slot.token },
+      payload: { room: this.snapshot(room), token: slot.token, playerId: slot.id },
     })
     this.broadcast(room, ws, { type: ServerMsgType.PlayerJoined, payload: { player: this.ref(slot) } })
     this.broadcastSnapshot(room)
@@ -224,7 +225,7 @@ export class RoomServer {
     slot.token = randomUUID() // rotate: the old token never works twice
     this.send(ws, {
       type: ServerMsgType.RoomCreated,
-      payload: { room: this.snapshot(room), token: slot.token },
+      payload: { room: this.snapshot(room), token: slot.token, playerId: slot.id },
     })
     this.broadcastSnapshot(room)
   }
@@ -304,9 +305,11 @@ export class RoomServer {
   /**
    * Block B posture: the server collects what clients report but does not judge it — the
    * piece_lock replay validation (GDD §2.3 anti-desync) is block D. Counters feed the
-   * placement rows of MatchResult.
+   * placement rows of MatchResult. Since block C the lock is also relayed (sanitized) to the
+   * opponents: shadow boards are reconstructed from placements + line clears, never from the
+   * reporting client's raw object.
    */
-  private pieceLock(ws: ClientSocket, payload: { linesCleared?: number } | undefined): void {
+  private pieceLock(ws: ClientSocket, payload: Partial<PieceLockPayload> | undefined): void {
     const ctx = this.requirePlayer(ws)
     if (!ctx) return
     const { room, slot } = ctx
@@ -314,10 +317,16 @@ export class RoomServer {
       this.sendError(ws, MpErrorCode.BadPhase, 'No match is running')
       return
     }
-    const lines = payload?.linesCleared
-    if (typeof lines === 'number' && Number.isInteger(lines) && lines >= 0 && lines <= 4) {
-      slot.reportedLines += lines
+    const lock = sanitizeLock(payload)
+    if (!lock) {
+      this.violate(ws, { code: MpErrorCode.BadRequest, message: 'Malformed piece_lock payload' })
+      return
     }
+    slot.reportedLines += lock.linesCleared
+    this.broadcast(room, ws, {
+      type: ServerMsgType.PieceLockedRelay,
+      payload: { playerId: slot.id, lock },
+    })
   }
 
   private pong(ws: ClientSocket, clientTs: unknown): void {
@@ -547,4 +556,29 @@ export class RoomServer {
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, Math.floor(value)))
+}
+
+const PIECE_TYPE_SET = new Set<string>(['I', 'O', 'T', 'S', 'Z', 'J', 'L'])
+
+/** Shape-checks a reported lock and rebuilds a clean payload (never relay the raw object). */
+function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLockPayload | null {
+  if (!payload) return null
+  const { globalStep, pieceType, x, y, rotation, linesCleared, nextType } = payload
+  if (!Number.isInteger(globalStep) || (globalStep as number) < 1) return null
+  if (typeof pieceType !== 'string' || !PIECE_TYPE_SET.has(pieceType)) return null
+  if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 12) return null
+  if (!Number.isInteger(y) || (y as number) < 0 || (y as number) > 30) return null
+  if (!Number.isInteger(rotation) || (rotation as number) < 0 || (rotation as number) > 3) return null
+  if (!Number.isInteger(linesCleared) || (linesCleared as number) < 0 || (linesCleared as number) > 4) return null
+  if (nextType !== undefined && (typeof nextType !== 'string' || !PIECE_TYPE_SET.has(nextType))) return null
+  const clean: PieceLockPayload = {
+    globalStep: globalStep as number,
+    pieceType: pieceType as PieceType,
+    x: x as number,
+    y: y as number,
+    rotation: rotation as number,
+    linesCleared: linesCleared as number,
+  }
+  if (nextType !== undefined) clean.nextType = nextType as PieceType
+  return clean
 }

@@ -15,7 +15,9 @@ export default defineConfig({
   // They are started automatically; an already running dev server is reused.
   webServer: [
     {
-      command: 'npm run dev:backend',
+      // MP E2E needs a comfortable countdown window (multi-context Playwright steps are slow);
+      // the room server reads MP_START_DELAY_MS from the environment (mpConfig).
+      command: 'set MP_START_DELAY_MS=6000&& set MP_CHAT_COOLDOWN_MS=200&& npm run dev:backend',
       port: 3000,
       reuseExistingServer: true,
       timeout: 120000,

@@ -58,6 +58,8 @@ export interface PieceLockPayload {
   y: number;
   rotation: number;
   linesCleared: number;
+  /** Visual-only: the piece this player will spawn next (opponent panels). Never affects rules. */
+  nextType?: PieceType;
 }
 
 export interface PingPayload {
@@ -85,6 +87,7 @@ export enum ServerMsgType {
   PlayerLeft = 'player_left',
   ChatMessage = 'chat_message',
   GameStart = 'game_start', // per-recipient: the shared seed + this player's index
+  PieceLockedRelay = 'piece_locked', // one player's lock forwarded to the opponents (shadow boards)
   MatchOver = 'match_over',
   Pong = 'pong',
   Error = 'error',
@@ -115,6 +118,8 @@ export interface RoomCreatedPayload {
   room: RoomSnapshot;
   /** Rejoin token, issued to this socket only (never broadcast). */
   token: string;
+  /** The joiner's own player id — the client cannot derive it from the snapshot. */
+  playerId: string;
 }
 
 export interface RoomSnapshotPayload {
@@ -150,6 +155,13 @@ export interface GameStartPayload {
 }
 
 export type MatchOverReason = 'surrender' | 'forfeit' | 'survival' | 'points';
+
+// One player's lock, relayed to the opponents so they can draw a shadow board: the receiver
+// replays the placement (pieceType+rotation at x/y, then line clears) on a local BoardManager.
+export interface PlayerPieceLockPayload {
+  playerId: string;
+  lock: PieceLockPayload;
+}
 
 export interface MatchResult {
   playerId: string;
@@ -196,6 +208,7 @@ export type ServerMessage =
   | { type: ServerMsgType.PlayerLeft; payload: PlayerLeftPayload }
   | { type: ServerMsgType.ChatMessage; payload: ChatMessagePayload }
   | { type: ServerMsgType.GameStart; payload: GameStartPayload }
+  | { type: ServerMsgType.PieceLockedRelay; payload: PlayerPieceLockPayload }
   | { type: ServerMsgType.MatchOver; payload: MatchOverPayload }
   | { type: ServerMsgType.Pong; payload: PongPayload }
   | { type: ServerMsgType.Error; payload: MpErrorPayload };

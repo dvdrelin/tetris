@@ -300,6 +300,24 @@ describe('surrender, rematch and forfeit-by-leave', () => {
     expect(loser.lines).toBe(4)
   })
 
+  test('a valid lock is relayed (sanitized) to the opponent; a malformed one is rejected outright', () => {
+    const { server, host, guest } = startedMatch()
+    guest.emitMessage({
+      type: ClientMsgType.PieceLock,
+      payload: { globalStep: 7, pieceType: 'I', x: 3, y: 19, rotation: 1, linesCleared: 1, nextType: 'O', injected: 'junk' },
+    })
+    const relay = host.ws.lastOf(ServerMsgType.PieceLockedRelay)
+    expect(relay.payload.playerId).toBeDefined()
+    expect(relay.payload.lock).toEqual({ globalStep: 7, pieceType: 'I', x: 3, y: 19, rotation: 1, linesCleared: 1, nextType: 'O' })
+    // The reporter never receives its own relay back.
+    expect(guest.of(ServerMsgType.PieceLockedRelay)).toHaveLength(0)
+
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: { globalStep: 8, pieceType: 'WTF', x: 3, y: 19, rotation: 0, linesCleared: 0 } })
+    expect(guest.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.BadRequest)
+    expect(host.of(ServerMsgType.PieceLockedRelay)).toHaveLength(1) // no second relay
+    void server
+  })
+
   test('surrender outside a running match is refused', () => {
     const { guest } = startedMatch()
     guest.emitMessage({ type: ClientMsgType.Surrender })
