@@ -335,7 +335,11 @@ export class RoomServer {
     const ctx = this.requirePlayer(ws)
     if (!ctx) return
     const { room, slot } = ctx
-    this.matchLog.event(room.code, 'leave_room', slot.id)
+    this.matchLog.event(room.code, 'leave_room', slot.id, {
+      seat: slot.playerIndex,
+      name: slot.name,
+      phase: room.phase,
+    })
     this.socketToPlayer.delete(ws)
     if (room.phase === 'playing') {
       // Walking out mid-match is a forfeit (same verdict as surrender, different reason).
@@ -468,7 +472,10 @@ export class RoomServer {
       // reading every line; the full `snapshot` is written on a rejection and every Nth lock, so a
       // divergence has a board to compare against right where it starts.
       const rejected = !verdict.accepted
-      const extra = (payload ?? {}) as { trace?: PieceTrace; diag?: ClientDiagPayload }
+      const extra = (payload ?? {}) as { trace?: PieceTrace; diag?: ClientDiagPayload; held?: string | null; sentAt?: number }
+      // Задержка в одну сторону: наши часы минус клиентская метка минус его же оценка смещения.
+      const clockGuess = typeof extra.diag?.clockOffsetMs === 'number' ? extra.diag.clockOffsetMs : 0
+      const oneWayMs = typeof extra.sentAt === 'number' ? Math.round(this.now() - (extra.sentAt + clockGuess)) : undefined
       this.matchLog.event(room.code, 'piece_lock', slot.id, {
         lock,
         accepted: verdict.accepted,
@@ -478,8 +485,21 @@ export class RoomServer {
         // именно таким (каким киком доехал до стены, сколько ходов было в кольце перевыдачи).
         ...(extra.trace ? { trace: extra.trace } : {}),
         ...(extra.diag ? { diag: extra.diag } : {}),
+        ...(typeof extra.held !== 'undefined' ? { held: extra.held } : {}),
+        ...(oneWayMs !== undefined ? { oneWayMs } : {}),
         ...(verdict.accepted ? {} : { violation: verdict.violation }),
       })
+      // Зеркало хола: наше и клиентское. Расхождение — почти всегда наша ошибка в букинге
+      // `holdExtra`, и молчать о ней нельзя: ломается учёт колоды, а за ним и все вердикты реплея.
+      const mirror = state.holdMirror(slot.id)
+      if (mirror && typeof extra.held !== 'undefined' && (extra.held ?? null) !== mirror.held) {
+        this.matchLog.event(room.code, 'hold_desync', slot.id, {
+          step: lock.globalStep,
+          client: extra.held ?? null,
+          server: mirror.held,
+          spawned: mirror.spawned,
+        })
+      }
       // What the server actually generated against the opponents (and what it ate with counteract):
       // without these lines a replay regenerates garbage from its own RNG stream and drifts, which
       // later reads as "the player lied" — the 5QBH post-mortem.
@@ -543,6 +563,9 @@ export class RoomServer {
       deadline,
       digest: this.matchStates.get(room.code)?.boardDigest(slot.id),
       transport: ws.transportStats ?? null,
+      // Сколько всего кадров сервер от этого клиента уже принял: по нему видно, что пропущенный отчёт
+      // — это потеря в пути, а не «клиент его не отправлял».
+      framesIn: this.counters(ws).msgsIn,
     })
     this.send(ws, { type: ServerMsgType.ResyncRequest, payload: { ...gap, deadline } })
     const timer = setTimeout(() => {
@@ -737,7 +760,15 @@ export class RoomServer {
       score: 0,
       lines: state?.certifiedLines(p.id) ?? p.reportedLines,
     }))
-    this.matchLog.event(room.code, 'match_over', winner?.id, { reason, detail, winnerId: winner?.id ?? null, results })
+    this.matchLog.event(room.code, 'match_over', winner?.id, {
+      reason,
+      detail,
+      winnerId: winner?.id ?? null,
+      results,
+      // Расход RNG матчем: офлайн-реплей сверяет свой. Разница чисел = поток генератора разошёлся,
+      // и значит содержимое мусорки в реплее не то, что видел матч (не вина игроков).
+      ...(state ? { rngCalls: state.rngUsage } : {}),
+    })
     this.matchLog.close(room.code, { reason, detail, winnerId: winner?.id ?? null })
     for (const p of alive) {
       // `detail` rides to both seats: each of them renders its own point of view of the same event.
@@ -874,6 +905,15 @@ export class RoomServer {
     }
     room.players.push(slot)
     this.socketToPlayer.set(ws, { code: room.code, playerId: slot.id })
+    // Место занято — пишем сразу (до матча файл ещё не открыт, лог-стор догонит его в заголовке):
+    // «кто и из какого билда зашёл в лобби» иначе не восстановить вообще.
+    this.matchLog.event(room.code, 'seat_joined', slot.id, {
+      seat: slot.playerIndex,
+      name: slot.name,
+      host,
+      phase: room.phase,
+      client: slot.client?.app ?? null,
+    })
     return slot
   }
 

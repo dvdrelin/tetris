@@ -39,6 +39,8 @@ export interface PieceLockInfo {
   totalLines: number;
   combo: number;
   trace?: PieceTrace;
+  /** Что лежало в hold-слоте в момент лока (null = слот пуст). Для сверки с зеркалом сервера. */
+  heldType?: PieceType | null;
 }
 
 // Result of an applied InsertGarbage command (also the server's `attack_apply` evidence).
@@ -695,6 +697,7 @@ export class GameEngine {
         rotations: this.traceRotations.slice(0, TRACED_ROTATIONS),
         ...(this.traceRotations.length > TRACED_ROTATIONS ? { more: this.traceRotations.length - TRACED_ROTATIONS } : {}),
       },
+      heldType: this.holdType ?? null,
     });
 
     // Next piece: spawnNextPiece pulls from the queue and refills it.

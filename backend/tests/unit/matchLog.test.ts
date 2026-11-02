@@ -144,7 +144,8 @@ describe('the MP log API', () => {
   function app(token?: string) {
     const store = new MatchLogStore({ dir })
     store.startMatch({ code: 'API1', seed: 11, startTime: 0, players: [{ playerId: 'p1', name: 'A', playerIndex: 0 }] })
-    store.event('API1', 'piece_lock', 'p1', { lock: { globalStep: 1, pieceType: 'I', x: 3, y: 17, rotation: 0, linesCleared: 0, garbageRows: 0 }, accepted: true })
+    store.event('API1', 'piece_lock', 'p1', { lock: { globalStep: 1, pieceType: 'I', x: 3, y: 17, rotation: 0, linesCleared: 0, garbageRows: 0, nextType: 'O' }, accepted: true })
+    store.event('API1', 'garbage_scheduled', 'p1', { victimId: 'p2', applyAt: 5, rows: [[1, 1, 0, 0, 0, 0, 0, 0, 0, 0]] })
     const expressApp = express()
     expressApp.use('/api/mp', createMpLogRouter(store, { adminToken: token }))
     return { expressApp, store }
@@ -163,26 +164,48 @@ describe('the MP log API', () => {
     expect((await request(expressApp).get('/api/mp/matches?token=nope').set('authorization', 'Bearer nope')).status).toBe(401)
   })
 
-  test('the index, the raw JSONL and the replay bundle are all readable with the token', async () => {
+  test('a live match is served with its future hidden; a finished one is served whole', async () => {
     const { expressApp, store } = app('s3cret')
     const list = await request(expressApp).get('/api/mp/matches?token=s3cret')
     expect(list.status).toBe(200)
     const file = list.body.matches[0].file
-    expect(list.body.matches[0]).toMatchObject({ code: 'API1', seed: 11, events: 2 })
+    // Матч ещё идёт: seed = будущая колода обеих сторон, следующая фигура и состав мусорных рядов —
+    // это подглядывание в чужую игру, а не отчёт о сыгранном.
+    expect(list.body.matches[0]).toMatchObject({ code: 'API1', seed: null, events: 3 })
 
     const raw = await request(expressApp).get(`/api/mp/matches/${file}`).set('authorization', 'Bearer s3cret')
     expect(raw.status).toBe(200)
-    expect(raw.headers['content-type']).toContain('text/plain')
-    expect(raw.text.split('\n').filter(Boolean)).toHaveLength(2)
+    expect(raw.headers['x-mp-redacted']).toContain('match_live')
+    const liveLines = raw.text.split('\n').filter(Boolean)
+    expect(liveLines[0]).not.toContain('"seed":11')
+    expect(liveLines[1]).not.toContain('nextType')
+    expect(liveLines[2]).not.toContain('[[1,1')
+    expect(liveLines[2]).toContain('"rowsCount":1')
+    expect(liveLines[liveLines.length - 1]).toContain('log_redacted')
 
     const replay = await request(expressApp).get(`/api/mp/matches/${file}/replay?token=s3cret`)
     expect(replay.status).toBe(200)
-    expect(replay.body.seed).toBe(11)
+    expect(replay.body.seed).toBe(0)
+    expect(replay.body.redacted).toBe('match_live')
+    expect(replay.body.scheduled).toEqual([])
     expect(replay.body.locks[0]).toMatchObject({ pieceType: 'I', playerId: 'p1' })
+    expect(JSON.stringify(replay.body.locks[0])).not.toContain('nextType')
+    expect((await request(expressApp).get(`/api/mp/matches/${file}?token=s3cret&format=json`)).body.redacted).toBe('match_live')
 
-    expect((await request(expressApp).get(`/api/mp/matches/${file}?token=s3cret&format=json`)).body.lines[0].event).toBe('match_start')
+    // Матч закрыт — наружу уходит то же, что лежит на диске: сыгранный матч надо уметь разобрать целиком.
+    store.close('API1', { reason: 'surrender', detail: 'button', winnerId: 'p1' })
+    const closed = await request(expressApp).get('/api/mp/matches?token=s3cret')
+    expect(closed.body.matches.find((m: { file: string }) => m.file === file)).toMatchObject({ seed: 11, closed: true })
+    const whole = await request(expressApp).get(`/api/mp/matches/${file}`).set('authorization', 'Bearer s3cret')
+    expect(whole.headers['x-mp-redacted']).toBeUndefined()
+    expect(whole.text).toContain('"seed":11')
+    expect(whole.text).toContain('nextType')
+    expect(whole.text).toContain('[[1,1')
+    expect(whole.text).not.toContain('log_redacted')
+    const wholeReplay = await request(expressApp).get(`/api/mp/matches/${file}/replay?token=s3cret`)
+    expect(wholeReplay.body.seed).toBe(11)
+    expect(wholeReplay.body.scheduled[0]).toMatchObject({ victimId: 'p2', rows: [[1, 1, 0, 0, 0, 0, 0, 0, 0, 0]] })
     expect((await request(expressApp).get('/api/mp/matches/nope.jsonl?token=s3cret')).status).toBe(400)
-    void store
   })
 })
 
@@ -317,5 +340,61 @@ describe('a played match leaves the whole story in the log', () => {
     expect(bundle.scheduled).toEqual([{ attackerId: 'p1', victimId: 'p2', applyAt: 1400, rows: [[1, 0, 1]] }])
     expect(bundle.cancelled).toEqual([{ playerId: 'p2', by: 'counteract', count: 1 }])
     expect(bundle.events.map((e) => e.event)).toEqual(['garbage_scheduled', 'garbage_cancelled'])
+  })
+
+  test('жизнь комнаты до первого матча не теряется: она догоняет заголовок следующего матча', () => {
+    const store = new MatchLogStore({ dir, now: () => 900 })
+    // Пока матча нет, файла нет — но «кто зашёл и куда делся в лобби» как раз и объясняет жалобы
+    // вида «меня выбросило из комнаты». Такие строки копятся и въезжают в заголовок.
+    store.event('LR42', 'seat_joined', 'p1', { seat: 0, name: 'А', phase: 'lobby' })
+    store.event('LR42', 'socket_closed', 'p1', { phase: 'lobby', stale: false })
+    expect(store.list()).toHaveLength(0)
+    store.startMatch({ code: 'LR42', seed: 2, startTime: 900, players: [{ playerId: 'p1', name: 'А', playerIndex: 0 }] })
+    const entry = store.list()[0]
+    const startLine = store.readLines(entry.file)[0]
+    expect((startLine.data as { prematch?: { event: string }[] }).prematch?.map((p) => p.event)).toEqual(['seat_joined', 'socket_closed'])
+    expect(store.readBundle(entry.file)!.events.map((e) => e.event)).toEqual(['seat_joined', 'socket_closed'])
+  })
+
+  test('лог хранит, что держал игрок в момент лока, и отдельно замечает, что зеркало хола разошлось', () => {
+    jest.useFakeTimers()
+    try {
+      let clock = 3_000_000
+      const now = () => clock
+      const store = new MatchLogStore({ dir, now })
+      const server = new RoomServer({ now, graceMs: 5_000, seed: () => 777, matchLog: store })
+      const host = new FakeSocket()
+      const guest = new FakeSocket()
+      server.handleConnection(host)
+      server.handleConnection(guest)
+      host.emitMessage({ type: ClientMsgType.CreateRoom, payload: { name: 'Хост' } })
+      const code = host.lastOf(ServerMsgType.RoomCreated).payload.room.code
+      guest.emitMessage({ type: ClientMsgType.JoinRoom, payload: { code, name: 'Гость' } })
+      guest.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+      host.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+
+      clock += 30
+      guest.emitMessage({
+        type: ClientMsgType.PieceLock,
+        payload: {
+          globalStep: 1, pieceType: 'Z', x: 0, y: 18, rotation: 0, linesCleared: 0, garbageRows: 0,
+          // Клиент говорит, что у него в холе J; наше зеркало держит null.
+          held: 'J',
+          // Кадру 25 мс по часам клиента, у сервера те же часы: в одну сторону — ровно 25 мс.
+          sentAt: clock - 25,
+        },
+      })
+
+      const lines = store.readLines(store.list()[0].file)
+      const lockLine = lines.find((l) => l.event === 'piece_lock')!
+      // Вердикт здесь не важен: эти поля пишутся при любом исходе кадра — состояние клиента нужно
+      // видеть и в бракованном отчёте тоже.
+      expect(lockLine.data).toMatchObject({ held: 'J', oneWayMs: 25 })
+      const desync = lines.find((l) => l.event === 'hold_desync')!
+      expect(desync.data).toMatchObject({ step: 1, client: 'J', server: null })
+      expect((desync.data as { spawned: string }).spawned).toBeTruthy()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

@@ -38,6 +38,11 @@ export interface MatchStartRecord {
  */
 export const MATCH_LOG_SCHEMA = 3
 
+/** Жизнь комнаты до первого матча: эти строки буферизуются и попадают в заголовок следующего файла. */
+const PREMATCH_EVENTS = new Set([
+  'seat_joined', 'seat_rejoined', 'seat_removed_left', 'grace_expired', 'leave_room', 'socket_closed',
+])
+
 export interface MatchLogLine {
   t: number
   room: string
@@ -120,6 +125,10 @@ export interface ReplayBundle {
   verdicts: ReplayVerdict[]
   ends: { reason: string; detail?: string; winnerId: string | null; t: number }[]
   events: { t: number; event: string; playerId?: string; data?: unknown }[]
+  /** Расход RNG, записанный сервером (сверка потока в офлайн-реплее). */
+  rngCalls?: number
+  /** Set when the match was still running when the log was read: seed and garbage contents are hidden. */
+  redacted?: string
 }
 
 export interface ReplayScheduled {
@@ -202,6 +211,12 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
     ends: [],
     events: [],
   }
+  // Жизнь комнаты до матча (кто заходил и выходил, пока все были в лобби) лежит в заголовке —
+  // вытаскиваем её в тот же таймлайн, иначе «меня выбросило из комнаты» снова нечем объяснить.
+  const pre = (start.data as { prematch?: MatchLogLine[] } | undefined)?.prematch
+  if (Array.isArray(pre)) {
+    for (const p of pre) bundle.events.push({ t: p.t, event: p.event, playerId: p.playerId, data: p.data })
+  }
   for (const line of lines) {
     const { event, playerId, t } = line
     if (event === 'piece_lock') {
@@ -267,13 +282,93 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
         bundle.garbage.push({ targetId: playerId ?? '', applyAt: 0, groups: d.groups })
       }
     } else if (event === 'match_over') {
-      const d = line.data as { reason?: string; detail?: string; winnerId?: string | null } | undefined
+      const d = line.data as { reason?: string; detail?: string; winnerId?: string | null; rngCalls?: number } | undefined
       bundle.ends.push({ reason: d?.reason ?? '', detail: d?.detail, winnerId: d?.winnerId ?? null, t })
+      if (typeof d?.rngCalls === 'number') bundle.rngCalls = d.rngCalls
     } else if (event !== 'match_start') {
       bundle.events.push({ t, event, playerId, data: line.data })
     }
   }
+  // Прематчевые строки старше матча: таймлайн обязан быть по времени, а не по порядку вставки.
+  bundle.events.sort((a, b) => a.t - b.t)
   return bundle
+}
+
+/**
+ * Пока матч идёт, лог нельзя отдавать целиком: в нём `seed` (значит и вся будущая колода — она в
+ * этом режиме общая на матч), `nextType` у каждого лока и содержимое мусорных рядов, в том числе
+ * ещё не прилетевших атак. Всё это — подглядывание в чужую игру, а не отчёт о сыгранном.
+ * Файл на диске остаётся полным (иначе живой матч нельзя точно разобрать позже), маскируется только
+ * то, что уходит через API.
+ */
+const GARBAGE_LINE_EVENTS = new Set(['garbage_scheduled', 'garbage_delivered', 'garbage_cancelled', 'garbage_applied', 'rejoin'])
+
+function maskRowContents(data: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...data }
+  if (Array.isArray(out.rows)) {
+    out.rowsCount = (out.rows as unknown[]).length
+    delete out.rows
+  }
+  if (Array.isArray(out.groups)) {
+    out.groupsCount = (out.groups as unknown[]).length
+    delete out.groups
+  }
+  if (Array.isArray(out.arrivals)) {
+    out.arrivals = (out.arrivals as { applyAt?: number; rows?: unknown[] }[]).map((a) => ({
+      applyAt: a.applyAt,
+      rowsCount: Array.isArray(a.rows) ? a.rows.length : 0,
+    }))
+  }
+  if (Array.isArray(out.pendingGarbage)) {
+    out.pendingGarbage = (out.pendingGarbage as { applyAt?: number; rows?: number }[]).map((p) => ({ applyAt: p.applyAt, rows: p.rows }))
+  }
+  delete out.content
+  return out
+}
+
+export function redactLiveMatchLines(lines: MatchLogLine[]): MatchLogLine[] {
+  const out = lines.map((line) => {
+    if (line.event === 'match_start') {
+      const d = (line.data ?? {}) as Record<string, unknown>
+      return { ...line, data: { ...d, seed: null } }
+    }
+    if (line.event === 'piece_lock') {
+      const d = (line.data ?? {}) as { lock?: Record<string, unknown> }
+      if (!d.lock) return line
+      const lock = { ...d.lock }
+      delete lock.nextType
+      return { ...line, data: { ...d, lock } }
+    }
+    if (GARBAGE_LINE_EVENTS.has(line.event)) {
+      return { ...line, data: maskRowContents((line.data ?? {}) as Record<string, unknown>) }
+    }
+    return line
+  })
+  const room = lines[0]?.room ?? ''
+  out.push({
+    t: lines[lines.length - 1]?.t ?? 0,
+    room,
+    event: 'log_redacted',
+    data: { reason: 'match_live', hidden: ['seed', 'nextType', 'contents of garbage rows'] },
+  })
+  return out
+}
+
+export function redactLiveBundle(bundle: ReplayBundle): ReplayBundle {
+  return {
+    ...bundle,
+    seed: 0,
+    locks: bundle.locks.map((l) => {
+      const rest = { ...l } as Record<string, unknown>
+      delete rest.nextType
+      return rest as unknown as typeof l
+    }),
+    // Без seed'а и содержимого рядов точный реплей невозможен — лучше пустые массивы и честное
+    // предупреждение в инструменте, чем прогон, который потом «обвинит» игроков в чужом overlap.
+    garbage: [],
+    scheduled: [],
+    redacted: 'match_live',
+  }
 }
 
 /**
@@ -319,6 +414,12 @@ export class MatchLogStore {
   private bootId: string
   /** Время последней записанной строки на файл — ради `dt` (интервалы читаются глазами плохо). */
   private lastLineT = new Map<string, number>()
+  /**
+   * Жизнь комнаты до первого матча: файл матча ещё не открыт, а «кто когда зашёл и вышел, пока все
+   * в лобби» — ровно то, что объясняет «меня выбросило из комнаты» и историю с токеном на вкладку.
+   * Буфер догоняется в заголовке следующего матча этого кода.
+   */
+  private prematch = new Map<string, MatchLogLine[]>()
 
   constructor(options: MatchLogOptions = {}) {
     this.dir = options.dir ?? DEFAULT_DIR
@@ -360,12 +461,20 @@ export class MatchLogStore {
     this.index.set(key, entry)
     this.openByRoom.set(record.code, key)
     this.ensureDir()
+    const preLines = this.prematch.get(record.code) ?? []
+    this.prematch.delete(record.code)
     this.append(file, {
       t: startedAt,
       room: record.code,
       event: 'match_start',
       schema: MATCH_LOG_SCHEMA,
-      data: { seed: record.seed, startTime: record.startTime, players: record.players, config: record.config ?? null },
+      data: {
+        seed: record.seed,
+        startTime: record.startTime,
+        players: record.players,
+        config: record.config ?? null,
+        ...(preLines.length ? { prematch: preLines } : {}),
+      },
     }, entry)
     this.prune()
     return key
@@ -379,10 +488,24 @@ export class MatchLogStore {
   event(code: string, event: string, playerId?: string, data?: unknown): void {
     if (!this.enabled) return
     const key = this.openByRoom.get(code)
-    if (!key) return
-    const entry = this.index.get(key)
-    if (!entry) return
+    const entry = key ? this.index.get(key) : undefined
+    if (!entry) {
+      // Матча ещё нет, а жизнь комнаты уже интересна: копим её в буфер и догоняем в заголовке.
+      if (!PREMATCH_EVENTS.has(event)) return
+      const list = this.prematch.get(code) ?? []
+      list.push({ t: this.now(), room: code, event, playerId, data })
+      this.prematch.set(code, list.slice(-12))
+      return
+    }
     this.append(entry.file, { t: this.now(), room: code, event, playerId, data }, entry)
+  }
+
+  /** Есть ли у этого файла уже запись о конце матча (по нему API решает, что показывать можно). */
+  isClosed(file: string): boolean {
+    if (!isSafeLogFileName(file)) return false
+    const entry = this.findEntryByFile(file)
+    if (entry) return entry.closed
+    return this.readLines(file).some((l) => l.event === 'match_closed' || l.event === 'match_over')
   }
 
   close(code: string, verdict?: { reason: string; detail?: string; winnerId: string | null }): void {
@@ -403,6 +526,7 @@ export class MatchLogStore {
   /** Forget the current file for a room without writing anything (room deleted). */
   forget(code: string): void {
     this.openByRoom.delete(code)
+    this.prematch.delete(code)
   }
 
   // ====== reading (for the API and the CLI tool) ======

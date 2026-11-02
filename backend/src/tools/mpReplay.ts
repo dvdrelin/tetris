@@ -31,10 +31,12 @@ interface Options {
   ascii: number
   heights: boolean
   all: boolean
+  /** Один экран выводов вместо ленты локов: где разошлось, кто потерял отчёт, как был канал. */
+  diagnose: boolean
 }
 
 function parseArgs(argv: string[]): Options | null {
-  const opts: Options = { file: '', player: '', steps: Number.POSITIVE_INFINITY, ascii: 0, heights: false, all: false }
+  const opts: Options = { file: '', player: '', steps: Number.POSITIVE_INFINITY, ascii: 0, heights: false, all: false, diagnose: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--player') opts.player = argv[++i] ?? ''
@@ -42,6 +44,7 @@ function parseArgs(argv: string[]): Options | null {
     else if (arg === '--ascii') opts.ascii = Number(argv[++i])
     else if (arg === '--heights') opts.heights = true
     else if (arg === '--all') opts.all = true
+    else if (arg === '--diagnose') opts.diagnose = true
     else if (!opts.file) opts.file = arg
     else return null
   }
@@ -190,7 +193,7 @@ function main(): number {
     }
     const applied = fresh.appliedGarbage.reduce((n, g) => n + g.length, 0)
     const extra = opts.heights ? `  height=${stackHeight(state, lock.playerId)} lines=${state.certifiedLines(lock.playerId)}` : ''
-    console.log(`${tag}  ok${applied ? `  (+${applied} garbage rows absorbed)` : ''}${extra}`)
+    if (!opts.diagnose) console.log(`${tag}  ok${applied ? `  (+${applied} garbage rows absorbed)` : ''}${extra}`)
     const want = loggedDigests.get(`${lock.playerId}:${lock.globalStep}`)
     if (want && !firstDigestMismatch) {
       digestsChecked += 1
@@ -217,6 +220,16 @@ function main(): number {
     for (const c of bundle.cancelled) by.set(c.by, (by.get(c.by) ?? 0) + c.count)
     console.log(`мусорки не дошло до клиентов: ${[...by].map(([k, v]) => `${k} ${v} р.`).join(', ')}`)
   }
+  if (typeof bundle.rngCalls === 'number') {
+    const mine = state.rngUsage
+    console.log(bundle.rngCalls === mine
+      ? `расход RNG: ${mine} значений — совпал с матчем`
+      : `⚠ расход RNG: сервер ${bundle.rngCalls}, реплей ${mine} — поток генератора разошёлся, значит содержимое мусорки в реплее не то, что видел матч (это не вина игроков)`)
+  }
+  if (bundle.redacted) {
+    console.log('⚠ этот лог был взят у ИДУЩЕГО матча: seed и содержимое мусорных рядов скрыты (лог живого матча = подглядывание в чужую игру). Точный реплей — только после конца матча.')
+  }
+  if (opts.diagnose) console.log('\n' + diagnose(bundle, { processed, digestsChecked, firstDigestMismatch, rowsDiffer }))
   if (divergence) {
     console.log(`DIVERGED after ${processed} locks: the fresh replay rejected a lock the live match accepted.`)
     console.log('Compare the board above with the client report — this is where the two views split.')
@@ -225,7 +238,7 @@ function main(): number {
   console.log(`replay agrees with the live server over ${processed} locks`)
   for (const end of bundle.ends) console.log(`end: ${end.reason}${end.detail ? `/${end.detail}` : ''} winner=${end.winnerId?.slice(0, 8) ?? 'none'}`)
   const nonLockEvents = bundle.events.filter((e) => e.event !== 'match_start')
-  if (nonLockEvents.length) {
+  if (nonLockEvents.length && !opts.diagnose) {
     console.log('\ntimeline:')
     for (const e of nonLockEvents) {
       const offset = ((e.t - bundle.startedAt) / 1000).toFixed(1).padStart(7, ' ')
@@ -233,6 +246,83 @@ function main(): number {
     }
   }
   return 0
+}
+
+/**
+ * Один экран вместо ленты локов: кто чем дышал, целы ли шаги, что случилось с мусоркой и каналом,
+ * где первое расхождение. Именно это нужно, чтобы начать разбор матча с гипотезы, а не с чтения 40
+ * строк глазами.
+ */
+function diagnose(
+  bundle: ReplayBundle,
+  facts: { processed: number; digestsChecked: number; firstDigestMismatch: string | null; rowsDiffer: boolean },
+): string {
+  const ev = bundle.events
+  const at = (t: number) => `+${((t - bundle.startedAt) / 1000).toFixed(1)}s`
+  const name = (id?: string | null): string => {
+    if (!id) return '?'
+    const p = bundle.players.find((x) => x.playerId === id)
+    return p ? `${p.name}#${p.playerIndex}` : id.slice(0, 8)
+  }
+  const L: string[] = ['—— диагноз ——']
+  L.push(`состав: ${bundle.players.map((p) => `${p.name}#${p.playerIndex} [${p.client ?? 'билд не сообщался'}]`).join(' | ')}`)
+
+  // Шаги: пропуск своего шага = потерянный отчёт, а не читерство.
+  for (const p of bundle.players) {
+    const steps = bundle.locks.filter((l) => l.playerId === p.playerId).map((l) => l.globalStep).sort((a, b) => a - b)
+    const max = steps.length ? steps[steps.length - 1] : 0
+    const holes: number[] = []
+    for (let s = 1; s <= max; s++) if (!steps.includes(s)) holes.push(s)
+    L.push(`шаги ${p.name}: локов ${steps.length}, последний шаг ${max}${holes.length ? `, ПРОПУСКИ: ${holes.join(',')}` : ', пропусков нет'}`)
+  }
+
+  const resync = ev.filter((e) => e.event.startsWith('resync'))
+  L.push(resync.length
+    ? `ресинхрон: ${resync.map((e) => `${at(e.t)} ${e.event.replace('resync_', '')} ${name(e.playerId)}`).join('; ')}`
+    : 'ресинхрон: эпизодов не было')
+
+  const violations = ev.filter((e) => e.event === 'protocol_violation')
+  if (violations.length) {
+    L.push(`нарушения протокола: ${violations.map((e) => `${at(e.t)} ${name(e.playerId)} ${(e.data as { code?: string })?.code ?? ''}`).join('; ')}`)
+  }
+  const malformed = ev.filter((e) => e.event === 'malformed_lock')
+  if (malformed.length) {
+    L.push(`неразбираемых отчётов: ${malformed.map((e) => `${at(e.t)} ${name(e.playerId)} ${JSON.stringify((e.data as { field?: string; value?: string }) ?? {})}`).join('; ')}`)
+  }
+  const hold = ev.filter((e) => e.event === 'hold_desync')
+  if (hold.length) L.push(`⚠ зеркало хола расходилось ${hold.length} раз(а): ${hold.map((e) => `${at(e.t)} ${name(e.playerId)} ${JSON.stringify(e.data)}`).join('; ')}`)
+
+  const schedRows = (bundle.scheduled ?? []).reduce((n, s) => n + s.rows.length, 0)
+  const delivRows = (bundle.garbage ?? []).reduce((n, g) => n + g.groups.reduce((m, gr) => m + gr.length, 0), 0)
+  const cancelled = new Map<string, number>()
+  for (const c of bundle.cancelled ?? []) cancelled.set(c.by, (cancelled.get(c.by) ?? 0) + c.count)
+  L.push(`мусорка: сгенерировано ${schedRows} р., выдано ${delivRows} р.` + (cancelled.size ? `, не дошло: ${[...cancelled].map(([k, v]) => `${k} ${v}`).join(', ')}` : ''))
+
+  const closes = ev.filter((e) => e.event === 'socket_closed')
+  for (const c of closes) {
+    const d = (c.data ?? {}) as { transport?: { pingsSent?: number; pingsLost?: number; lastPongRttMs?: number | null }; phase?: string }
+    L.push(`разрыв ${at(c.t)} ${name(c.playerId)}: фаза ${d.phase ?? '?'}, транспорт ${JSON.stringify(d.transport ?? null)}`)
+  }
+  const rtts = bundle.locks
+    .map((l) => (l.diag as { rttMs?: number } | undefined)?.rttMs)
+    .filter((x): x is number => typeof x === 'number')
+  if (rtts.length) {
+    const sorted = [...rtts].sort((a, b) => a - b)
+    L.push(`RTT клиента: медиана ${sorted[Math.floor(sorted.length / 2)]} мс, максимум ${sorted[sorted.length - 1]} мс (${rtts.length} отчётов)`)
+  }
+
+  L.push(facts.firstDigestMismatch
+    ? `⚠ первое расхождение досок: ${facts.firstDigestMismatch} (сверено ${facts.digestsChecked} кадров)`
+    : facts.digestsChecked
+      ? `доски: ${facts.digestsChecked} отпечатков, все совпали`
+      : 'доски: отпечатков в логе нет (лог старше schema 3)')
+  if (facts.rowsDiffer) L.push('⚠ содержимое мусорных рядов в реплее разошлось с матчем — вердикты после этого ориентировочные')
+  if (typeof bundle.rngCalls === 'number') {
+    L.push(`расход RNG матча: ${bundle.rngCalls}`)
+  }
+  L.push(`прогнано реплеем: ${facts.processed} локов`)
+  L.push(`итог: ${bundle.ends.map((e) => `${e.reason}${e.detail ? `/${e.detail}` : ''}, победитель ${e.winnerId ? name(e.winnerId) : 'нет'}`).join('; ') || 'матч не завершён в логе'}`)
+  return L.join('\n')
 }
 
 /**

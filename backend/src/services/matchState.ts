@@ -83,6 +83,8 @@ interface SimPlayer {
 export class MatchState {
   private sims = new Map<string, SimPlayer>()
   private readonly now: () => number
+  /** Сколько значений RNG матч уже потратил (сверка потока в офлайн-реплее). */
+  private rngUsed = 0
   private readonly rng: () => number
   private readonly verify: boolean
 
@@ -98,7 +100,13 @@ export class MatchState {
     verify = true,
   ) {
     this.now = now
-    this.rng = rng
+    // Каждый вызов RNG считается: лог матча несёт это число, и офлайн-реплей сверяет свой расход с
+    // серверным. Разница = поток генератора разошёлся, и значит содержимое мусорки в реплее не то,
+    // что видел матч (об этом надо сказать прямо, а не выдавать `overlap` за вину игрока).
+    this.rng = () => {
+      this.rngUsed += 1
+      return rng()
+    }
     this.verify = verify
     for (const id of playerIds) {
       const factory = new PieceFactoryProvider({ seed })
@@ -206,6 +214,21 @@ export class MatchState {
 
   certifiedLines(playerId: string): number | null {
     return this.sims.get(playerId)?.linesCleared ?? null
+  }
+
+  /** Расход RNG этим матчем: пишется в лог, офлайн-реплей сверяет свой. */
+  get rngUsage(): number {
+    return this.rngUsed
+  }
+
+  /**
+   * Зеркало колоды/хола сервера для одного места: по нему видно, совпадает ли учёт hold с клиентом.
+   * Расхождение — не обвинение: почти всегда это наша ошибка в зеркале, и молчать о ней нельзя.
+   */
+  holdMirror(playerId: string): { spawned: string | null; held: string | null } | null {
+    if (!this.verify) return null
+    const sp = this.sims.get(playerId)
+    return sp ? { spawned: sp.spawned, held: sp.held } : null
   }
 
   /** How many locks this player has through the replay so far (the next expected step is +1). */

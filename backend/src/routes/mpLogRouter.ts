@@ -14,7 +14,7 @@
  */
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import type { MatchLogStore } from '../services/matchLog'
-import { isSafeLogFileName } from '../services/matchLog'
+import { isSafeLogFileName, redactLiveMatchLines, redactLiveBundle } from '../services/matchLog'
 
 export interface MpLogRouterOptions {
   /** The shared secret; empty/undefined disables the whole API. */
@@ -47,7 +47,9 @@ export function createMpLogRouter(store: MatchLogStore, options: MpLogRouterOpti
   })
 
   router.get('/matches', (_req: Request, res: Response) => {
-    res.json({ directory: store.directory, matches: store.list() })
+    // Идущий матч: seed = будущая колода обеих сторон, в списке его быть не должно.
+    const matches = store.list().map((m) => (m.closed ? m : { ...m, seed: null }))
+    res.json({ directory: store.directory, matches })
   })
 
   router.get('/matches/:file', (req: Request, res: Response) => {
@@ -56,13 +58,18 @@ export function createMpLogRouter(store: MatchLogStore, options: MpLogRouterOpti
       res.status(400).json({ error: 'bad_file_name', hint: 'use a name from GET /api/mp/matches' })
       return
     }
-    const lines = store.readLines(file)
+    let lines = store.readLines(file)
     if (!lines.length) {
       res.status(404).json({ error: 'match_not_found' })
       return
     }
+    const live = !store.isClosed(file)
+    if (live) {
+      lines = redactLiveMatchLines(lines)
+      res.set('X-MP-Redacted', 'match_live: seed, nextType, garbage row contents')
+    }
     if (req.query.format === 'json') {
-      res.json({ file, lines })
+      res.json({ file, lines, ...(live ? { redacted: 'match_live' } : {}) })
       return
     }
     res.type('text/plain').send(`${lines.map((l) => JSON.stringify(l)).join('\n')}\n`)
@@ -74,10 +81,15 @@ export function createMpLogRouter(store: MatchLogStore, options: MpLogRouterOpti
       res.status(400).json({ error: 'bad_file_name', hint: 'use a name from GET /api/mp/matches' })
       return
     }
-    const bundle = store.readBundle(file)
+    let bundle = store.readBundle(file)
     if (!bundle) {
       res.status(404).json({ error: 'match_not_found' })
       return
+    }
+    const live = !store.isClosed(file)
+    if (live) {
+      bundle = redactLiveBundle(bundle)
+      res.set('X-MP-Redacted', 'match_live: seed, nextType, garbage row contents')
     }
     res.json({ file, ...bundle })
   })

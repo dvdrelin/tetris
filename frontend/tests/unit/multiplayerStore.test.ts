@@ -204,6 +204,10 @@ describe('match lifecycle', () => {
         rotations: expect.any(Array),
       })
       expect(locks[0].payload.diag).toMatchObject({ ring: expect.any(Number), resync: 0, clockOffsetMs: expect.any(Number) })
+      // Зеркало хола и метка времени едут в каждом отчёте: сервер по ним видит, что учёт колоды у
+      // обеих сторон одинаков и сколько кадр шёл в одну сторону.
+      expect(locks[0].payload.held).toBeNull()
+      expect(typeof locks[0].payload.sentAt).toBe('number')
       store.leaveRoom()
     } finally {
       jest.useRealTimers()
