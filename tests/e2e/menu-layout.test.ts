@@ -79,6 +79,22 @@ test('wide window: identity on top, вход/выходы in the left half, кл
   }
 })
 
+test('wide window: подписи режимов умещаются в одну строку, ряд карточек без лесенки', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } })
+  const page = await ctx.newPage()
+  try {
+    await openMenu(page)
+    const descs = await page.locator('.mode-desc').all()
+    expect(descs).toHaveLength(2)
+    const heights: number[] = []
+    for (const d of descs) heights.push((await d.boundingBox())!.height)
+    for (const h of heights) expect(h, 'подпись режима — одна строка').toBeLessThan(26)
+    expect(Math.abs(heights[0] - heights[1]), 'обе подписи одной высоты').toBeLessThanOrEqual(1)
+  } finally {
+    await ctx.close()
+  }
+})
+
 test('narrow window: blocks stack in the readable order A → B → D → C', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 760, height: 1024 } })
   const page = await ctx.newPage()
