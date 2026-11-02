@@ -37,9 +37,10 @@ COPY shared/ ./shared/
 RUN cd shared && npx tsc -p tsconfig.json
 
 # Copy frontend source and build
+# scripts/app-version.cjs first: vite.config.mts requires it at build time (define
+# __APP_VERSION__). APP_VERSION env (build arg) makes the bundle carry the exact deploy string.
+COPY scripts/ ./scripts/
 COPY frontend/ ./frontend/
-# APP_VERSION env: vite.config.mts stamps scripts/app-version.cjs into the bundle
-# (define __APP_VERSION__ — the version chip in the menu corner).
 RUN cd frontend && npm install && APP_VERSION=$APP_VERSION npx vite build
 
 # Copy backend source and build
