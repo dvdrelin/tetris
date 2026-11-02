@@ -1024,3 +1024,16 @@ FE 269/269 (было 260): +7 в `multiplayerStore.test.ts` (счётчик в `
 +1 кейс «рука движка = порядок pull'ов фабрики того же сида». Harness'ы `mechanics.test.ts` и
 `ui-block6.test.ts` переведены на инжект фабрики через конструктор.
 E2E 49/49 зелёные. `tsc` shared/backend чистые, `vue-tsc` чистый.
+
+### Деплой
+
+Коммит `3948aa9` выложен на ntetris.ddns.net (`& 'C:\Program Files\Git\bin\bash.exe'
+/c/GIT/tetris/deploy.sh root ntetris.ddns.net 3000`, 2026-11-02):
+`APP_VERSION = 2.26.11.3948aa9`; `https://…/` → 200; `/api/health` → 200 и
+`version = 2.26.11.3948aa9` (совпало с ожиданием — образ из этого коммита); бандл
+`assets/index-Cd3GFe2m.js`, sha256 «отдаётся == в образе» =
+`937d355a8b2d7dd07ac1c161b4c2d96270c6f4f0e8852cb962bebe129e9ebd9f`; внутренний
+`GET :3000/api/health` из контейнера — `ok`, `websocket.checks: {path:/ws, clients:0,
+mpRooms:0, mpPlayers:0}`. Протокол менялся (новый `garbageRows`, `garbage_applied`,
+`opponent_dropped`, `surrender.cause`, причина `topout`) — клиент и сервер в проде всегда
+из одного образа, разноверсионных пар не бывает.
