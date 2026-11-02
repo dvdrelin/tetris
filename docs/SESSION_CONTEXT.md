@@ -1155,5 +1155,20 @@ socket_closed Alice (phase over), затем Bob
 
 ### Деплой этого раунда
 
-(заполняется сразу после выкладки)
+Коммит `ea4be26` выложен (`bash deploy.sh root ntetris.ddns.net 3000`, 2026-11-02):
+`APP_VERSION = 2.26.11.ea4be26`, `/api/health` → `version = 2.26.11.ea4be26`, бандл
+`assets/index-CGke6oV1.js` (sha256 `63b40d32…1df2c` — «отдаётся == в образе»). Живой бандл
+содержит новые формулировки (`выгружена браузером` ×2 — обе ветки «reload»).
+
+Серверный `.env` создан впервые: `/opt/neon-tetris/.env` (0600, `MP_ADMIN_TOKEN`,
+`MP_LOGS=1`, `MP_LOG_MAX_FILES=300`). rsync теперь обходит `.env` (`--exclude=.env`).
+Токен для локальных выборок лежит в `mp-logs/admin-token.txt` (не в git).
+
+Проверка на проде живым матчем (одноразовый зонд `tmp-audit/prod-mp-probe.mjs`, комната UE3C):
+два WS-клиента создали комнату, сыграли и сдались → сервер записал
+`/app/backend/data/mp-matches/2026-11-02-UE3C-1793632076710.jsonl` (6 событий).
+Через `GET /api/mp/matches` (Bearer) индекс отдаёт матч с сидом и вердиктом, `…/:file` — JSONL,
+`npm run mp:logs -- --tail` скачивает его в `mp-logs/`, `npm run mp:replay` прогоняет файл и
+печатает таймлайн: `+1.2s surrender (claimedCause button)`, `match_closed`, `leave_room`.
+Без токена `GET /api/mp/matches` отвечает 401 (токен задан), без токена в окружении — 503.
 
