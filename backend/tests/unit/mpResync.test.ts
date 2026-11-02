@@ -85,7 +85,7 @@ function playRoom(store: MatchLogStore) {
   const bot = new MiniBot(seed)
   const sendLock = (lock: PieceLockPayload) =>
     guest.emitMessage({ type: ClientMsgType.PieceLock, payload: lock })
-  return { server, host, guest, bot, sendLock }
+  return { server, host, guest, bot, sendLock, code }
 }
 
 test('a missing report is repaired by retransmission, not by a forfeit', () => {
@@ -153,6 +153,77 @@ test('a huge jump or a step going backwards is still a hard cheat verdict', () =
     sendLock({ ...bot.locks[0], globalStep: MP_CONFIG.resyncMaxGap + 5 })
     expect(guest.of(ServerMsgType.ResyncRequest)).toEqual([])
     expect(guest.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.InvalidMove)
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test('an unparseable report says which field broke — to the client and into the match log', () => {
+  jest.useFakeTimers()
+  try {
+    const store = new MatchLogStore({ dir, now })
+    const { guest, bot, sendLock } = playRoom(store)
+    bot.play(2)
+    sendLock(bot.locks[0]) // step 1 is fine
+    // The PRA4 shape: a report the server could not parse at all. Before this test the answer to
+    // "which field, exactly?" was unobtainable, and the player was told they had cheated.
+    sendLock({ ...bot.locks[1], x: -1 })
+    const err = guest.lastOf(ServerMsgType.Error)
+    expect(err.payload).toMatchObject({
+      code: MpErrorCode.BadRequest,
+      field: 'x',
+      value: '-1',
+      step: bot.locks[1].globalStep,
+    })
+    expect(err.payload.message).toContain('x=-1')
+    // A report we cannot read is a bug report, not a cheat: the socket and the match stay alive.
+    expect(guest.of(ServerMsgType.MatchOver)).toEqual([])
+    expect(guest.terminated).toBe(false)
+    sendLock(bot.locks[1]) // the honest retry lands, sequence continues
+    expect(guest.of(ServerMsgType.ResyncRequest)).toEqual([])
+
+    const lines = store.readLines(store.list()[0]!.file)
+    const broken = lines.find((l) => l.event === 'malformed_lock')
+    expect(broken?.data).toMatchObject({ field: 'x', value: '-1', step: bot.locks[1].globalStep })
+    expect(String(broken?.data.raw)).toContain('"x":-1')
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test('a player whose seat was removed after a technical forfeit can join the room again', () => {
+  jest.useFakeTimers()
+  try {
+    const store = new MatchLogStore({ dir, now })
+    const { server, host, guest, bot, sendLock, code } = playRoom(store)
+
+    // While the match runs, the room is closed to newcomers — that rule stays.
+    const watcher = new FakeSocket()
+    server.handleConnection(watcher)
+    watcher.emitMessage({ type: ClientMsgType.JoinRoom, payload: { code, name: 'Зритель' } })
+    expect(watcher.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.BadPhase)
+
+    // Burn the match down to a technical forfeit: the seat is removed and the socket terminated.
+    bot.play(2)
+    sendLock(bot.locks[0])
+    sendLock({ ...bot.locks[1], globalStep: bot.locks[1].globalStep + 2 })
+    clock += MP_CONFIG.resyncGraceMs + 1
+    jest.advanceTimersByTime(MP_CONFIG.resyncGraceMs + 1)
+    expect(guest.lastOf(ServerMsgType.MatchOver).payload.detail).toBe('invalid_move')
+
+    // PRA4 dead end: the loser pressed «В комнату», lost the ticket, then tried to enter by code and
+    // was refused because the room stood in `over`. A free seat in a finished room must be joinable —
+    // and pressing «Готов» there reopens the lobby for everyone.
+    const back = new FakeSocket()
+    server.handleConnection(back)
+    back.emitMessage({ type: ClientMsgType.JoinRoom, payload: { code, name: 'Проигравший' } })
+    const created = back.lastOf(ServerMsgType.RoomCreated)
+    expect(created).toBeTruthy()
+    expect(created.payload.room.phase).toBe('over')
+    expect(created.payload.room.players.map((p: { name: string }) => p.name)).toEqual(['Хост', 'Проигравший'])
+
+    back.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+    expect(host.lastOf(ServerMsgType.RoomSnapshot).payload.room.phase).toBe('lobby')
   } finally {
     jest.useRealTimers()
   }

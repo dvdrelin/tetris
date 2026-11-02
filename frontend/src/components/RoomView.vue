@@ -78,8 +78,9 @@ export default defineComponent({
     <div v-if="!mp.room" class="room-join">
       <h2 class="mp-title">МУЛЬТИПЛЕЕР</h2>
       <div v-if="mp.lostRoomCode" class="mp-error mp-error-lost" data-testid="mp-lost-room">
-        Мы вышли из комнаты {{ mp.lostRoomCode }}: место забрала другая вкладка, комната закрылась
-        или сервер перезапустился. Введи код заново — состав и чат уже не те.
+        Мы потеряли место в комнате {{ mp.lostRoomCode }}: матч был закрыт, комната обновилась или
+        место заняло другое окно. Введите код заново — попадёте в ту же комнату, если в ней ещё есть
+        свободное место (состав и чат могут быть другими).
       </div>
       <div v-if="!mp.connected" class="mp-hint">Подключение…</div>
       <div class="join-row">

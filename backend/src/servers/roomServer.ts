@@ -18,7 +18,7 @@ import { randomUUID, randomInt } from 'crypto'
 import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
   RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchOverDetail, MatchResult,
-  PieceLockPayload, PieceType, ConnTestPayload, ConnTestAckPayload, ConnTransportStats,
+  PieceLockPayload, PieceType, ConnTestPayload, ConnTestAckPayload, ConnTransportStats, MpErrorPayload,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
@@ -225,7 +225,12 @@ export class RoomServer {
       this.sendError(ws, MpErrorCode.RoomNotFound, 'No room with this code')
       return
     }
-    if (room.phase !== 'lobby') {
+    // Joining is open in the lobby *and* in the `over` phase. A player whose match ended on a
+    // technical forfeit has his seat removed and his socket terminated, so before this the room was
+    // closed to him until the host pressed «Готов» — the loser's only way back was to build a new
+    // room (that is the PRA4 dead end). In `over` a joiner takes a free seat, sees the results and
+    // can press «Готов» himself: `setReady` reopens the lobby for everyone.
+    if (room.phase === 'playing') {
       this.sendError(ws, MpErrorCode.BadPhase, 'The match is already running')
       return
     }
@@ -414,9 +419,21 @@ export class RoomServer {
       this.sendError(ws, MpErrorCode.BadPhase, 'No match is running')
       return
     }
-    const lock = sanitizeLock(payload)
+    const { lock, problem } = sanitizeLock(payload)
     if (!lock) {
-      this.violate(ws, { code: MpErrorCode.BadRequest, message: 'Malformed piece_lock payload' })
+      const detail = problem ? `${problem.field}=${problem.value}${problem.step !== undefined ? ` (шаг ${problem.step})` : ''}` : 'нет тела'
+      // The raw frame goes to the match log next to the reason: this is the only place where an
+      // unparseable report can be told apart from a lost one, and it is what the next replay of a
+      // "mystery forfeit" is read from.
+      this.matchLog.event(room.code, 'malformed_lock', slot.id, {
+        ...(problem ?? {}),
+        raw: payload === undefined ? 'нет тела' : JSON.stringify(payload).slice(0, 600),
+      })
+      this.violate(ws, {
+        code: MpErrorCode.BadRequest,
+        message: `Malformed piece_lock payload: ${detail}`,
+        ...(problem ?? {}),
+      })
       return
     }
     const state = this.matchStates.get(room.code)
@@ -827,7 +844,7 @@ export class RoomServer {
   }
 
   /** Protocol abuse: answer once, count, and drop the socket when the client keeps misbehaving. */
-  private violate(ws: ClientSocket, error: { code: MpErrorCode; message: string }): void {
+  private violate(ws: ClientSocket, error: MpErrorPayload): void {
     const ctx = this.socketToPlayer.get(ws)
     // Until now a protocol violation left no trace at all — the EX8H hunt had to guess that a
     // malformed report was even possible. A malformed `piece_lock` returns before the lock event,
@@ -876,19 +893,42 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
 const PIECE_TYPE_SET = new Set<string>(['I', 'O', 'T', 'S', 'Z', 'J', 'L'])
 
 /** Shape-checks a reported lock and rebuilds a clean payload (never relay the raw object). */
-function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLockPayload | null {
-  if (!payload) return null
+/** The first field of a `piece_lock` report that failed the shape check, and what it carried. */
+interface LockProblem {
+  field: string
+  value: string
+  step?: number
+}
+
+/**
+ * Shape check for an inbound `piece_lock`. Returns the clean lock, or the first offending field
+ * with the value it carried: a rejected report and a lost report look identical in the log unless
+ * we say *why* it was rejected — that missing answer is what made PRA4 (and before it EX8H)
+ * unanswerable. The reason travels to the client too, so a player can tell us about it.
+ */
+function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): { lock: PieceLockPayload | null; problem?: LockProblem } {
+  const show = (v: unknown): string => {
+    if (v === undefined) return 'нет поля'
+    if (v === null) return 'null'
+    if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return `${v}`
+    return Array.isArray(v) ? 'array' : typeof v
+  }
+  const rawStep = typeof payload?.globalStep === 'number' ? payload.globalStep : undefined
+  const bad = (field: string, value: unknown): { lock: null; problem: LockProblem } =>
+    ({ lock: null, problem: { field, value: show(value), ...(rawStep !== undefined ? { step: rawStep } : {}) } })
+
+  if (!payload || typeof payload !== 'object') return bad('payload', payload)
   const { globalStep, pieceType, x, y, rotation, linesCleared, nextType, garbageRows } = payload
-  if (!Number.isInteger(globalStep) || (globalStep as number) < 1) return null
-  if (typeof pieceType !== 'string' || !PIECE_TYPE_SET.has(pieceType)) return null
-  if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 12) return null
-  if (!Number.isInteger(y) || (y as number) < 0 || (y as number) > 30) return null
-  if (!Number.isInteger(rotation) || (rotation as number) < 0 || (rotation as number) > 3) return null
-  if (!Number.isInteger(linesCleared) || (linesCleared as number) < 0 || (linesCleared as number) > 4) return null
-  if (nextType !== undefined && (typeof nextType !== 'string' || !PIECE_TYPE_SET.has(nextType))) return null
+  if (!Number.isInteger(globalStep) || (globalStep as number) < 1) return bad('globalStep', globalStep)
+  if (typeof pieceType !== 'string' || !PIECE_TYPE_SET.has(pieceType)) return bad('pieceType', pieceType)
+  if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 12) return bad('x', x)
+  if (!Number.isInteger(y) || (y as number) < 0 || (y as number) > 30) return bad('y', y)
+  if (!Number.isInteger(rotation) || (rotation as number) < 0 || (rotation as number) > 3) return bad('rotation', rotation)
+  if (!Number.isInteger(linesCleared) || (linesCleared as number) < 0 || (linesCleared as number) > 4) return bad('linesCleared', linesCleared)
+  if (nextType !== undefined && (typeof nextType !== 'string' || !PIECE_TYPE_SET.has(nextType))) return bad('nextType', nextType)
   // Garbage counter: a bounded monotonic integer. MatchState clamps it to rows it actually handed
   // out, so an inflated number cannot buy a cheater anything — a negative or fractional one can.
-  if (garbageRows !== undefined && (!Number.isInteger(garbageRows) || (garbageRows as number) < 0 || (garbageRows as number) > 4096)) return null
+  if (garbageRows !== undefined && (!Number.isInteger(garbageRows) || (garbageRows as number) < 0 || (garbageRows as number) > 4096)) return bad('garbageRows', garbageRows)
   const clean: PieceLockPayload = {
     globalStep: globalStep as number,
     pieceType: pieceType as PieceType,
@@ -900,5 +940,5 @@ function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLock
   if (nextType !== undefined) clean.nextType = nextType as PieceType
   if (garbageRows !== undefined) clean.garbageRows = garbageRows as number
   if (payload.holdExtra === true) clean.holdExtra = true
-  return clean
+  return { lock: clean }
 }

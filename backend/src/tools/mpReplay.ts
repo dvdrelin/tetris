@@ -116,6 +116,11 @@ function main(): number {
     // Reuse the recorded wall-clock gaps: MatchState schedules garbage on a clock, so the replay
     // keeps the same rhythm (that is what makes "did the sweep beat the lock?" reproducible).
     fakeNow = Math.max(fakeNow, lock.t)
+    // The live server hands scheduled garbage out on its own 250 ms sweep (`sweepGarbage` →
+    // `takeDueArrivals`), and `applyReportedGarbage` only absorbs rows that were *handed out*.
+    // Without this step the replay board never receives them, so any lock resting on an incoming
+    // garbage row turns into a bogus "floating" rejection — a PRA4 replay blamed the players for it.
+    for (const p of bundle.players) state.takeDueArrivals(p.playerId, fakeNow)
     const payload = {
       globalStep: lock.globalStep,
       pieceType: lock.pieceType,

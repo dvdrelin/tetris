@@ -76,6 +76,12 @@ export default defineComponent({
         case 'disconnect':
           return 'Соперник потерял связь и не вернулся в матч за отведённое время'
         case 'invalid_move':
+          // A report the server could not *parse* is a different animal from a move that failed the
+          // replay: the PRA4 post-mortem showed a client-side payload bug being reported to the player
+          // as an anticheat rejection. Name the field, and do not call the player a cheater.
+          if (mp.lockRejected) {
+            return `Сервер не смог разобрать ваш отчёт о ходе ${mp.lockRejected.step}: поле ${mp.lockRejected.field} = ${mp.lockRejected.value}. Матч закрыт из-за рассинхронизации отчётов, это ошибка приложения — сообщите нам код матча`
+          }
           return mp.invalidMoveSeen
             ? 'Сервер отклонил ваш ход (он не совпал с его реплеем) — матч закрыт'
             : 'Ход соперника не совпал с серверным реплеем — матч закрыт анти-читом'
@@ -261,6 +267,10 @@ export default defineComponent({
       </div>
       <div v-else-if="mp.dropNotice" class="mp-banner" data-testid="mp-drop-notice">
         {{ mp.dropNotice.name }} потерял связь<span v-if="dropCountdown !== null"> — ждём возврата ещё {{ dropCountdown }} с</span>
+      </div>
+      <div v-if="mp.lockRejected && !mp.matchOverInfo" class="mp-banner mp-banner-warn" data-testid="mp-lock-rejected">
+        Сервер не смог разобрать ваш отчёт о ходе {{ mp.lockRejected.step }} (поле {{ mp.lockRejected.field }}
+        = {{ mp.lockRejected.value }}). Матч будет закрыт — это ошибка приложения, а не ваша.
       </div>
       <div v-if="phraseToast" class="mp-phrase-toast" data-testid="mp-phrase-toast">
         <b>{{ phraseToast.name }}:</b> {{ phraseToast.text }}

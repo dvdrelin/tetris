@@ -133,6 +133,12 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   const invalidMoveSeen = ref(false)
   /** How many times the server asked us to retransmit lost `piece_lock` reports this match. */
   const resyncCount = ref(0)
+  /**
+   * Our own `piece_lock` report that the server refused to *parse* (`bad_request` with the field
+   * that failed). Distinct from a rejected-but-understood move: re-sending it changes nothing, and
+   * saying so out loud is what turns a three-second mystery forfeit into a reportable bug.
+   */
+  const lockRejected = ref<{ step: number; field: string; value: string } | null>(null)
   /** Code of a room we were dropped from (stale/rotated ticket) — the join form names it. */
   const lostRoomCode = ref<string | null>(null)
   /** Result of the last room-side link test («Тест связи»), null until one has run. */
@@ -166,6 +172,8 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   // missing a report it sends `resync_request`, and the missing steps are re-sent from here —
   // a lost UDP-era packet should not be punished as cheating.
   let reportedLocks: PieceLockPayload[] = []
+  /** Steps whose report the server already refused to parse — never retransmit those. */
+  let rejectedSteps = new Set<number>()
   // Spawn/hold bookkeeping for the piece_lock holdExtra flag (see protocol.ts).
   let spawnedType: PieceType | null = null
   let awaitingSpawn = false
@@ -315,7 +323,9 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
         // The server's replay is missing some of our own reports (a lock lost in transit). Hand
         // them back oldest-first from the ring; the sequence then continues normally. This is the
         // difference between "packet lost" and "cheating" — the match must survive the first.
-        const missing = reportedLocks.filter((l) => l.globalStep >= msg.payload.expectedStep)
+        const missing = reportedLocks.filter(
+          (l) => l.globalStep >= msg.payload.expectedStep && !rejectedSteps.has(l.globalStep),
+        )
         for (const l of missing) send({ type: ClientMsgType.PieceLock, payload: l })
         resyncCount.value += 1
         break
@@ -343,6 +353,19 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
         // Without this flag the result panel would only say "техническая победа соперника" and the
         // player never learns the server rejected a move.
         if (msg.payload.code === MpErrorCode.InvalidMove) invalidMoveSeen.value = true
+        if (msg.payload.code === MpErrorCode.BadRequest && typeof msg.payload.step === 'number') {
+          // The server could not parse our own report (PRA4: a `piece_lock` it refused to read).
+          // The ring holds the very same bytes, so retransmitting only burns violation budget —
+          // pull that step out of the ring and tell the player at once, instead of letting the
+          // resync deadline close the match three seconds later without a word.
+          const step = msg.payload.step
+          const field = msg.payload.field ?? '?'
+          const value = msg.payload.value ?? '?'
+          rejectedSteps.add(step)
+          reportedLocks = reportedLocks.filter((l) => l.globalStep !== step)
+          lockRejected.value = { step, field, value }
+          lastEvent.value = `Сервер не смог разобрать ваш отчёт о ходе ${step}: ${field}=${value}. Матч будет закрыт — это ошибка приложения, не ваша.`
+        }
         if (msg.payload.code === MpErrorCode.BadToken || msg.payload.code === MpErrorCode.RoomNotFound) {
           clearKey(TOKEN_KEY)
           // Our ticket no longer opens that room: another tab took the seat, the room was closed,
@@ -493,6 +516,8 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     invalidMoveSeen.value = false
     resyncCount.value = 0
     reportedLocks = [] // the ring is per match: step numbers restart at 1
+    rejectedSteps = new Set()
+    lockRejected.value = null
     resetMatchLocal()
     match.value = p
     writeJson(MATCH_KEY, {
@@ -706,7 +731,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
 
   return {
     connected, room, myId, lastError, lastEvent, match, matchOverInfo, mpGameState, shadows,
-    dropNotice, myOverCause, invalidMoveSeen, resyncCount, lostRoomCode, connTest, connTestRunning, startConnTest,
+    dropNotice, myOverCause, invalidMoveSeen, resyncCount, lockRejected, lostRoomCode, connTest, connTestRunning, startConnTest,
     me, inMatch, serverNow,
     ensureConnected, createRoom, joinRoom, setReady, sendChat, sendFastPhrase, lastPhrase, surrender, leaveRoom, disconnect,
     mpHandleCommand, mpTick, clearNotice, cellColor,

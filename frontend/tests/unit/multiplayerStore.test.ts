@@ -354,6 +354,45 @@ describe('match lifecycle', () => {
     }
   })
 
+  test('a report the server could not parse is told to the player and never retransmitted', () => {
+    // PRA4: our own `piece_lock` arrived in a shape the server could not read. Re-sending the same
+    // bytes from the ring only burns violation budget, so the store must drop that step and say so.
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 5, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(1)
+      for (let i = 0; i < 600; i++) store.mpTick(50)
+
+      const locks = () => ws().sent.filter((m: any) => m.type === ClientMsgType.PieceLock)
+      const before = locks()
+      const lastStep = before[before.length - 1].payload.globalStep
+
+      ws().feed({
+        type: ServerMsgType.Error,
+        payload: {
+          code: MpErrorCode.BadRequest,
+          message: `Malformed piece_lock payload: x=-1 (шаг ${lastStep})`,
+          field: 'x', value: '-1', step: lastStep,
+        },
+      })
+      expect(store.lockRejected).toMatchObject({ step: lastStep, field: 'x', value: '-1' })
+
+      ws().feed({
+        type: ServerMsgType.ResyncRequest,
+        payload: { expectedStep: lastStep, gotStep: lastStep + 1, deadline: Date.now() + 3000 },
+      })
+      const after = locks()
+      // Only frames sent *after* the resync request count: the refused step must not come back, and
+      // since it was the only one missing, nothing at all should be retransmitted.
+      expect(after.slice(before.length).map((m: any) => m.payload.globalStep)).toEqual([])
+      expect(store.resyncCount).toBe(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   test('fast_phrase from the server lands in lastPhrase for the toast', () => {
     const store = setupStore()
     ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })

@@ -349,6 +349,15 @@ export enum MpErrorCode {
 export interface MpErrorPayload {
   code: MpErrorCode;
   message: string;
+  /**
+   * Structured detail when the server refused a `piece_lock` report it could not parse: which
+   * field failed the shape check, what value it carried and which step the report claimed.
+   * Without this the match log said only "Malformed piece_lock payload" and the next question —
+   * "which field, exactly?" — was unanswerable (that is how PRA4 was lost without an explanation).
+   */
+  field?: string;
+  value?: string;
+  step?: number;
 }
 
 export type ServerMessage =
