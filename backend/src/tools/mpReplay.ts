@@ -177,13 +177,16 @@ function main(): number {
       rotation: lock.rotation,
       linesCleared: lock.linesCleared,
       garbageRows: lock.garbageRows ?? 0,
+      // Флаг пустого слота хола: без него зеркало колоды реплея разъезжается с матчем уже на первом
+      // холе, и реплей начинает отвергать законные отчёты (ложное «расхождение»).
+      ...(lock.holdExtra ? { holdExtra: true } : {}),
     } as PieceLockPayload
     const fresh = state.applyLock(lock.playerId, payload)
     processed += 1
     const traceTag = lock.trace
       ? `  spawn=${lock.trace.spawn.x},${lock.trace.spawn.y} mv=${lock.trace.moves} rot=[${lock.trace.rotations.map((r) => `${r.from}→${r.to}${r.kick ? `k${r.kick}` : ''}`).join(' ')}]${lock.trace.more ? ` +${lock.trace.more}` : ''}`
       : ''
-    const tag = `#${String(processed).padStart(3, ' ')} step ${String(lock.globalStep).padStart(4, ' ')} ${lock.playerId.slice(0, 8)} ${lock.pieceType} r${lock.rotation} x=${lock.x} y=${lock.y} lines=${lock.linesCleared} gRows=${lock.garbageRows ?? 0}${traceTag}`
+    const tag = `#${String(processed).padStart(3, ' ')} step ${String(lock.globalStep).padStart(4, ' ')} ${lock.playerId.slice(0, 8)} ${lock.pieceType} r${lock.rotation} x=${lock.x} y=${lock.y} lines=${lock.linesCleared} gRows=${lock.garbageRows ?? 0}${lock.holdExtra ? ' hold' : ''}${traceTag}`
     if (!fresh.accepted) {
       divergence += 1
       console.log(`${tag}  REJECTED by the replay: ${fresh.violation}`)

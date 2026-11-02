@@ -89,6 +89,14 @@ export interface ReplayLock {
   rotation: number
   linesCleared: number
   garbageRows: number
+  /**
+   * Флаг «слот хол был пуст, значит фигура угнала в хол и взят лишний забор из колоды». Без него
+   * зеркало колоды офлайн-реплея расходится с матчем уже на первом холe, и реплей начинает
+   * отвергать законные отчёты.
+   */
+  holdExtra?: boolean
+  /** Что клиент держал в слоте хол в момент лока (для сверки с зеркалом сервера). */
+  held?: string | null
   /** Клиентский след фигуры (спавн/сдвиги/повороты с киками) — только для чтения разбором. */
   trace?: { spawn: { x: number; y: number }; moves: number; rotations: { from: number; to: number; kick: number }[]; more?: number }
   /** Клиентская диагностика в момент отчёта (кольцо перевыдачи, ресинхроны, часы, RTT). */
@@ -222,11 +230,16 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
     if (event === 'piece_lock') {
       const rec = line.data as {
         lock?: ReplayLock; accepted?: boolean; violation?: string; digest?: string; snapshot?: string
-        trace?: ReplayLock['trace']; diag?: ReplayLock['diag']
+        trace?: ReplayLock['trace']; diag?: ReplayLock['diag']; held?: string | null
       } | undefined
       const lock = rec?.lock
       if (!lock) continue
-      const enriched: ReplayLock = { ...lock, ...(rec?.trace ? { trace: rec.trace } : {}), ...(rec?.diag ? { diag: rec.diag } : {}) }
+      const enriched: ReplayLock = {
+        ...lock,
+        ...(rec?.trace ? { trace: rec.trace } : {}),
+        ...(rec?.diag ? { diag: rec.diag } : {}),
+        ...(typeof rec?.held === 'undefined' ? {} : { held: rec.held }),
+      }
       if (rec && rec.accepted === false) {
         bundle.verdicts.push({ playerId: playerId ?? '', t, violation: rec.violation ?? '', lock: enriched })
       } else {

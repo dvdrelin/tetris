@@ -283,6 +283,7 @@ describe('a played match leaves the whole story in the log', () => {
         type: ClientMsgType.PieceLock,
         payload: {
           globalStep: 1, pieceType: wrongPiece, x: 0, y: 18, rotation: 0, linesCleared: 0, garbageRows: 0,
+          holdExtra: true, held: 'L',
           trace: { spawn: { x: 3, y: 0 }, moves: 3, rotations: [{ from: 0, to: 1, kick: 2 }] },
           diag: { ring: 0, unsent: 0, resync: 0, clockOffsetMs: -120, rttMs: 90 },
         },
@@ -325,6 +326,10 @@ describe('a played match leaves the whole story in the log', () => {
       expect(bundle.verdicts[0].lock as Record<string, unknown>).toMatchObject({
         trace: { spawn: { x: 3, y: 0 } },
         diag: { rttMs: 90 },
+        // Флаг пустого слота хола и содержимое слота доезжают до бандла: без holdExtra офлайн-реплей
+        // разъезжается с матчем уже на первом холе и начинает отвергать законные отчёты.
+        holdExtra: true,
+        held: 'L',
       })
     } finally {
       jest.useRealTimers()

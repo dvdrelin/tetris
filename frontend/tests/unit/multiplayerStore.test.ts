@@ -214,6 +214,33 @@ describe('match lifecycle', () => {
     }
   })
 
+  test('holdExtra уезжает только когда слот хол был пуст — иначе сервер ждёт другую фигуру', () => {
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 4242, startTime: Date.now() + 20, playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(30)
+
+      // Первый хол: слот был пуст → фигура угнана в хол, взят лишний забор из колоды. Серверное
+      // зеркало обязано об этом узнать, иначе оно ждёт не ту фигуру и отклоняет законный ход.
+      store.mpHandleCommand({ type: CommandType.HoldPiece })
+      store.mpHandleCommand({ type: CommandType.HardDrop })
+      // Второй хол: слот уже не пуст → это обмен, лишнего забора нет, флага быть не должно.
+      store.mpHandleCommand({ type: CommandType.HoldPiece })
+      store.mpHandleCommand({ type: CommandType.HardDrop })
+
+      const locks = ws().sent.filter((m) => m.type === ClientMsgType.PieceLock)
+      expect(locks.length).toBeGreaterThanOrEqual(2)
+      expect(locks[0].payload.holdExtra).toBe(true)
+      expect(locks[0].payload.held).not.toBeNull()
+      expect(locks[1].payload.holdExtra).toBeUndefined()
+      store.leaveRoom()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   test('relayed locks build the opponent shadow board (placement + line clear)', () => {
     const store = setupStore()
     ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
