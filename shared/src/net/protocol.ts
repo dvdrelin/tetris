@@ -201,6 +201,21 @@ export interface GameStartPayload {
 
 export type MatchOverReason = 'surrender' | 'forfeit' | 'survival' | 'points' | 'topout';
 
+/**
+ * What actually happened behind the rule verdict. `reason` says how the rules scored it (who
+ * wins); `detail` says what one of the humans did — the result screen needs it to tell the
+ * winner "your opponent reloaded the page" instead of the shrug "surrendered or left", and to
+ * say which seat the server's replay threw out.
+ */
+export type MatchOverDetail =
+  | 'surrender_button' // someone pressed «Сдаться»
+  | 'reload' // a seat lost its board to a page reload (an honest technical forfeit)
+  | 'left_room' // a seat pressed «Выход» / left the room while the match was running
+  | 'disconnect' // a seat dropped the socket and did not return within the grace
+  | 'invalid_move' // the server's replay rejected a seat's move (anticheat)
+  | 'topout' // a stack reached the top and killed its owner
+  | 'time_limit'; // the match clock ran out
+
 // One player's lock, relayed to the opponents so they can draw a shadow board: the receiver
 // replays the placement (pieceType+rotation at x/y, then line clears) on a local BoardManager.
 export interface PlayerPieceLockPayload {
@@ -252,6 +267,8 @@ export interface MatchResult {
 
 export interface MatchOverPayload {
   reason: MatchOverReason;
+  /** Optional so an older server still parses on a newer client (and vice versa). */
+  detail?: MatchOverDetail;
   winnerId: string | null;
   results: MatchResult[];
 }

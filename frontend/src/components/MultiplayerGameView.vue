@@ -57,10 +57,34 @@ export default defineComponent({
     const overReasonText = computed(() => {
       const info = mp.matchOverInfo
       if (!info) return ''
+      const mine = mp.myOverCause
+      // The server says what actually happened (a surrender button, a page reload, a walk-out, a
+      // dead socket, the anticheat, a top-out, the clock). Each side reads its own point of view —
+      // a shared "сдался или вне игры" is exactly what made players argue about the verdict.
+      switch (info.detail) {
+        case 'surrender_button':
+          return mine === 'button' ? 'Вы сдались' : 'Соперник нажал «Сдаться»'
+        case 'reload':
+          return mine === 'reload'
+            ? 'Вы перезагрузили страницу: стакан не восстановить — матч потерян технически'
+            : 'Соперник перезагрузил страницу или закрыл вкладку — техническая победа'
+        case 'left_room':
+          return mine ? 'Вы вышли из комнаты прямо во время матча' : 'Соперник вышел из комнаты прямо во время матча'
+        case 'disconnect':
+          return 'Соперник потерял связь и не вернулся в матч за отведённое время'
+        case 'invalid_move':
+          return mp.invalidMoveSeen
+            ? 'Сервер отклонил ваш ход (он не совпал с его реплеем) — матч закрыт'
+            : 'Ход соперника не совпал с серверным реплеем — матч закрыт анти-читом'
+        case 'topout':
+          return mine ? 'Ваш стакан дошёл до верха' : 'Соперник развалился — его стакан дошёл до верха'
+        case 'time_limit':
+          return 'Время матча вышло — победа по набранным линиям'
+      }
+      // Older server without `detail`: fall back to the rule verdict alone.
       if (mp.invalidMoveSeen) {
         return 'Сервер отклонил ваш ход (не совпал с его реплеем) — матч закрыт'
       }
-      const mine = mp.myOverCause
       switch (info.reason) {
         case 'topout':
           return mine ? 'Ваш стакан дошёл до верха' : 'Соперник развалился — его стакан дошёл до верха'
@@ -209,7 +233,7 @@ export default defineComponent({
       <div v-for="{ player, shadow } in opponents" :key="player.id" class="op-panel"
            :data-testid="'mp-op-' + player.id.slice(0, 8)">
         <div class="op-name">
-          {{ player.name }}
+          Соперник · {{ player.name }}
           <span v-if="!player.connected" class="op-off">нет связи</span>
         </div>
         <div v-if="shadow" class="op-grid" :style="{ gridTemplateColumns: `repeat(${GAME_CONFIG.boardWidth}, ${OPP_CELL}px)` }">
@@ -224,6 +248,9 @@ export default defineComponent({
     </div>
 
     <div class="own-wrap">
+      <div class="board-label board-label-me" data-testid="mp-own-label">
+        Ваш стакан · {{ mp.me?.name ?? '—' }}
+      </div>
       <canvas ref="ownCanvas" class="own-canvas" />
       <div v-if="countdown !== null" class="mp-countdown" data-testid="mp-countdown">{{ countdown }}</div>
       <div v-if="connectionLost" class="mp-banner mp-banner-warn" data-testid="mp-conn-lost">
@@ -284,6 +311,19 @@ export default defineComponent({
 .op-empty { font-size: 11px; color: #8aa; padding: 10px 2px; }
 .op-meta { font-size: 11px; color: #8aa; margin-top: 6px; }
 .own-wrap { position: relative; }
+/* Which glass is whose: without these labels two boards side by side read as "my stack is
+   mirrored from my opponent", especially when both players are idle and the shared bag makes
+   the two stacks genuinely identical. */
+.board-label {
+  position: absolute;
+  top: -20px;
+  left: 2px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #8aa;
+  white-space: nowrap;
+}
+.board-label-me { color: #00f5ff; }
 .own-canvas {
   width: 100%;
   height: 100%;

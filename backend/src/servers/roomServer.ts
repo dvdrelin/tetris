@@ -17,7 +17,7 @@
 import { randomUUID, randomInt } from 'crypto'
 import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
-  RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchResult,
+  RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchOverDetail, MatchResult,
   PieceLockPayload, PieceType,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
@@ -284,7 +284,7 @@ export class RoomServer {
       // Walking out mid-match is a forfeit (same verdict as surrender, different reason).
       slot.connected = false
       slot.ws = null
-      this.matchOver(room, 'forfeit', this.firstOtherPlayer(room, slot))
+      this.matchOver(room, 'forfeit', this.firstOtherPlayer(room, slot), 'left_room')
       this.finalizeDisconnect(room, slot, 'left')
     } else {
       this.removePlayer(room, slot, 'left')
@@ -304,7 +304,9 @@ export class RoomServer {
     // was lost with the page, and only a bare surrender is a concession.
     const reason: MatchOverReason =
       cause === 'topout' ? 'topout' : cause === 'reload' ? 'forfeit' : 'surrender'
-    this.matchOver(room, reason, this.firstOtherPlayer(room, slot))
+    const detail: MatchOverDetail =
+      cause === 'topout' ? 'topout' : cause === 'reload' ? 'reload' : 'surrender_button'
+    this.matchOver(room, reason, this.firstOtherPlayer(room, slot), detail)
   }
 
   private chat(ws: ClientSocket, text: unknown): void {
@@ -386,7 +388,7 @@ export class RoomServer {
         // The verdict travels before the socket dies: a player thrown out of a live match must
         // learn *why* it ended (match_over is what stops their engine and shows the result),
         // not sit in front of a frozen board.
-        this.matchOver(room, 'forfeit', this.firstOtherPlayer(room, slot))
+        this.matchOver(room, 'forfeit', this.firstOtherPlayer(room, slot), 'invalid_move')
         this.onSocketClosed(ws)
         this.finalizeDisconnect(room, slot, 'disconnect_timeout')
         try { ws.terminate() } catch { /* already gone */ }
@@ -434,7 +436,7 @@ export class RoomServer {
     const limitTimer = setTimeout(() => {
       this.timeLimitTimers.delete(room.code)
       if (room.phase !== 'playing') return
-      this.matchOver(room, 'survival', this.topScorer(room))
+      this.matchOver(room, 'survival', this.topScorer(room), 'time_limit')
     }, MP_CONFIG.timeLimitSec * 1000)
     limitTimer.unref?.()
     this.timeLimitTimers.set(room.code, limitTimer)
@@ -471,7 +473,7 @@ export class RoomServer {
     }
   }
 
-  private matchOver(room: Room, reason: MatchOverReason, winner: PlayerSlot | null): void {
+  private matchOver(room: Room, reason: MatchOverReason, winner: PlayerSlot | null, detail?: MatchOverDetail): void {
     if (room.phase === 'over') return
     room.phase = 'over'
     const state = this.matchStates.get(room.code)
@@ -495,7 +497,8 @@ export class RoomServer {
       lines: state?.certifiedLines(p.id) ?? p.reportedLines,
     }))
     for (const p of alive) {
-      this.send(p.ws, { type: ServerMsgType.MatchOver, payload: { reason, winnerId: winner?.id ?? null, results } })
+      // `detail` rides to both seats: each of them renders its own point of view of the same event.
+      this.send(p.ws, { type: ServerMsgType.MatchOver, payload: { reason, detail, winnerId: winner?.id ?? null, results } })
     }
     this.broadcastSnapshot(room)
   }
@@ -552,7 +555,8 @@ export class RoomServer {
       // GDD: a disconnected player freezes out of the match — the others play on. In a 1v1 the
       // remaining player wins by forfeit; with more seats the verdict stays honest this way too.
       const opponent = this.firstOtherPlayer(room, slot)
-      this.matchOver(room, 'forfeit', opponent)
+      // Reaching this line means the grace ran out (a walk-out already closed the match above).
+      this.matchOver(room, 'forfeit', opponent, reason === 'left' ? 'left_room' : 'disconnect')
     }
     this.removePlayer(room, slot, reason)
   }

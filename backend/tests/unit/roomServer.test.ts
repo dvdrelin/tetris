@@ -289,6 +289,7 @@ describe('disconnect grace and token rejoin', () => {
       jest.advanceTimersByTime(5_000 + 1)
       const over = host.ws.lastOf(ServerMsgType.MatchOver)
       expect(over.payload.reason).toBe('forfeit')
+      expect(over.payload.detail).toBe('disconnect') // not "surrendered" — they never came back
       expect(over.payload.winnerId).toBe(host.snapshot.players[0].id)
     } finally {
       jest.useRealTimers()
@@ -311,6 +312,7 @@ describe('surrender, rematch and forfeit-by-leave', () => {
     guest.emitMessage({ type: ClientMsgType.Surrender })
     const over = host.ws.lastOf(ServerMsgType.MatchOver)
     expect(over.payload.reason).toBe('surrender')
+    expect(over.payload.detail).toBe('surrender_button')
     expect(over.payload.winnerId).toBe(host.snapshot.players[0].id)
     expect(over.payload.results[0].placement).toBe(1)
     expect(over.payload.results[0].playerId).toBe(host.snapshot.players[0].id)
@@ -354,6 +356,7 @@ describe('surrender, rematch and forfeit-by-leave', () => {
     expect(guest.terminated).toBe(true)
     const over = host.ws.lastOf(ServerMsgType.MatchOver)
     expect(over.payload.reason).toBe('forfeit')
+    expect(over.payload.detail).toBe('invalid_move')
     expect(over.payload.winnerId).toBe(host.snapshot.players[0].id)
     void server
   })
@@ -401,6 +404,7 @@ describe('surrender, rematch and forfeit-by-leave', () => {
     guest2.emitMessage({ type: ClientMsgType.LeaveRoom })
     const over = host2.ws.lastOf(ServerMsgType.MatchOver)
     expect(over.payload.reason).toBe('forfeit')
+    expect(over.payload.detail).toBe('left_room') // a walk-out, not a connection problem
     expect(server2.roomCount).toBe(1)
     void server
     void host
@@ -502,6 +506,7 @@ describe('garbage counter, verdict visibility and drop notices (the 5.1 bug repo
       expect(host.ws.of(ServerMsgType.MatchOver)).toHaveLength(0)
       jest.advanceTimersByTime(5_000 + 1)
       expect(host.ws.lastOf(ServerMsgType.MatchOver).payload.reason).toBe('forfeit')
+      expect(host.ws.lastOf(ServerMsgType.MatchOver).payload.detail).toBe('disconnect')
     } finally {
       jest.useRealTimers()
     }
@@ -511,9 +516,11 @@ describe('garbage counter, verdict visibility and drop notices (the 5.1 bug repo
     const first = startedMatch()
     first.guest.emitMessage({ type: ClientMsgType.Surrender, payload: { cause: 'topout' } })
     expect(first.host.ws.lastOf(ServerMsgType.MatchOver).payload.reason).toBe('topout')
+    expect(first.host.ws.lastOf(ServerMsgType.MatchOver).payload.detail).toBe('topout')
 
     const second = startedMatch()
     second.host.ws.emitMessage({ type: ClientMsgType.Surrender, payload: { cause: 'reload' } })
     expect(second.guest.lastOf(ServerMsgType.MatchOver).payload.reason).toBe('forfeit')
+    expect(second.guest.lastOf(ServerMsgType.MatchOver).payload.detail).toBe('reload')
   })
 })

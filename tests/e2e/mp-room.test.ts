@@ -54,6 +54,11 @@ test('room lifecycle across two browsers', async ({ browser }) => {
     // When the countdown disappears, the seeded engines are running on both clients.
     await expect(pageA.getByTestId('mp-countdown')).toBeHidden({ timeout: 8000 })
 
+    // --- whose glass is whose: two boards side by side must say it out loud (an idle pair with a
+    //     shared bag produces two identical stacks, which reads as "my moves are being mirrored") ---
+    await expect(pageA.getByTestId('mp-own-label')).toContainText('Alice')
+    await expect(pageA.locator('.op-name')).toContainText('Соперник · Bob')
+
     // --- fast phrase: one tap lands as a toast on the opponent (never on the sender) ---
     await pageA.getByTestId('mp-quick').getByRole('button', { name: 'GG' }).click()
     await expect(pageB.getByTestId('mp-phrase-toast')).toContainText('GG', { timeout: 4000 })
@@ -65,6 +70,10 @@ test('room lifecycle across two browsers', async ({ browser }) => {
     await expect(pageA.getByTestId('mp-over')).toBeVisible({ timeout: 4000 })
     await expect(pageB.getByTestId('mp-over')).toBeVisible({ timeout: 4000 })
     await expect(pageA.getByTestId('mp-over')).toContainText('Bob')
+    // The same event, told in two voices: whoever pressed the button hears "you surrendered",
+    // the other seat hears exactly what happened (not a vague "сдался или вне игры").
+    await expect(pageA.getByTestId('mp-over-reason')).toHaveText('Вы сдались')
+    await expect(pageB.getByTestId('mp-over-reason')).toHaveText('Соперник нажал «Сдаться»')
 
     // --- back to the room: the lobby shows the finished-match results ---
     await pageA.getByTestId('mp-to-room').click()
