@@ -1,6 +1,6 @@
 {
   "name": "neon-tetris",
-  "version": "1.0.0",
+  "version": "2.26.11",
   "private": true,
   "workspaces": [
     "shared",

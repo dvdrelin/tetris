@@ -216,22 +216,22 @@ describe('GET /api/health', () => {
     const app = buildApp({ scoreService: service, distPath: makeDist(dir) })
 
     const res = await request(app).get('/api/health')
-    expect(res.body.version).toBe('1.0.0')
+    expect(res.body.version).toBe('2.26.11')
     expect(res.body.checks.runtime.node).toBe(process.version)
     expect(res.body.checks.runtime.uptimeSec).toBeGreaterThanOrEqual(0)
     expect(res.body.checks.runtime.rssBytes).toBeGreaterThan(0)
     expect(typeof res.body.checks.runtime.env).toBe('string')
   })
 
-  test('version comes from APP_VERSION when the build arg is set (deploy.sh format 1.<YYMMDD>.<sha>)', async () => {
-    process.env.APP_VERSION = '1.261004.abc1234'
+  test('version comes from APP_VERSION when the build arg is set (deploy.sh format 2.<YY>.<MM>.<sha>)', async () => {
+    process.env.APP_VERSION = '2.26.11.abc1234'
     try {
       const service = new ScoreService({ dbPath: join(dir, 'data', 'scores.json') })
       const app = buildApp({ scoreService: service, distPath: makeDist(dir) })
 
       const res = await request(app).get('/api/health')
       expect(res.status).toBe(200)
-      expect(res.body.version).toBe('1.261004.abc1234')
+      expect(res.body.version).toBe('2.26.11.abc1234')
     } finally {
       delete process.env.APP_VERSION
     }
@@ -245,7 +245,7 @@ describe('GET /api/health', () => {
 
       const res = await request(app).get('/api/health')
       expect(res.status).toBe(200)
-      expect(res.body.version).toBe('1.0.0')
+      expect(res.body.version).toBe('2.26.11')
     } finally {
       delete process.env.APP_VERSION
     }

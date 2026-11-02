@@ -43,6 +43,17 @@ test.describe('Pause button (C2)', () => {
   });
 });
 
+test.describe('App version chip', () => {
+  test('the menu shows the 2.{YY}.{MM}.{hash} version in the top right corner', async ({ page }) => {
+    await page.goto('http://localhost:3001');
+    await page.waitForLoadState('domcontentloaded');
+    const chip = page.getByTestId('app-version');
+    await expect(chip).toBeVisible();
+    // vite stamps scripts/app-version.cjs into the bundle: major 2 (MP MVP), YY, MM, git hash.
+    await expect(chip).toHaveText(/^2\.\d{2}\.\d{2}\.[0-9a-f]{7,}$/);
+  });
+});
+
 test.describe('Shared control hints (C3)', () => {
   test('the menu and the HUD list the same keys and labels', async ({ page }) => {
     await page.goto('http://localhost:3001');

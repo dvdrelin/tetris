@@ -282,8 +282,9 @@ tetris/                          (корень monorepo, npm workspaces: fronten
     (без HTTP-запроса к самому себе), с числом записей.
   Версия берётся из `APP_VERSION` (build-arg Dockerfile: `docker-compose.yml` →
   `build.args.APP_VERSION`, значение вычисляет `deploy.sh` из клонированного репозитория
-  в формате `1.<YYMMDD>.<git short hash>`), иначе из `backend/package.json`,
-  иначе `unknown`. Пустой `APP_VERSION` (обычный `docker compose build` без аргумента)
+  в формате `2.{YY}.{MM}.{git short hash}`; мажор 2 — мультиплеерный MVP, источник
+  формата — `scripts/app-version.cjs`, он же попадёт в FE-бандл), иначе из
+  `backend/package.json` (`2.26.11`), иначе `unknown`. Пустой `APP_VERSION` (обычный `docker compose build` без аргумента)
   считается незаданным — срабатывает фолбэк на `package.json`. Каждая проверка обёрнута в `try/catch`: упавшая проверка делает
   отчёт degraded, но никогда не роняет эндпоинт; в payload нет ни абсолютных путей,
   ни секретов.

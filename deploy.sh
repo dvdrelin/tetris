@@ -31,13 +31,14 @@
 #   rsync -a --delete --exclude=.git --exclude=node_modules --exclude=dist \
 #         --exclude=backend/data --exclude=nginx-proxy \
 #         /opt/neon-tetris-new/ /opt/neon-tetris/
-#   APP_VERSION="1.<YYMMDD>.<git short hash>"  (из клонированного репозитория)
+#   APP_VERSION="2.<YY>.<MM>.<git short hash>"  (из клонированного репозитория)
 #   rm -rf /opt/neon-tetris-new
 #   cd /opt/neon-tetris && APP_VERSION=$APP_VERSION docker compose build && docker compose up -d
 #
-# APP_VERSION — build-арг Dockerfile, он попадает в ENV контейнера и отдаётся в
-# GET /api/health как "version" (формат 1.261004.317de99). Скрипт сверяет его с
-# реальным ответом /api/health: несовпадение = собран не тот коммит.
+# APP_VERSION — build-арг Dockerfile: попадает в ENV контейнера (health GET /api/health
+# как "version") и в FE-бандл (vite define __APP_VERSION__, версия в углу меню).
+# Формат 2.{YY}.{MM}.{hash}, например 2.26.11.317de99; мажор меняется вручную (2 = MP MVP).
+# Скрипт сверяет её с реальным ответом /api/health: несовпадение = собран не тот коммит.
 #
 # `--exclude=backend/data` сохраняет scores.json (он примонтирован в контейнер),
 # `--exclude=nginx-proxy` сохраняет nginx-proxy/.env с EMAIL (адрес для Let's Encrypt),
@@ -141,8 +142,8 @@ run "mkdir -p $REMOTE_DIR && rsync -a --delete \
 
 # APP_VERSION вычисляется из клонированного репозитория (в $REMOTE_DIR нет .git —
 # rsync исключает .git), поэтому читаем git-хэш до удаления $CLONE_DIR.
-log "Вычисляю APP_VERSION (формат 1.<YYMMDD>.<git short hash>)..."
-APP_VERSION=$(run "cd $CLONE_DIR && printf '1.%s.%s' \"\$(date -u +%y%m%d)\" \"\$(git rev-parse --short HEAD)\"" || echo "")
+log "Вычисляю APP_VERSION (формат 2.<YY>.<MM>.<git short hash>)..."
+APP_VERSION=$(run "cd $CLONE_DIR && printf '2.%s.%s.%s' \"\$(date -u +%y)\" \"\$(date -u +%m)\" \"\$(git rev-parse --short HEAD)\"" || echo "")
 if [[ -z "$APP_VERSION" ]]; then
     warn "APP_VERSION не вычислен — health возьмёт version из backend/package.json"
 else

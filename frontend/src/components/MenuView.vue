@@ -47,6 +47,7 @@ export default defineComponent({
       commitName,
       PLAYER_NAME_MAX,
       CONTROL_HINTS,
+      APP_VERSION: __APP_VERSION__,
       startGame,
       goToLeaderboard,
       goMultiplayer,
@@ -57,6 +58,7 @@ export default defineComponent({
 
 <template>
   <div class="menu-container">
+    <div class="app-version" data-testid="app-version">{{ APP_VERSION }}</div>
     <div class="title-section">
       <h1 class="title-word">TETRIS</h1>
       <div class="title-line neon-border"></div>
@@ -117,6 +119,16 @@ export default defineComponent({
 </template>
 
 <style scoped>
+.app-version {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: rgba(207, 232, 255, 0.55);
+  z-index: 10;
+  user-select: none;
+}
 .menu-container {
   display: flex;
   flex-direction: column;

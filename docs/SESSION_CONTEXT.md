@@ -95,11 +95,18 @@ build-arg `APP_VERSION`), `757e909` и `e8e2882` (записи об этих д�
   `websocket` (`wss.clients.size`, путь `/ws`), `runtime` (Node, uptime, RSS, `NODE_ENV`, `PORT`),
   `api` (самопроверка `/api/scores` и `/api/leaderboard` через тот же `ScoreService`).
 - Поле `version`: `APP_VERSION` → `backend/package.json` → `unknown`. `APP_VERSION` задаётся
-  build-аргом `Dockerfile` (`ARG APP_VERSION` → `ENV APP_VERSION`), значение считает `deploy.sh`
-  как `1.<YYMMDD>.<git short hash>`. Проверено на локальном образе
-  (`docker build --build-arg APP_VERSION=1.261004.localcheck` + `docker run`): `docker inspect` →
-  `APP_VERSION=1.261004.localcheck`, `GET /api/health` → `"version":"1.261004.localcheck"`.
-  Тесты резолва — `backend/tests/unit/health.test.ts` (в т.ч. пустой `APP_VERSION` → `1.0.0`).
+  build-аргом `Dockerfile` (`ARG APP_VERSION` → `ENV APP_VERSION` + env для `vite build`),
+  значение считает `deploy.sh` как `2.<YY>.<MM>.<git short hash>` (например `2.26.11.317de99`;
+  мажор меняется вручную — 2 = мультиплеерный MVP; единый источник формата —
+  `scripts/app-version.cjs`, его же использует `vite.config.mts` → `define.__APP_VERSION__`,
+  и версия показывается чипом в правом верхнем углу меню, `data-testid="app-version"`).
+  Проверено на локальном образе
+  (`docker build --build-arg APP_VERSION=2.26.11.localcheck` + `docker run`): `docker inspect` →
+  `APP_VERSION=2.26.11.localcheck`, `GET /api/health` → `"version":"2.26.11.localcheck"`.
+  Тесты резолва — `backend/tests/unit/health.test.ts` (в т.ч. пустой `APP_VERSION` → `2.26.11`),
+  чип меню — E2E `ui.test.ts` «App version chip».
+  История формата: до MP-релиза было `1.<YYMMDD>.<hash>` (например `1.261004.317de99`);
+  записи прошлых деплоев ниже сохраняют старый формат как факт того выпуска.
 - `.dockerignore` исключает из build-контекста `audit-verify/` (он остаётся в git) и `tmp-audit/`
   (он в `.gitignore`, живёт только локально). Проверено размером передаваемого контекста:
   `transferring context: 687.01kB` → `171.68kB`; `docker run --rm <image> ls /app` → `backend`, `frontend`.
@@ -140,18 +147,20 @@ rsync -a --delete \
   --exclude=.git --exclude=node_modules --exclude=dist \
   --exclude=backend/data --exclude=nginx-proxy \
   /opt/neon-tetris-new/ /opt/neon-tetris/
-APP_VERSION="1.$(date -u +%y%m%d).$(git -C /opt/neon-tetris-new rev-parse --short HEAD)"
+APP_VERSION="2.$(date -u +%y).$(date -u +%m).$(git -C /opt/neon-tetris-new rev-parse --short HEAD)"
 rm -rf /opt/neon-tetris-new
 cd /opt/neon-tetris && APP_VERSION=$APP_VERSION docker compose build && docker compose up -d
 ```
 
-`APP_VERSION` — build-арг `Dockerfile` (`ARG APP_VERSION` → `ENV APP_VERSION`), он же поле
-`version` в `GET /api/health`. Формат: `1.<YYMMDD>.<git short hash>`, например `1.261004.317de99`.
+`APP_VERSION` — build-арг `Dockerfile` (`ARG APP_VERSION` → `ENV APP_VERSION` для health и env
+для `vite build` — чип версии в меню), он же поле `version` в `GET /api/health`. Формат:
+`2.<YY>.<MM>.<git short hash>`, например `2.26.11.317de99` (мажор 2 — мультиплеерный MVP,
+меняется вручную; формат задаёт `scripts/app-version.cjs`, `deploy.sh` считает его так же).
 Хэш берётся из `/opt/neon-tetris-new` **до** его удаления: в `/opt/neon-tetris` нет `.git`
 (rsync исключает `.git`), поэтому там `git rev-parse` невозможен. `docker-compose.yml`
 подставляет его как `build.args.APP_VERSION: ${APP_VERSION:-}`; обычный `docker compose build`
 без переменной даёт пустой `APP_VERSION`, а пустой значение `resolveVersion()` считает
-незаданным → `version` берётся из `backend/package.json` (`1.0.0`). Деплои до этой
+незаданным → `version` берётся из `backend/package.json` (`2.26.11`). Деплои до этой
 правки собирали образ именно без build-арга, поэтому в health был `1.0.0`.
 
 `--exclude=backend/data` и `--exclude=nginx-proxy` обязательны: первый сохраняет `scores.json`
@@ -163,7 +172,7 @@ cd /opt/neon-tetris && APP_VERSION=$APP_VERSION docker compose build && docker c
 - `docker ps` → `neon-tetris  neon-tetris-neon-tetris  Up`; `docker logs --tail 15 neon-tetris` → `Neon Tetris server running on port 3000`
 - `curl -s https://ntetris.ddns.net/api/health` → `200` и JSON вида
   `{"status":"ok","uptimeSec":…,"version":"1.261004.317de99","checks":{"db":{"ok":true,"writable":true,"count":…},"static":{"ok":true,"indexHtml":"present","assetCount":2},"websocket":{"ok":true,"clients":0,"path":"/ws"},"runtime":{"ok":true,"node":"v22…"},"api":{"ok":true,…}}}`.
-  `version` — вычисленная при деплое `APP_VERSION`; `1.0.0` вместо неё означает, что образ собран без build-арга.
+  `version` — вычисленная при деплое `APP_VERSION`; `2.26.11` вместо неё означает, что образ собран без build-арга.
   `503` + `"status":"degraded"` означает реальную проблему (хранилище, собранный SPA или websocket),
   а не HTML-заглушку. Эндпоинт добавлен коммитом `feat(backend): GET /api/health…`; до него
   `/api/health` не был маршрутом и SPA catch-all возвращал HTML.
@@ -883,3 +892,21 @@ garbage на живом стенде (docker + ws-клиент), деплой/п
   краша; тест получил mulligan-ретраи (до 5 мешков) — флейк 50% устранён (16/16 повторов).
 - Тесты: BE +2 (fast-phrase relay+rate limit, чистый create handshake) → 87; FE +1
   (`lastPhrase`) → 260; mp-room E2E проверяет фразу кнопкой и тост у оппонента. 48 E2E зелёные.
+
+### Версионирование (схема `2.{YY}.{MM}.{hash}`, релиз мультиплеерного MVP)
+
+- Единый источник формата — `scripts/app-version.cjs`: мажор `2` (MP MVP) ставится вручную,
+  `YY`/`MM` — дата сборки UTC, hash — `git rev-parse --short HEAD` билдящего чекаута.
+  Порядок: env `APP_VERSION` (деплой) → git (dev/локальная сборка) → `dev` (docker без гита и args).
+- `package.json` root + shared + frontend + backend = `2.26.11` (семантически валидная база —
+  hash в commit-time неизвестен, поэтому в package.json его нет; `package-lock.json`
+  перегенерирован под новые версии — иначе `npm ci` в Docker падает).
+- Фронт: `vite.config.mts` → `define.__APP_VERSION__`; MenuView рендерит чип в правом верхнем
+  углу (`data-testid="app-version"`, CSS `.app-version`); E2E `ui.test.ts` «App version chip»
+  проверяет формат регуляркой.
+- Бэк: `resolveVersion()` не менялся (`APP_VERSION` → `backend/package.json` → `unknown`),
+  фолбэк теперь `2.26.11`; Dockerfile stage 1 пробрасывает `APP_VERSION` в `vite build`,
+  stage 2 — в ENV контейнера.
+- `deploy.sh`: `APP_VERSION='2.<YY>.<MM>.<hash>'` — формат в шапке и в `printf` обновлён.
+- История: прежний формат `1.<YYMMDD>.<hash>` (записи прошлых деплоев в документах — факты
+  тех выпусков, не переписывать).
