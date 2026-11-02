@@ -227,6 +227,26 @@ describe('match lifecycle', () => {
     expect(localStorage.getItem('nt_mp_match')).toBeNull()
   })
 
+  test('garbage_arrive lands the rows on the synced applyAt', () => {
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 11, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(1)
+      const row = Array(10).fill(6)
+      row[0] = 0
+      ws().feed({ type: ServerMsgType.GarbageArrive, payload: { arrivals: [{ rows: [row], applyAt: Date.now() + 300 }] } })
+      jest.advanceTimersByTime(100)
+      expect(store.mpGameState.board[19].every((v) => v === 0)).toBe(true) // not yet
+      jest.advanceTimersByTime(250)
+      expect(store.mpGameState.board[19][0]).toBe(0)
+      expect(store.mpGameState.board[19][1]).toBe(6) // the garbage row rode in at applyAt
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   test('pong stamps the clock offset used for the aligned startTime', () => {
     const store = setupStore()
     const serverTs = Date.now() + 5000

@@ -23,6 +23,7 @@ import {
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
 import { MP_CONFIG } from '../config/mpConfig'
+import { MatchState } from '../services/matchState'
 
 /** Minimal surface of a `ws` WebSocket used by the room logic (readyState 1 = OPEN). */
 export interface ClientSocket {
@@ -72,6 +73,9 @@ export class RoomServer {
   private violations = new Map<ClientSocket, number>()
   private preRoomKeys = new WeakMap<ClientSocket, string>()
   private preRoomSeq = 0
+  /** Block D: server-side match simulation per room (verification + garbage scheduler). */
+  private matchStates = new Map<string, MatchState>()
+  private timeLimitTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private msgLimiter: RateLimiter
   private chatLimiter: RateLimiter
   private readonly now: () => number
@@ -91,6 +95,8 @@ export class RoomServer {
       max: 1,
       now: this.now,
     })
+    // Due-garbage sweep. unref(): it must not hold the event loop open in tests or CLI runs.
+    setInterval(() => this.sweepGarbage(), MP_CONFIG.garbageSweepMs).unref()
   }
 
   // ====== observability (health check) ======
@@ -228,6 +234,13 @@ export class RoomServer {
       payload: { room: this.snapshot(room), token: slot.token, playerId: slot.id },
     })
     this.broadcastSnapshot(room)
+    // Mid-match rejoin: hand over everything the server scheduled against this player while
+    // the socket was down — the client reschedules past applyAt arrivals as immediate.
+    if (room.phase === 'playing') {
+      const state = this.matchStates.get(room.code)
+      const arrivals = state ? state.claimAllArrivals(slot.id) : []
+      if (arrivals.length) this.send(ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals } })
+    }
   }
 
   private setReady(ws: ClientSocket, ready: unknown): void {
@@ -303,11 +316,11 @@ export class RoomServer {
   }
 
   /**
-   * Block B posture: the server collects what clients report but does not judge it — the
-   * piece_lock replay validation (GDD §2.3 anti-desync) is block D. Counters feed the
-   * placement rows of MatchResult. Since block C the lock is also relayed (sanitized) to the
-   * opponents: shadow boards are reconstructed from placements + line clears, never from the
-   * reporting client's raw object.
+   * piece_lock handling (block D): the server replays the lock through the room's MatchState
+   * *before* anyone else sees it — a report that fails verification (bag order, overlap,
+   * support, fake clear count, step gap) ends the match per the GDD anticheat rule
+   * (disconnect_on_mismatch). Verified locks are relayed (sanitized) to the opponents and
+   * schedule garbage against them inside MatchState.
    */
   private pieceLock(ws: ClientSocket, payload: Partial<PieceLockPayload> | undefined): void {
     const ctx = this.requirePlayer(ws)
@@ -321,6 +334,18 @@ export class RoomServer {
     if (!lock) {
       this.violate(ws, { code: MpErrorCode.BadRequest, message: 'Malformed piece_lock payload' })
       return
+    }
+    const state = this.matchStates.get(room.code)
+    if (state) {
+      const verdict = state.applyLock(slot.id, lock)
+      if (!verdict.accepted) {
+        console.warn(`[mp] piece_lock violation room=${room.code} player=${slot.name}: ${verdict.violation}`)
+        this.sendError(ws, MpErrorCode.InvalidMove, 'Move rejected by the server')
+        this.onSocketClosed(ws)
+        this.finalizeDisconnect(room, slot, 'disconnect_timeout')
+        try { ws.terminate() } catch { /* already gone */ }
+        return
+      }
     }
     slot.reportedLines += lock.linesCleared
     this.broadcast(room, ws, {
@@ -349,6 +374,16 @@ export class RoomServer {
     const seed = randomInt(0, 2 ** 32) // uint32 per GDD §2.2
     const startTime = this.now() + MP_CONFIG.startDelayMs
     room.phase = 'playing'
+    this.matchStates.set(room.code, new MatchState(room.players.map((p) => p.id), seed, this.now))
+    // heads_up survival limit: when time is up, the survivor wins; both alive → honest draw.
+    // unref(): the timer must not hold the event loop open (tests, graceful shutdown).
+    const limitTimer = setTimeout(() => {
+      this.timeLimitTimers.delete(room.code)
+      if (room.phase !== 'playing') return
+      this.matchOver(room, 'survival', this.topScorer(room))
+    }, MP_CONFIG.timeLimitSec * 1000)
+    limitTimer.unref?.()
+    this.timeLimitTimers.set(room.code, limitTimer)
     for (const p of room.players) {
       this.send(p.ws, {
         type: ServerMsgType.GameStart,
@@ -358,9 +393,40 @@ export class RoomServer {
     this.broadcastSnapshot(room)
   }
 
+  /** Winner by the server-certified line count; exact ties (or zero lines) end in a draw. */
+  private topScorer(room: Room): PlayerSlot | null {
+    const state = this.matchStates.get(room.code)
+    const values = room.players.map((p) => ({ p, lines: state?.certifiedLines(p.id) ?? p.reportedLines }))
+    const best = Math.max(...values.map((v) => v.lines))
+    if (best <= 0) return null
+    const top = values.filter((v) => v.lines === best)
+    return top.length === 1 ? top[0].p : null
+  }
+
+  /** Periodic sweep: deliver every due garbage arrival to its (still connected) victim. */
+  private sweepGarbage(): void {
+    const now = this.now()
+    for (const [code, state] of this.matchStates) {
+      const room = this.rooms.get(code)
+      if (!room || room.phase !== 'playing') continue
+      for (const p of room.players) {
+        if (!p.connected || !p.ws) continue
+        const due = state.takeDueArrivals(p.id, now)
+        if (due.length) this.send(p.ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals: due } })
+      }
+    }
+  }
+
   private matchOver(room: Room, reason: MatchOverReason, winner: PlayerSlot | null): void {
     if (room.phase === 'over') return
     room.phase = 'over'
+    const state = this.matchStates.get(room.code)
+    this.matchStates.delete(room.code)
+    const limitTimer = this.timeLimitTimers.get(room.code)
+    if (limitTimer) {
+      clearTimeout(limitTimer)
+      this.timeLimitTimers.delete(room.code)
+    }
     const alive = room.players
     const ordered: PlayerSlot[] = winner
       ? [winner, ...alive.filter((p) => p !== winner)]
@@ -369,10 +435,10 @@ export class RoomServer {
       playerId: p.id,
       name: p.name,
       placement: i + 1,
-      // Uncertified until the block D replay: lines are the sum of reported locks, score follows
-      // the certified replay state once it exists. Honest zeros for score keep that visible.
+      // Lines are the server-certified clear counts from the replay (block D); score stays 0
+      // until a full engine replay certifies scoring — an honest zero beats a reported guess.
       score: 0,
-      lines: p.reportedLines,
+      lines: state?.certifiedLines(p.id) ?? p.reportedLines,
     }))
     for (const p of alive) {
       this.send(p.ws, { type: ServerMsgType.MatchOver, payload: { reason, winnerId: winner?.id ?? null, results } })
@@ -580,5 +646,6 @@ function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLock
     linesCleared: linesCleared as number,
   }
   if (nextType !== undefined) clean.nextType = nextType as PieceType
+  if (payload.holdExtra === true) clean.holdExtra = true
   return clean
 }

@@ -5,9 +5,27 @@
 import { EventEmitter } from 'events'
 import {
   ClientMsgType, ServerMsgType, MpErrorCode, RoomSnapshot, ServerMessage,
+  PieceFactoryProvider, PIECE_SHAPES, GAME_CONFIG, PieceLockPayload,
 } from '@neon-tetris/shared'
 import { RoomServer, ClientSocket } from '../../src/servers/roomServer'
 import { MP_CONFIG } from '../../src/config/mpConfig'
+
+// A lock the server replay will accept: the first piece of the room's seeded bag, resting on
+// the floor of an empty board (support + bounds satisfied, nothing clears).
+function honestFirstLock(seed: number): PieceLockPayload {
+  const factory = new PieceFactoryProvider({ seed })
+  const pieceType = factory.nextPieceType()
+  const shape = PIECE_SHAPES[pieceType][0]
+  let maxRow = 0
+  for (let r = 0; r < shape.length; r++) {
+    for (let c = 0; c < shape[r].length; c++) if (shape[r][c]) maxRow = Math.max(maxRow, r)
+  }
+  return { globalStep: 1, pieceType, x: 0, y: GAME_CONFIG.boardHeight - 1 - maxRow, rotation: 0, linesCleared: 0 }
+}
+
+function seedOf(host: { lastOf: (t: ServerMsgType) => any }): number {
+  return host.lastOf(ServerMsgType.GameStart).payload.seed
+}
 
 class FakeSocket extends EventEmitter implements ClientSocket {
   readyState = 1
@@ -291,30 +309,44 @@ describe('surrender, rematch and forfeit-by-leave', () => {
     expect(host.ws.lastOf(ServerMsgType.RoomSnapshot).payload.room.phase).toBe('over')
   })
 
-  test('reported piece_lock lines feed the match results until the block D replay certifies them', () => {
+  test('a verified lock certifies the line count that reaches the match results', () => {
     const { host, guest } = startedMatch()
-    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: { globalStep: 1, pieceType: 'T', x: 3, y: 18, rotation: 0, linesCleared: 4 } })
+    const lock = honestFirstLock(seedOf(host))
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: lock })
     guest.emitMessage({ type: ClientMsgType.Surrender })
     const over = guest.lastOf(ServerMsgType.MatchOver)
     const loser = over.payload.results.find((r: any) => r.playerId !== over.payload.winnerId)
-    expect(loser.lines).toBe(4)
+    expect(loser.lines).toBe(0) // an empty-board lock clears nothing — the server certifies that
   })
 
-  test('a valid lock is relayed (sanitized) to the opponent; a malformed one is rejected outright', () => {
+  test('a verified lock is relayed (sanitized) to the opponent; a malformed one is rejected outright', () => {
     const { server, host, guest } = startedMatch()
-    guest.emitMessage({
-      type: ClientMsgType.PieceLock,
-      payload: { globalStep: 7, pieceType: 'I', x: 3, y: 19, rotation: 1, linesCleared: 1, nextType: 'O', injected: 'junk' },
-    })
+    const lock = { ...honestFirstLock(seedOf(host)), nextType: 'O', injected: 'junk' }
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: lock })
     const relay = host.ws.lastOf(ServerMsgType.PieceLockedRelay)
     expect(relay.payload.playerId).toBeDefined()
-    expect(relay.payload.lock).toEqual({ globalStep: 7, pieceType: 'I', x: 3, y: 19, rotation: 1, linesCleared: 1, nextType: 'O' })
+    const expected = { ...honestFirstLock(seedOf(host)), nextType: 'O' }
+    expect(relay.payload.lock).toEqual(expected) // the raw object never reaches the opponent
     // The reporter never receives its own relay back.
     expect(guest.of(ServerMsgType.PieceLockedRelay)).toHaveLength(0)
 
-    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: { globalStep: 8, pieceType: 'WTF', x: 3, y: 19, rotation: 0, linesCleared: 0 } })
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: { globalStep: 2, pieceType: 'WTF', x: 3, y: 19, rotation: 0, linesCleared: 0 } })
     expect(guest.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.BadRequest)
     expect(host.of(ServerMsgType.PieceLockedRelay)).toHaveLength(1) // no second relay
+    void server
+  })
+
+  test('anticheat: a lock with a piece from the wrong bag position ends the match (invalid_move)', () => {
+    const { server, host, guest } = startedMatch()
+    const seed = seedOf(host)
+    const honest = honestFirstLock(seed)
+    const cheater = { ...honest, pieceType: honest.pieceType === 'O' ? 'I' : 'O' }
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: cheater })
+    expect(guest.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.InvalidMove)
+    expect(guest.terminated).toBe(true)
+    const over = host.ws.lastOf(ServerMsgType.MatchOver)
+    expect(over.payload.reason).toBe('forfeit')
+    expect(over.payload.winnerId).toBe(host.snapshot.players[0].id)
     void server
   })
 

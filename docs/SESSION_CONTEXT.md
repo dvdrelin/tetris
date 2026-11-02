@@ -832,3 +832,39 @@ ready, чат), `MultiplayerGameView.vue` (два стакана + очеред�
 обеим сторонам; серверный **реплей** партии для верификации репортов (анти-чит и gap-fill
 после реконнекта: досать недостающие globalStep); сертифицированные результаты матчей →
 лидерборд. Быстрые фразы в чате матча (GDD). Затем E — лиги/ spectator / Glicko-2 (вне v1).
+
+### Блок D (сделан): серверный реплей, garbage-очередь, анти-чит
+
+Сервер стал авторитетом по матчу (`backend/src/services/matchState.ts`):
+
+- **MatchState на комнату** с `game_start`: у каждого игрока свой `BoardManager` + тот же
+  seeded `PieceFactoryProvider` (сид общий). Каждый `piece_lock` проходит верификацию **до**
+  ретрансляции сопернику: строгий `globalStep == step+1`, идентичность фигуры
+  (spawned/held-зеркало движка; холд на пустом слоте клиент помечает `holdExtra` — сервер
+  потребляет лишний pull из мешка), границы, overlap, наличие опоры, и точное совпадение
+  `linesCleared` с серверным `clearLines()`.
+- **Нарушение = конец матча**: GDD `disconnect_on_mismatch` → `error(invalid_move)` +
+  terminate + forfeit (победитель — оппонент). Логи `[mp] piece_lock violation`.
+- **Атака** (`backend/src/config/mpBalance.ts`, зеркало `02_GAME_CONFIG.json`): base lines
+  {1,2,4,7}, combo ×1/1.25/1.5/2.0 (ceil), perfect_clear +10 и 1000 мс иммунитет (входящий
+  мусор в окно иммунитета снимается при выдаче), counteract ratio 1.0 (свои клиренсы снимают
+  старейшие pending-прибытия целиком), per-player cap 20 рядов, задержки очереди
+  400/500/700/900/1200 мс.
+- **Доставка мусора**: сервер генерирует ряды (случайная дыра + цвета 1..7), новые сообщения
+  `garbage_arrive {arrivals:[{rows, applyAt}]}` (батчами); sweep каждые 250 мс (`MP_GARBAGE_SWEEP_MS`);
+  `applyAt` — по серверным часам, клиент ставит через `serverNow()` → `InsertGarbage` движку.
+- **Rejoin/resync**: при rejoin в идущий матч сервер отдаёт все pending-прибытия игрока одним
+  батчем (прошедшие applyAt → немедленная вставка). Клиент **буферит локи при обрыве WS**
+  (≤300) и досылает их по порядку после rejoin — реплей не видит разрывов шагов.
+- **Time limit 180 с** (`MP_TIME_LIMIT_SEC`): match_over reason `survival`, победитель — по
+  сертифицированным линиям (точное равенство → draw). `MatchResult.lines` теперь сертифицированы
+  реплеем (score остаётся честным 0).
+- Тесты: `backend/tests/unit/matchState.test.ts` (11: tables/combo/PC/immunity/counteract/cap +
+  верификация с холдом, floating/overlap/fake-lines), roomServer-тесты переведены на честные локи
+  из seeded-мешка + анти-чит тест (invalid_move→forfeit); FE: `garbage_arrive`-тест стора.
+  BE 85/85, FE 259/259.
+
+### Куда дальше (мультиплеер, после D)
+
+E — лиги/spectator/Glicko-2 (вне v1). Ближайшее по v1: быстрые фразы (пресеты чата), smoke-проверка
+garbage на живом стенде (docker + ws-клиент), деплой/пуш — по решению пользователя.

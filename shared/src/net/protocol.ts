@@ -60,6 +60,13 @@ export interface PieceLockPayload {
   linesCleared: number;
   /** Visual-only: the piece this player will spawn next (opponent panels). Never affects rules. */
   nextType?: PieceType;
+  /**
+   * Hold accounting for the server replay: this step the player hit hold while the hold slot
+   * was EMPTY — the engine pulled one extra bag piece to keep the hand filled, so the server
+   * must consume one extra pull from its seeded bag. (Swaps with a filled slot need no flag:
+   * the locked piece then equals the server's remembered `held` piece.)
+   */
+  holdExtra?: boolean;
 }
 
 export interface PingPayload {
@@ -88,6 +95,7 @@ export enum ServerMsgType {
   ChatMessage = 'chat_message',
   GameStart = 'game_start', // per-recipient: the shared seed + this player's index
   PieceLockedRelay = 'piece_locked', // one player's lock forwarded to the opponents (shadow boards)
+  GarbageArrive = 'garbage_arrive', // server-scheduled attack rows against this player
   MatchOver = 'match_over',
   Pong = 'pong',
   Error = 'error',
@@ -163,6 +171,16 @@ export interface PlayerPieceLockPayload {
   lock: PieceLockPayload;
 }
 
+// Garbage the server scheduled against a player. `arrivals` is a batch so a mid-match rejoin
+// gets the full pending queue in one message (applyAt in the past = apply immediately).
+export interface GarbageArrival {
+  rows: number[][]; // bottom-to-top, 0 = hole, 1..7 = colored garbage cells
+  applyAt: number; // server-clock ms; the client inserts when its synced clock reaches it
+}
+export interface GarbageArrivePayload {
+  arrivals: GarbageArrival[];
+}
+
 export interface MatchResult {
   playerId: string;
   name: string;
@@ -194,6 +212,7 @@ export enum MpErrorCode {
   NotInRoom = 'not_in_room',
   BadMessage = 'bad_message', // unknown type / malformed payload
   RateLimited = 'rate_limited',
+  InvalidMove = 'invalid_move', // piece_lock failed the server replay (anticheat: mismatch → drop)
 }
 
 export interface MpErrorPayload {
@@ -209,6 +228,7 @@ export type ServerMessage =
   | { type: ServerMsgType.ChatMessage; payload: ChatMessagePayload }
   | { type: ServerMsgType.GameStart; payload: GameStartPayload }
   | { type: ServerMsgType.PieceLockedRelay; payload: PlayerPieceLockPayload }
+  | { type: ServerMsgType.GarbageArrive; payload: GarbageArrivePayload }
   | { type: ServerMsgType.MatchOver; payload: MatchOverPayload }
   | { type: ServerMsgType.Pong; payload: PongPayload }
   | { type: ServerMsgType.Error; payload: MpErrorPayload };

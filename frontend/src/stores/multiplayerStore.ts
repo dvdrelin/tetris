@@ -88,6 +88,15 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   let reconnectDelay = 1000
   let intentionalClose = false
   let clockOffset = 0 // serverTs - Date.now(); one-way estimate, ±RTT/2 (block D refines)
+  // Garbage scheduled by the server, keyed to the synced clock.
+  let garbageTimers: ReturnType<typeof setTimeout>[] = []
+  // Locks that went out while the socket was down: retransmitted in order right after rejoin
+  // so the server replay never sees a step gap.
+  let unsentLocks: ClientMessage[] = []
+  // Spawn/hold bookkeeping for the piece_lock holdExtra flag (see protocol.ts).
+  let spawnedType: PieceType | null = null
+  let awaitingSpawn = false
+  let pendingHoldExtra = false
 
   const me = computed<RoomPlayerRef | null>(
     () => room.value?.players.find((p) => p.id === myId.value) ?? null,
@@ -145,7 +154,13 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   }
 
   function send(msg: ClientMessage): void {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg))
+      return
+    }
+    // Locks produced during a socket outage are buffered (bounded) and retransmitted in order
+    // right after a rejoin — the server replay requires strictly consecutive steps.
+    if (msg.type === ClientMsgType.PieceLock && unsentLocks.length < 300) unsentLocks.push(msg)
   }
 
   function handleServerMessage(raw: string): void {
@@ -166,7 +181,10 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
         const storedMatch = readJson<StoredMatch>(MATCH_KEY)
         if (room.value.phase === 'playing') {
           if (engine) {
-            // The engine survived the reconnect (tab stayed open): keep playing.
+            // The engine survived the reconnect (tab stayed open): retransmit buffered locks,
+            // keep playing.
+            for (const m of unsentLocks) send(m)
+            unsentLocks = []
             break
           }
           if (storedMatch && storedMatch.code === room.value.code) {
@@ -196,6 +214,9 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
         break
       case ServerMsgType.PieceLockedRelay:
         applyShadow(msg.payload)
+        break
+      case ServerMsgType.GarbageArrive:
+        for (const a of msg.payload.arrivals) scheduleGarbage(a)
         break
       case ServerMsgType.MatchOver:
         matchOverInfo.value = msg.payload
@@ -281,7 +302,15 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
 
     engine = new GameEngine(
       {
-        onStateChange: () => updateLocalState(),
+        onStateChange: () => {
+          // The first state change after a spawn names the hand piece — the lock payload
+          // compares against it to decide whether this step involved hold.
+          if (awaitingSpawn) {
+            spawnedType = engine?.getGameState().currentPiece?.type ?? null
+            awaitingSpawn = false
+          }
+          updateLocalState()
+        },
         onPieceLocked: (info) => {
           const state = engine?.getGameState()
           send({
@@ -294,8 +323,13 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
               rotation: info.rotation,
               linesCleared: info.linesCleared,
               nextType: state?.nextQueue[0],
+              // hold on an EMPTY slot pulled an extra bag piece this step (the only kind the
+              // server mirror cannot infer from piece identity alone):
+              holdExtra: pendingHoldExtra || undefined,
             },
           })
+          pendingHoldExtra = false
+          awaitingSpawn = true
         },
         // In a match, topping out is the loss signal: report it as a surrender; the server
         // answers match_over, which stops the engine and shows the results panel.
@@ -309,6 +343,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     if (startTimer) clearTimeout(startTimer)
     const wait = Math.max(0, p.startTime - serverNow())
     startTimer = setTimeout(() => {
+      awaitingSpawn = true // the very first spawn names the initial hand piece
       engine?.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Arcade } })
       updateLocalState()
     }, wait)
@@ -316,6 +351,11 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
 
   function mpHandleCommand(cmd: AnyCommand): void {
     if (!engine) return
+    // A hold press while the slot is empty is the "extra bag pull" the server mirror must know
+    // about (flag rides the next piece_lock).
+    if (cmd.type === CommandType.HoldPiece && engine.getGameState().holdType === null) {
+      pendingHoldExtra = true
+    }
     engine.handleCommand(cmd)
     updateLocalState()
   }
@@ -356,6 +396,8 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
       clearTimeout(startTimer)
       startTimer = null
     }
+    for (const t of garbageTimers) clearTimeout(t)
+    garbageTimers = []
     if (engine) {
       engine.stop()
       engine = null
@@ -363,11 +405,26 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     updateLocalState()
   }
 
+  /** One server-scheduled garbage arrival → InsertGarbage on the synced clock. */
+  function scheduleGarbage(a: { rows: number[][]; applyAt: number }): void {
+    const delay = Math.max(0, a.applyAt - serverNow())
+    const timer = setTimeout(() => {
+      if (engine && mpGameState.value.isRunning && !mpGameState.value.isGameOver) {
+        mpHandleCommand({ type: CommandType.InsertGarbage, payload: { rows: a.rows } })
+      }
+    }, delay)
+    garbageTimers.push(timer)
+  }
+
   function resetMatchLocal(): void {
     stopEngine()
     match.value = null
     shadows.value = {}
     shadowBoards.clear()
+    unsentLocks = []
+    spawnedType = null
+    awaitingSpawn = false
+    pendingHoldExtra = false
     mpGameState.value = emptyGameState()
   }
 

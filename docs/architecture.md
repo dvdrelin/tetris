@@ -67,14 +67,16 @@ tetris/                          (корень monorepo, npm workspaces: fronten
     └── src/
         ├── index.ts             # создание app/httpServer/ws + upgrade-роутинг /ws
         ├── servers/
-        │   └── roomServer.ts    # WebSocket: комнаты, lifecycle, chat, relay piece_lock
+        │   └── roomServer.ts    # WebSocket: комнаты, lifecycle, chat, relay+verify piece_lock
         ├── config/
-        │   └── mpConfig.ts      # транспортные лимиты/тайминги MP (env-перекрытия)
+        │   ├── mpConfig.ts      # транспортные лимиты/тайминги MP (env-перекрытия)
+        │   └── mpBalance.ts     # боевая таблица MP (зеркало design.game/02_GAME_CONFIG.json)
         ├── routes/
         │   └── gameRouter.ts    # REST: POST /score, GET /scores,/leaderboard,/player/:name
         ├── middleware/
         │   └── rate-limit.ts    # RateLimiter: скользящее окно на IP (без зависимостей)
         └── services/
+            ├── matchState.ts    # серверный реплей партии: верификация локов, garbage-очередь
             └── scoreService.ts  # persistence в data/scores.json + лидерборды
 ```
 
@@ -248,9 +250,15 @@ tetris/                          (корень monorepo, npm workspaces: fronten
   пользуется игра. Порядок подключения критичен: `/api/health` → `createGameRouter` →
   `express.static(frontend/dist)` → SPA catch-all `app.get('*')`. Если поставить health
   после статики, `GET /api/health` вернёт HTML вместо JSON.
-- **`roomServer.ts`** — мультиплеерные комнаты (MP block B/C): коды комнат, lifecycle
+- **`roomServer.ts`** — мультиплеерные комнаты (MP block B/C/D): коды комнат, lifecycle
   `lobby→playing→over`, ready/старт с общим seed, grace/rejoin-токены, чат, лимиты на
-  соединение, ретрансляция `piece_lock` сопернику; heartbeat и `maxPayload` навешаны в `index.ts`.
+  соединение, верифицированная ретрансляция `piece_lock`, доставка `garbage_arrive` по
+  `applyAt` (sweep каждые 250 мс), time-limit матча; heartbeat и `maxPayload` навешаны в `index.ts`.
+- **`matchState.ts`** — серверный реплей каждой идущей партии: собственный `BoardManager` +
+  тот же seeded bag на игрока; каждый `piece_lock` проверяется (шаг, идентичность фигуры
+  через spawned/held-зеркало с флагом `holdExtra`, границы, overlap, опора, точный счёт
+  клиренсов), нарушение — `invalid_move` + terminate + forfeit; принятые клиренсы считают
+  атаку (combo, perfect clear, counteract, cap) и ставят garbage в очередь с очередью-задержкой.
 - **`scoreService.ts`** — persistence очков в `data/scores.json`: сохранение, топ-очки,
   лидерборд (по игроку/режиму), статистика по игроку; плюс read-only `health()` —
   проверка, что каталог данных существует, `scores.json` парсится как массив

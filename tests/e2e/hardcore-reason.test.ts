@@ -69,41 +69,60 @@ test.describe('Hardcore death cause', () => {
   });
 
   test('restart after a Hardcore stack crash clears the cause', async ({ page }) => {
-    await startInMode(page, 'Хардкор');
-
     // The wall no longer kills, so the death has to come from the stack. Build a two-level ledge:
     // three pieces hard-dropped against the right wall, then two a column and a half to the left.
     // The next piece then walks sideways into the side of the tall column — a real crash. (Piece
     // types are bag-random, so the push counts are generous: every piece ends flush at the wall.)
     // Every press must be awaited: an un-awaited ArrowRight can land *after* the following hard
     // drop, and the "ledge" ends up in the middle of the board instead of against the wall.
+    await startInMode(page, 'Хардкор');
     const press = async (key: string) => {
       await page.keyboard.press(key);
     };
-    for (let i = 0; i < 3; i++) {
-      for (let k = 0; k < 8; k++) await press('ArrowRight');
-      await press('Space');
-    }
-    for (let i = 0; i < 2; i++) {
-      for (let k = 0; k < 5; k++) await press('ArrowRight');
-      await press('Space');
-    }
 
-    // Walk a fresh piece sideways while it descends: the moment one of its cells targets a locked
-    // cell, the engine ends the run with the crash cause.
-    let over: boolean | undefined;
-    for (let attempt = 0; attempt < 3 && over !== true; attempt++) {
-      for (let row = 0; row < 18 && over !== true; row++) {
-        await press('ArrowDown');
-        for (let k = 0; k < 3 && over !== true; k++) {
-          await press('ArrowRight');
-          over = (await getGameState(page))?.isGameOver;
-        }
+    // One attempt: build the ledge, then walk a fresh piece sideways while it descends; the moment
+    // one of its cells targets a locked cell, the engine ends the run and reports the cause.
+    const crashAttempt = async (): Promise<string | null> => {
+      for (let i = 0; i < 3; i++) {
+        for (let k = 0; k < 8; k++) await press('ArrowRight');
+        await press('Space');
       }
-      if (over !== true) await press('Space');
+      for (let i = 0; i < 2; i++) {
+        for (let k = 0; k < 5; k++) await press('ArrowRight');
+        await press('Space');
+      }
+      let over: boolean | undefined;
+      for (let attempt = 0; attempt < 3 && over !== true; attempt++) {
+        for (let row = 0; row < 18 && over !== true; row++) {
+          await press('ArrowDown');
+          for (let k = 0; k < 3 && over !== true; k++) {
+            await press('ArrowRight');
+            over = (await getGameState(page))?.isGameOver;
+          }
+        }
+        if (over !== true) await press('Space');
+      }
+      expect(over).toBe(true);
+      return (await getGameState(page)).overReason;
+    };
+
+    // Bag-random luck decides whether this ledge kills the piece sideways (the crash we came for)
+    // or just lets the stack reach the top (block-out). Retried like a mulligan: a block-out bag
+    // gets a restart and a fresh build, until the crash cause shows up.
+    let reason: string | null = null;
+    for (let bag = 0; bag < 5 && reason !== 'hardcore-wall-crash'; bag++) {
+      if (bag > 0) {
+        await page.keyboard.press('Enter');
+        await expect
+          .poll(async () => (await getGameState(page))?.isRunning, { timeout: 5000 })
+          .toBe(true);
+      }
+      reason = await crashAttempt();
+      if (reason !== 'hardcore-wall-crash' && reason !== 'block-out') {
+        throw new Error(`unexpected death cause: ${reason}`);
+      }
     }
-    expect(over).toBe(true);
-    expect((await getGameState(page)).overReason).toBe('hardcore-wall-crash');
+    expect(reason).toBe('hardcore-wall-crash');
 
     await page.keyboard.press('Enter');
     await expect

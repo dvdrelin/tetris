@@ -31,4 +31,8 @@ export const MP_CONFIG = Object.freeze({
   maxPayloadBytes: num('MP_MAX_PAYLOAD', 16_384),
   /** Server-side ws transport heartbeat (README-of-ws pattern; nginx idle is 60 s). */
   transportPingMs: num('MP_TRANSPORT_PING_MS', 30_000),
+  /** heads_up time limit (02_GAME_CONFIG match.heads_up.time_limit_sec). */
+  timeLimitSec: num('MP_TIME_LIMIT_SEC', 180),
+  /** How often scheduled garbage is checked against the clock and shipped out. */
+  garbageSweepMs: num('MP_GARBAGE_SWEEP_MS', 250),
 })
