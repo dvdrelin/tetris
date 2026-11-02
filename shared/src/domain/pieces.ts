@@ -60,12 +60,31 @@ export const PIECE_SHAPES: Record<PieceType, number[][][]> = {
   ],
 };
 
+// Piece source: a () => number in [0, 1). Single-player keeps Math.random (unpredictable on
+// purpose); multiplayer injects a seeded PRNG so the client and the server draw identical
+// sequences (MP block A, GDD §2.1).
+export type PieceRng = () => number;
+
+// mulberry32: small, fast, deterministic PRNG seeded from a uint32 (GDD §2.2 seed format).
+// Not cryptographic — it never makes the seed public-facing, the server draws it with
+// crypto.randomInt and only distributes it to session participants.
+export function mulberry32(seed: number): PieceRng {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // 7-bag randomizer for fair piece distribution
 export class PieceFactory {
-  private bag: PieceType[] = [];
   private shuffledBag: PieceType[] = [];
+  private readonly rng: PieceRng;
 
-  constructor() {
+  constructor(rng: PieceRng = Math.random) {
+    this.rng = rng;
     this.resetBag();
   }
 
@@ -74,9 +93,9 @@ export class PieceFactory {
       PieceType.I, PieceType.O, PieceType.T, PieceType.S, PieceType.Z, PieceType.J, PieceType.L
     ];
     this.shuffledBag = [...base];
-    // Fisher-Yates shuffle
+    // Fisher-Yates shuffle (rng-driven so the sequence is reproducible under a seed)
     for (let i = this.shuffledBag.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(this.rng() * (i + 1));
       [this.shuffledBag[i], this.shuffledBag[j]] = [this.shuffledBag[j], this.shuffledBag[i]];
     }
   }
@@ -92,8 +111,11 @@ export class PieceFactory {
 export class PieceFactoryProvider {
   private factory: PieceFactory;
 
-  constructor() {
-    this.factory = new PieceFactory();
+  constructor(options?: { seed?: number; rng?: PieceRng }) {
+    const rng =
+      options?.rng ??
+      (options?.seed !== undefined ? mulberry32(options.seed) : Math.random);
+    this.factory = new PieceFactory(rng);
   }
 
   public nextPieceType(): PieceType {

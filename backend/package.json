@@ -10,6 +10,7 @@
     "test:unit": "jest"
   },
   "dependencies": {
+    "@neon-tetris/shared": "*",
     "express": "^4.22.3",
     "ws": "^8.16.0"
   },

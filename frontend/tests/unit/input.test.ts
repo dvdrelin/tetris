@@ -5,16 +5,16 @@
  * under the modern fake-timer implementation, and the controller takes its clock as an injected
  * function, so no test waits for real time.
  */
-import { RepeatController } from '../../src/shared/input/repeat-controller';
-import { InputController } from '../../src/shared/input/input-controller';
-import { HELD_ACTIONS, actionForKey, actionToCommand, isHeldAction } from '../../src/shared/input/input-actions';
-import { DAS_CONFIG } from '../../src/shared/config/game-config';
-import { CommandType } from '../../src/shared/cqrs/commands';
-import { InputAction } from '../../src/shared/input/input-actions';
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
-import { GameMode, GameOverReason, PieceType } from '../../src/shared/domain/types';
+import { RepeatController } from '@neon-tetris/shared/input/repeat-controller';
+import { InputController } from '@neon-tetris/shared/input/input-controller';
+import { HELD_ACTIONS, actionForKey, actionToCommand, isHeldAction } from '@neon-tetris/shared/input/input-actions';
+import { DAS_CONFIG } from '@neon-tetris/shared/config/game-config';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
+import { InputAction } from '@neon-tetris/shared/input/input-actions';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { GameMode, GameOverReason, PieceType } from '@neon-tetris/shared/domain/types';
 
 beforeAll(() => jest.useFakeTimers());
 afterAll(() => jest.useRealTimers());

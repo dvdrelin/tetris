@@ -21,13 +21,19 @@ COPY package*.json ./
 # Copy workspace package.json files
 COPY frontend/package*.json frontend/
 COPY backend/package*.json backend/
+COPY shared/package*.json shared/
 
 # Install all dependencies (including dev dependencies needed for build)
 RUN npm install
 
+# Shared first: the backend (CommonJS) compiles against shared/dist typings and the
+# frontend resolves @neon-tetris/shared to shared/src through the vite alias.
+COPY tsconfig.base.json ./tsconfig.base.json
+COPY shared/ ./shared/
+RUN cd shared && npx tsc -p tsconfig.json
+
 # Copy frontend source and build
 COPY frontend/ ./frontend/
-COPY tsconfig.base.json ./tsconfig.base.json
 RUN cd frontend && npm install && npx vite build
 
 # Copy backend source and build
@@ -39,11 +45,17 @@ FROM node:22-alpine AS production
 
 WORKDIR /app
 
-# Install only production dependencies for backend
-COPY backend/package*.json ./backend/
-RUN cd backend && npm install --omit=dev
+# Workspace root, not just backend: backend/dist requires '@neon-tetris/shared', and that
+# link only exists if npm installs the workspace set here. vue/pinia are also installed
+# (unused at runtime) — a few MB for keeping the runtime resolution identical to dev.
+COPY package*.json ./
+COPY frontend/package*.json frontend/
+COPY backend/package*.json backend/
+COPY shared/package*.json shared/
+RUN npm ci --omit=dev
 
-# Copy built frontend and backend dist
+# Copy built shared, frontend and backend dist
+COPY --from=builder /app/shared/dist ./shared/dist
 COPY --from=builder /app/frontend/dist ./frontend/dist
 COPY --from=builder /app/backend/dist ./backend/dist
 

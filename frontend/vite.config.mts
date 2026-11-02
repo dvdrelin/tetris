@@ -8,6 +8,10 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
+      // Before '@': the workspace package resolves to shared sources, so frontend dev
+      // sees live edits in ../shared without a build step. ('@' is an exact-or-'/'-boundary
+      // match, but ordering keeps this explicit.)
+      '@neon-tetris/shared': fileURLToPath(new URL('../shared/src', import.meta.url)),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },

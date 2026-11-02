@@ -1,9 +1,9 @@
 <script lang="ts">
 import { defineComponent, ref } from 'vue'
 import { useGameStore } from '../stores/gameStore'
-import { GameMode } from '../shared/domain/types'
-import { CONTROL_HINTS } from '../shared/config/control-hints'
-import { PLAYER_NAME_MAX } from '../shared/domain/player-name'
+import { GameMode } from '@neon-tetris/shared/domain/types'
+import { CONTROL_HINTS } from '@neon-tetris/shared/config/control-hints'
+import { PLAYER_NAME_MAX } from '@neon-tetris/shared/domain/player-name'
 
 export default defineComponent({
   name: 'MenuView',

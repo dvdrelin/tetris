@@ -6,11 +6,11 @@
  * records why it died, and these tests pin the exact cause for each death path, including the rule
  * that Arcade must not die and must not report a cause at all.
  */
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PIECE_SHAPES, buildPiece } from '../../src/shared/domain/pieces';
-import { GameMode, GameOverReason, PieceType } from '../../src/shared/domain/types';
-import { CommandType } from '../../src/shared/cqrs/commands';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PIECE_SHAPES, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { GameMode, GameOverReason, PieceType } from '@neon-tetris/shared/domain/types';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
 
 const W = 10;
 const H = 20;

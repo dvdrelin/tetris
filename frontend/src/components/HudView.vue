@@ -2,9 +2,9 @@
 import { defineComponent, computed, onMounted, watch } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import { CELL_COLORS } from '../stores/gameStore'
-import { PieceType } from '../shared/domain/types'
-import { PIECE_SHAPES, PIECE_COLOR_INDEX } from '../shared/domain/pieces'
-import { CONTROL_HINTS } from '../shared/config/control-hints'
+import { PieceType } from '@neon-tetris/shared/domain/types'
+import { PIECE_SHAPES, PIECE_COLOR_INDEX } from '@neon-tetris/shared/domain/pieces'
+import { CONTROL_HINTS } from '@neon-tetris/shared/config/control-hints'
 
 // A6: the further a queued piece is from the active one, the more transparent it is.
 const QUEUE_OPACITY = [1, 0.6, 0.35]

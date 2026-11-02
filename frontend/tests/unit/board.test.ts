@@ -1,5 +1,5 @@
-import { BoardManager } from '../../src/shared/domain/board';
-import { Cell, PieceType } from '../../src/shared/domain/types';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { Cell, PieceType } from '@neon-tetris/shared/domain/types';
 
 describe('BoardManager', () => {
   // Real dimensions from codebase: 10x20

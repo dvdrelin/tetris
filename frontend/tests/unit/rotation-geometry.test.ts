@@ -1,5 +1,5 @@
-import { PIECE_SHAPES, buildPiece } from '../../src/shared/domain/pieces';
-import { PieceType } from '../../src/shared/domain/types';
+import { PIECE_SHAPES, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { PieceType } from '@neon-tetris/shared/domain/types';
 
 // Canonical SRS rotation states (Tetris Wiki), kept in the same bounding boxes the
 // engine uses: I = 4x4, O = 2x2, JLSTZ = 3x3. Any change to PIECE_SHAPES that breaks

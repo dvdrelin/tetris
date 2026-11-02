@@ -1,9 +1,9 @@
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
-import { GameMode, PieceType } from '../../src/shared/domain/types';
-import { CommandType } from '../../src/shared/cqrs/commands';
-import { HARDCORE_SPEED_MULTIPLIER, LOCK_CONFIG, SPEED_CONFIG, dropInterval } from '../../src/shared/config/game-config';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { GameMode, PieceType } from '@neon-tetris/shared/domain/types';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
+import { HARDCORE_SPEED_MULTIPLIER, LOCK_CONFIG, SPEED_CONFIG, dropInterval } from '@neon-tetris/shared/config/game-config';
 
 const W = 10;
 const H = 20;

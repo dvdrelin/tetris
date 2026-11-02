@@ -8,6 +8,7 @@ export enum CommandType {
   Tick = 'Tick',
   PauseGame = 'PauseGame',
   ResumeGame = 'ResumeGame',
+  InsertGarbage = 'InsertGarbage',
 }
 
 export interface Command {
@@ -60,4 +61,12 @@ export interface ResumeGameCommand extends Command {
   type: CommandType.ResumeGame;
 }
 
-export type AnyCommand = MoveCommand | RotateCommand | SoftDropCommand | HardDropCommand | HoldPieceCommand | TickCommand | StartGameCommand | PauseGameCommand | ResumeGameCommand;
+// Multiplayer garbage (MP block A, GDD §1.1): rows bottom-to-top; within a row, 0 is the hole
+// and 1..7 are colored locked blocks. The engine validates the shape (row length, value range,
+// at least one hole per row) and refuses malformed payloads instead of corrupting the board.
+export interface InsertGarbageCommand extends Command {
+  type: CommandType.InsertGarbage;
+  payload: { rows: number[][] };
+}
+
+export type AnyCommand = MoveCommand | RotateCommand | SoftDropCommand | HardDropCommand | HoldPieceCommand | TickCommand | StartGameCommand | PauseGameCommand | ResumeGameCommand | InsertGarbageCommand;

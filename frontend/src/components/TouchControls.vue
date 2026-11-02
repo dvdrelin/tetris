@@ -1,8 +1,8 @@
 <script lang="ts">
 import { defineComponent, PropType, ref } from 'vue'
-import { InputController } from '../shared/input/input-controller'
-import { InputAction } from '../shared/input/input-actions'
-import { isTouchDevice } from '../shared/input/touch'
+import { InputController } from '@neon-tetris/shared/input/input-controller'
+import { InputAction } from '@neon-tetris/shared/input/input-actions'
+import { isTouchDevice } from '@neon-tetris/shared/input/touch'
 
 /**
  * Touch controls (B3). Same action vocabulary as the keyboard, so DAS/ARR, hold, rotation and

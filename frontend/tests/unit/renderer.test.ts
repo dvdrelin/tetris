@@ -1,6 +1,6 @@
 import { render, RenderState, GAME_OVER_TEXT } from '../../src/engine/renderer';
 import { GameStateDTO, CELL_COLORS } from '../../src/stores/gameStore';
-import { GameOverReason } from '../../src/shared/domain/types';
+import { GameOverReason } from '@neon-tetris/shared/domain/types';
 
 describe('renderer', () => {
   function createMockCtx(): CanvasRenderingContext2D {

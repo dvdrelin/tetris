@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // CJS output: the backend (CommonJS, `rootDir: src`) resolves this package at runtime
+    // through node_modules -> main -> dist/index.js. The frontend never imports dist:
+    // vite/alias and jest moduleNameMapper point at src, so dev-time edits are live there.
+    // DOM lib is listed because the input layer (touch.ts, input-controller.ts) is browser
+    // code that lives in this package; the backend simply never calls those modules.
+    "module": "commonjs",
+    "lib": ["ES2020", "DOM"],
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

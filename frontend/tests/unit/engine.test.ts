@@ -1,8 +1,8 @@
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PieceFactoryProvider } from '../../src/shared/domain/pieces';
-import { PieceType } from '../../src/shared/domain/types';
-import { CommandType } from '../../src/shared/cqrs/commands';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PieceFactoryProvider } from '@neon-tetris/shared/domain/pieces';
+import { PieceType } from '@neon-tetris/shared/domain/types';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
 
 const REAL_CONFIG = {
   boardWidth: 10,

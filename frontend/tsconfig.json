@@ -4,7 +4,15 @@
     "jsx": "preserve",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    // Type-checking resolves the workspace package to its sources (live during dev/build);
+    // vite mirrors this via resolve.alias. The compiled dist of @neon-tetris/shared is a
+    // backend-runtime artifact — the frontend never links it.
+    "baseUrl": ".",
+    "paths": {
+      "@neon-tetris/shared": ["../shared/src/index.ts"],
+      "@neon-tetris/shared/*": ["../shared/src/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "env.d.ts"]
 }

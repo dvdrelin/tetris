@@ -7,6 +7,11 @@ module.exports = {
     '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json', isolatedModules: true }],
   },
   moduleFileExtensions: ['ts', 'js'],
+  // Workspace package: tests run against shared sources, not the backend-oriented dist.
+  moduleNameMapper: {
+    '^@neon-tetris/shared$': '<rootDir>/../shared/src/index.ts',
+    '^@neon-tetris/shared/(.*)$': '<rootDir>/../shared/src/$1',
+  },
   testMatch: ['<rootDir>/tests/unit/**/*.test.ts'],
   testPathIgnorePatterns: ['/node_modules/'],
 }

@@ -4,8 +4,8 @@ import { useGameStore } from '../stores/gameStore'
 import GameBoard from './GameBoard.vue'
 import HudView from './HudView.vue'
 import TouchControls from './TouchControls.vue'
-import { InputController } from '../shared/input/input-controller'
-import { InputAction, actionToCommand } from '../shared/input/input-actions'
+import { InputController } from '@neon-tetris/shared/input/input-controller'
+import { InputAction, actionToCommand } from '@neon-tetris/shared/input/input-actions'
 
 export default defineComponent({
   name: 'GameView',

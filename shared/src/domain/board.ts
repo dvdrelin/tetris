@@ -97,6 +97,27 @@ export class BoardManager {
     return linesCleared;
   }
 
+  /**
+   * Multiplayer garbage rows (MP block A): `rows` are listed bottom-to-top — rows[0] lands as
+   * the new bottom line. Cell value 0 is the hole (a never-locked empty cell), 1..7 are locked
+   * colored blocks, so the row is exactly as the attack pipeline computed it (determinism: the
+   * server builds the same rows for its replay). The stack shifts up by rows.length and the same
+   * number of top rows leaves the board. Returns how many of those leaving rows contained locked
+   * cells — the top-out evidence the engine judges (0 means only empty space overflowed).
+   */
+  insertGarbageRows(rows: number[][]): number {
+    const n = rows.length;
+    let pushedOut = 0;
+    for (let y = 0; y < n; y++) {
+      if (this.cells[y].some(cell => cell.locked)) pushedOut++;
+    }
+    const garbage = rows.map(row =>
+      row.map(v => ({ value: v, locked: v !== 0 }))
+    ).reverse(); // board rows are indexed top→bottom, payload is bottom→top
+    this.cells = [...this.cells.slice(n), ...garbage];
+    return pushedOut;
+  }
+
   getSnapshot(): number[][] {
     return this.cells.map(row => row.map(cell => cell.value));
   }

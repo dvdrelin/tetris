@@ -4,13 +4,13 @@
  * with the one collision rule (`isValidPosition` / locked cells). These tests pin the engine's
  * ghost to the exact hard-drop landing in every case.
  */
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
-import { GameMode, PieceType } from '../../src/shared/domain/types';
-import { CommandType } from '../../src/shared/cqrs/commands';
-import { QueryType } from '../../src/shared/cqrs/queries';
-import { SCORING_CONFIG } from '../../src/shared/config/game-config';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { GameMode, PieceType } from '@neon-tetris/shared/domain/types';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
+import { QueryType } from '@neon-tetris/shared/cqrs/queries';
+import { SCORING_CONFIG } from '@neon-tetris/shared/config/game-config';
 
 const W = 10;
 const H = 20;

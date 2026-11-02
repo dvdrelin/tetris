@@ -1,5 +1,5 @@
 import { GameStateDTO, CELL_COLORS } from '../stores/gameStore'
-import { GameOverReason } from '../shared/domain/types'
+import { GameOverReason } from '@neon-tetris/shared/domain/types'
 
 const CELL_SIZE = 24
 

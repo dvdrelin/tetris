@@ -2,8 +2,8 @@
 import { defineComponent, ref, onMounted, onUnmounted } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import { render, RenderState } from '../engine/renderer'
-import { GAME_CONFIG } from '../shared/config/game-config'
-import { CommandType } from '../shared/cqrs/commands'
+import { GAME_CONFIG } from '@neon-tetris/shared/config/game-config'
+import { CommandType } from '@neon-tetris/shared/cqrs/commands'
 
 const BOARD_WIDTH = GAME_CONFIG.boardWidth
 const BOARD_HEIGHT = GAME_CONFIG.boardHeight

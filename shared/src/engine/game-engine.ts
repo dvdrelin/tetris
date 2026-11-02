@@ -5,15 +5,40 @@ import {
 import { BoardManager } from '../domain/board';
 import { PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '../domain/pieces';
 import {
-  AnyCommand, CommandType, MoveCommand, StartGameCommand
+  AnyCommand, CommandType, MoveCommand, StartGameCommand, InsertGarbageCommand
 } from '../cqrs/commands';
 import { AnyQuery, QueryType } from '../cqrs/queries';
 import { GAME_CONFIG, LOCK_CONFIG, QUEUE_SIZE, SCORING_CONFIG, dropInterval } from '../config/game-config';
+
+// One successful placement = one protocol step (GDD §2.2/2.3): `globalStep` numbers placements
+// for the session, and the payload is exactly what a client reports in `piece_lock` and the
+// server's replay compares against. Positions/rotation are the lock-time values (before the
+// next spawn), counters are post-lock so score/lines/combo match the client's view.
+export interface PieceLockInfo {
+  globalStep: number;
+  pieceType: PieceType;
+  x: number;
+  y: number;
+  rotation: number;
+  linesCleared: number;
+  score: number;
+  level: number;
+  totalLines: number;
+  combo: number;
+}
+
+// Result of an applied InsertGarbage command (also the server's `attack_apply` evidence).
+export interface GarbageInfo {
+  rows: number;       // garbage rows that landed
+  pushedOut: number;  // board rows that left the top; >0 counted only if they held locked cells
+}
 
 export interface GameEngineCallbacks {
   onStateChange?: () => void;
   onLineClear?: (count: number, combo: number) => void;
   onGameOver?: (score: number) => void;
+  onPieceLocked?: (lock: PieceLockInfo) => void;
+  onGarbageInserted?: (info: GarbageInfo) => void;
 }
 
 // ===== SRS wall-kick tables =====
@@ -113,14 +138,25 @@ export class GameEngine {
   // time and background tabs can never spend the lock timer.
   private lockAccumulator: number = 0;
   private lockResets: number = 0;
+  // Placement counter for the multiplayer protocol (GDD global_step): incremented on every
+  // successful placement, 1-based at emit time.
+  private globalStep: number = 0;
 
-  constructor(callbacks: GameEngineCallbacks) {
+  constructor(
+    callbacks: GameEngineCallbacks,
+    options?: { seed?: number; pieceFactory?: PieceFactoryProvider },
+  ) {
     this.callbacks = callbacks;
     const config = GAME_CONFIG;
     this.width = config.boardWidth;
     this.height = config.boardHeight;
     this.boardManager = new BoardManager(config.boardWidth, config.boardHeight);
-    this.pieceFactory = new PieceFactoryProvider();
+    // MP block A: `{ seed }` makes the whole engine deterministic (mulberry32-driven 7-bag) —
+    // the server replays a session on the same seed and the same command stream. Without a
+    // seed, behavior is unchanged: Math.random for single-player.
+    this.pieceFactory =
+      options?.pieceFactory ??
+      new PieceFactoryProvider(options?.seed !== undefined ? { seed: options.seed } : undefined);
     this.mode = GameMode.Arcade;
 
     // Fill the visible queue (A6)
@@ -177,6 +213,9 @@ export class GameEngine {
         return;
       case CommandType.ResumeGame:
         this.resumeGame();
+        return;
+      case CommandType.InsertGarbage:
+        this.insertGarbage(command);
         return;
       default:
         // Unknown command type: ignore it.
@@ -254,6 +293,7 @@ export class GameEngine {
     this.elapsedMs = 0;
     this.lockAccumulator = 0;
     this.lockResets = 0;
+    this.globalStep = 0;
     this.holdType = null;
     this.canHold = true;
     this.nextQueue = this.fillQueue();
@@ -522,9 +562,52 @@ export class GameEngine {
     this.spawnPiece(spawnType);
   }
 
+  /**
+   * Incoming multiplayer garbage (MP block A): a validated InsertGarbage command. Malformed
+   * payloads (empty, wrong row length, out-of-range colors, a fully filled row, more rows than
+   * the board is tall) are ignored — the server's replay and the client's optimistic view run
+   * the same rule, so a buggy or hostile host cannot desync them by a corrupt message.
+   * The active piece rides up with the stack; a piece pushed past the spawn row, or locked rows
+   * pushed off the top, ends the game exactly like a stack block-out (GDD §1.1: garbage raises
+   * the whole field).
+   */
+  private insertGarbage(command: InsertGarbageCommand): void {
+    const rows = command.payload?.rows;
+    if (!Array.isArray(rows) || rows.length === 0 || rows.length > this.height) return;
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length !== this.width) return;
+      let holes = 0;
+      for (const v of row) {
+        if (v === 0) { holes++; continue; }
+        if (!Number.isInteger(v) || v < 1 || v > 7) return;
+      }
+      if (holes === 0) return;
+    }
+
+    const pushedOut = this.boardManager.insertGarbageRows(rows);
+    if (this.currentPiece) {
+      this.currentPos.y -= rows.length;
+    }
+    this.callbacks.onGarbageInserted?.({ rows: rows.length, pushedOut });
+
+    const pushedOffBoard =
+      pushedOut > 0 ||
+      (this.currentPiece !== null && !this.isValidPosition(this.currentPiece, this.currentPos));
+    if (pushedOffBoard) {
+      this._isGameOver = true;
+      this._isRunning = false;
+      this._overReason = GameOverReason.BlockOut;
+      this.callbacks.onGameOver?.(this.score);
+    }
+    this.callbacks.onStateChange?.();
+  }
+
   private placePiece(): void {
     if (!this.currentPiece) return;
-    this.boardManager.setCells(this.currentPiece, this.currentPos);
+    const placedPiece = this.currentPiece;
+    const placedPos = { ...this.currentPos };
+    const placedRotation = this.currentRotation.index;
+    this.boardManager.setCells(placedPiece, placedPos);
 
     // Clear lines
     const linesCleared = this.boardManager.clearLines();
@@ -545,6 +628,22 @@ export class GameEngine {
       // A gap without a line clear breaks the combo chain.
       this.combo = 0;
     }
+
+    // MP block A: the lock is a protocol event. The client store (reporting `piece_lock`) and
+    // the server replay subscribe to the same payload; globalStep numbers it for the session.
+    this.globalStep++;
+    this.callbacks.onPieceLocked?.({
+      globalStep: this.globalStep,
+      pieceType: placedPiece.type,
+      x: placedPos.x,
+      y: placedPos.y,
+      rotation: placedRotation,
+      linesCleared,
+      score: this.score,
+      level: this.level,
+      totalLines: this.linesCleared,
+      combo: this.combo,
+    });
 
     // Next piece: spawnNextPiece pulls from the queue and refills it.
     this.spawnNextPiece();
@@ -686,6 +785,11 @@ export class GameEngine {
   // Milliseconds of active play accumulated by the engine (Tick deltas, capped per tick).
   getElapsedMs(): number {
     return this.elapsedMs;
+  }
+
+  // Successful placements so far — the global_step of the multiplayer protocol (GDD §2.2).
+  getGlobalStep(): number {
+    return this.globalStep;
   }
 
   // Milliseconds of gravity time still unpaid towards the next automatic row.

@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { GameEngine } from '../shared/engine/game-engine'
-import { GameMode, GameOverReason, Particle } from '../shared/domain/types'
-import { AnyCommand, CommandType } from '../shared/cqrs/commands'
-import { GAME_CONFIG } from '../shared/config/game-config'
-import { loadPlayerName, savePlayerName } from '../shared/domain/player-name'
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine'
+import { GameMode, GameOverReason, Particle } from '@neon-tetris/shared/domain/types'
+import { AnyCommand, CommandType } from '@neon-tetris/shared/cqrs/commands'
+import { GAME_CONFIG } from '@neon-tetris/shared/config/game-config'
+import { loadPlayerName, savePlayerName } from '@neon-tetris/shared/domain/player-name'
 
 const CELL_SIZE = 24
 const BOARD_WIDTH = GAME_CONFIG.boardWidth

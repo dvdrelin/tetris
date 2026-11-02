@@ -1,8 +1,8 @@
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
-import { GameMode, PieceType } from '../../src/shared/domain/types';
-import { CommandType } from '../../src/shared/cqrs/commands';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { GameMode, PieceType } from '@neon-tetris/shared/domain/types';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
 
 // Published SRS wall-kick tables, written in the classic form where +y is UP.
 // The engine uses +y DOWN, so the reference y is negated when comparing.

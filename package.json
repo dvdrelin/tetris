@@ -3,14 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": [
+    "shared",
     "frontend",
     "backend"
   ],
   "scripts": {
-    "dev": "npm-run-all --parallel dev:frontend dev:backend",
+    "dev": "npm run build:shared && npm-run-all --parallel dev:shared dev:frontend dev:backend",
+    "dev:shared": "npm run dev --workspace shared",
     "dev:frontend": "cd frontend && npx vite --port 3001 --host",
     "dev:backend": "cd backend && npx tsx watch src/index.ts",
-    "build": "npm-run-all build:backend build:frontend",
+    "build": "npm-run-all build:shared build:backend build:frontend",
+    "build:shared": "npm run build --workspace shared",
     "build:frontend": "npm run build --workspace frontend",
     "build:backend": "npm run build --workspace backend",
     "start": "cd backend && node dist/index.js",

@@ -2,12 +2,12 @@
  * Block 3 mechanics: the 3-piece queue (A6), hold (A4), 180° rotation (A5).
  * Piece order is scripted (a stub factory) so the queue assertions are deterministic.
  */
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { BoardManager } from '../../src/shared/domain/board';
-import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
-import { GameMode, PieceType } from '../../src/shared/domain/types';
-import { CommandType } from '../../src/shared/cqrs/commands';
-import { QUEUE_SIZE } from '../../src/shared/config/game-config';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { GameMode, PieceType } from '@neon-tetris/shared/domain/types';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
+import { QUEUE_SIZE } from '@neon-tetris/shared/config/game-config';
 
 const W = 10;
 const H = 20;

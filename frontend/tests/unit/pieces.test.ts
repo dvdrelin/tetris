@@ -1,5 +1,5 @@
-import { PieceFactory, PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '../../src/shared/domain/pieces';
-import { PieceType } from '../../src/shared/domain/types';
+import { PieceFactory, PieceFactoryProvider, PIECE_SHAPES, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { PieceType } from '@neon-tetris/shared/domain/types';
 
 describe('PieceFactory', () => {
   test('should return 7 different pieces before repeating', () => {

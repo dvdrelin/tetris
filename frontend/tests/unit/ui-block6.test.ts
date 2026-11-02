@@ -4,17 +4,17 @@
  */
 import { setActivePinia, createPinia } from 'pinia';
 import { nextTick } from 'vue';
-import { GameEngine } from '../../src/shared/engine/game-engine';
-import { GameMode, PieceType } from '../../src/shared/domain/types';
-import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '../../src/shared/domain/pieces';
-import { BoardManager } from '../../src/shared/domain/board';
-import { CommandType } from '../../src/shared/cqrs/commands';
+import { GameEngine } from '@neon-tetris/shared/engine/game-engine';
+import { GameMode, PieceType } from '@neon-tetris/shared/domain/types';
+import { PIECE_SHAPES, PieceFactoryProvider, buildPiece } from '@neon-tetris/shared/domain/pieces';
+import { BoardManager } from '@neon-tetris/shared/domain/board';
+import { CommandType } from '@neon-tetris/shared/cqrs/commands';
 import {
   DEFAULT_PLAYER_NAME, PLAYER_NAME_KEY, PLAYER_NAME_MAX,
   loadPlayerName, normalizePlayerName, savePlayerName,
-} from '../../src/shared/domain/player-name';
-import { CONTROL_HINTS, VIEW_HINT_KEYS } from '../../src/shared/config/control-hints';
-import { KEY_MAP_KEYS, actionForKey } from '../../src/shared/input/input-actions';
+} from '@neon-tetris/shared/domain/player-name';
+import { CONTROL_HINTS, VIEW_HINT_KEYS } from '@neon-tetris/shared/config/control-hints';
+import { KEY_MAP_KEYS, actionForKey } from '@neon-tetris/shared/input/input-actions';
 
 function createEngine(script?: PieceType[]) {
   const engine = new GameEngine({

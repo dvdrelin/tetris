@@ -701,3 +701,52 @@ rate-limit в блоке 7 закрывает оставшийся риск — 
 
 Мультиплеер (оба дизайна, `docs/PHASE3_MULTIPLAYER.md`, `design.game/*`) — отдельная тема,
 решается на старте MP.
+
+## Что сделано в мультиплеере, блок A (2026-11-02): shared-пакет, seed, garbage, lock-события
+
+Разведка — `docs/MP_RECON.md` (v1.1, там же принятые решения: MVP-скоуп, клиент+серверный
+реплей авторитет, shared-пакет). Блок A закрывает «общий код + подготовленный движок»:
+
+1. **`frontend/src/shared` → корневой workspace-пакет `shared/`** (`@neon-tetris/shared`,
+   npm-workspaces добавлен первым в `workspaces`). Пакет двусторонний по-разному для сторон:
+   - frontend (vite alias + tsconfig paths + jest moduleNameMapper) видит **исходники**
+     `shared/src` — живые правки без пересборки, сборочный граент — бандл vite;
+   - backend (CJS, `rootDir: src`) при сборке/type-check типизирован через `shared/dist`
+     (`main`→`dist/index.js`, `types`→`dist/index.d.ts`), рантайм-require резолвится по
+     node_modules-ссылке npm workspaces. Barrel `shared/src/index.ts` — единая точка
+     импорта для backend; frontend импортирует по модулям.
+   - Порядок сборки корня: `build:shared → build:backend → build:frontend`; `dev` сначала
+     `build:shared`, потом параллельно `dev:shared` (tsc -w) + vite + tsx watch.
+2. **Seed-рандомайзер.** `PieceRng`-инъект в `PieceFactory`; `mulberry32(seed:uint32)`
+   (GDD §2.2); `new GameEngine(cb, { seed })` — движок целиком детерминирован. Без seed —
+   как раньше, `Math.random` для сингла (тесты это сторожат).
+3. **Garbage-вставка.** Команда `InsertGarbage { rows: number[][] }` (снизу-вверх; 0 — дырка,
+   1..7 — locked-блоки). Валидируется в движке (длина, диапазон, обязательная дырка, ≤
+   высоты) — мусорный payload не может рассинхронить клиент и реплей. Стакан и активная
+   фигура поднимаются; выталкивание locked-строк за верх или-figureй за spawn-ряд =
+   `block-out` (тот же `GameOverReason`, оверлею новых текстов не нужно).
+   Paused-игра принимает мусор (решает сервер, локальный pause не убежище).
+4. **События для протокола.** `onPieceLocked(PieceLockInfo)` — payload = будущий
+   `piece_lock` из WS (global_step, тип, x/y/rotation, linesCleared, счёт/уровень/линии/комбо
+   после лока); `onGarbageInserted({rows, pushedOut})`; `engine.getGlobalStep()`; reset на
+   StartGame. Это ровно то, чем Блок B/D будет сверять клиентские репорты на серверном
+   реплее.
+5. **Dockerfile:** builder собирает `shared` до frontend/backend; **production-стадия теперь
+   `npm ci --omit=dev` в корне воркспейсов** (иначе `require('@neon-tetris/shared')` не
+   резолвится) — нужен актуальный `package-lock.json` с shared-workspace (закоммичен).
+   `deploy.sh` не менялся.
+6. **Тесты: 243 FE unit (15 сюит: +seeded-bag, +garbage, +mp-lock-events), 52 BE unit
+   (5 сюит: +sharedEngine — движок headless под Node, та же seed → тот же доска/локи).**
+   E2E 46 — зелёные на прежнем бандле (переезд не менял поведение сингла). `vue-tsc`,
+   `tsc`(BE+shared), `vite build`, `npm run build`, `docker build` — exit 0; прод-бандл
+   меняется (`index-Cno2R3fo.js`) — при следующем деплое сверять sha256 по нему.
+   Smoke вне тестов: `node -e require('@neon-tetris/shared')` из backend — движок работает
+   в чистом Node; vite dev отдаёт `/@fs/.../shared/src/...` (alias живой).
+
+### Куда дальше (мультиплеер)
+
+Блок B — сервер комнат MVP по `docs/MP_RECON.md` §7: код комнаты, state machine
+`lobby→ready→playing→over`, heartbeat (прикладной ping/pong + ws-ping 30 с из README `ws` —
+сейчас heartbeat нет, nginx рвёт idle на 60 с), `maxPayload` (~16 KiB), лимит сообщений на
+соединение, `02_GAME_CONFIG.json` как конфиг. Типы протокола — в `shared` (WSMessage
+переподписывается под GDD §2.3, PHASE3-версия устарела).
