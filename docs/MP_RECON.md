@@ -87,3 +87,4 @@
 | v1.0 | 2026-11-02 | Первичная разведка: код-фактура, дизайн-база, разрывы, риски, вопросы |
 | v1.1 | 2026-11-02 | Приняты решения §6 (MVP-скоуп, клиент+реплей авторитет, shared-пакет); §7 переписан под MVP |
 | v1.2 | 2026-11-02 | **Блок A выполнен** (коммит этой же сессии): пакет `@neon-tetris/shared`, seed-PRNG (mulberry32), `InsertGarbage` в движке, `onPieceLocked`/`onGarbageInserted` + `global_step`, Docker-контур с shared; тесты 243 FE / 52 BE |
+| v1.3 | 2026-11-02 | **Блок B выполнен**: WS-протокол в `shared/src/net`, `RoomServer` (коды комнат, lifecycle, ready/start с seed, grace/rejoin-токены, forfeits, чат, лимиты), heartbeat ws-ping 30 с + app-ping, `maxPayload` 16 KiB, health+mpRooms; снесён мёртвый `GameServer`. Тесты 247 FE / 75 BE / 46 E2E + live-smoke против prod-образа |

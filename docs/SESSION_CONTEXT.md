@@ -746,7 +746,51 @@ rate-limit в блоке 7 закрывает оставшийся риск — 
 ### Куда дальше (мультиплеер)
 
 Блок B — сервер комнат MVP по `docs/MP_RECON.md` §7: код комнаты, state machine
-`lobby→ready→playing→over`, heartbeat (прикладной ping/pong + ws-ping 30 с из README `ws` —
+`lobby→playing→over`, heartbeat (прикладной ping/pong + ws-ping 30 с из README `ws` —
 сейчас heartbeat нет, nginx рвёт idle на 60 с), `maxPayload` (~16 KiB), лимит сообщений на
 соединение, `02_GAME_CONFIG.json` как конфиг. Типы протокола — в `shared` (WSMessage
 переподписывается под GDD §2.3, PHASE3-версия устарела).
+
+## Что сделано в мультиплеере, блок B (2026-11-02): сервер комнат MVP
+
+1. **Протокол — типы в `shared/src/net/protocol.ts`** (discriminated unions Client/Server):
+   `create_room/join_room/rejoin_room/set_ready/leave_room/chat/surrender/piece_lock/ping` →
+   `room_created/room_snapshot/player_joined/player_left/chat_message/game_start/match_over/
+   pong/error`. Имена — из GDD §2.3 + lifecycle комнат; скетч из `PHASE3_MULTIPLAYER.md`
+   официально устарел (в доке пометка v1.1). `normalizeRoomCode` (trim/upper/сепараторы).
+2. **`backend/src/servers/roomServer.ts` (≈550 строк) — единственный пользователь `/ws`;
+   мёртвый `GameServer` удалён** (его никто не вызывал, тестов на него не было):
+   - комнаты по 4-символьному коду (алфавит без I/O/U/0/1/L), `lobby→playing→over`;
+   - старт: все ready и ≥2 игроков → `game_start` каждому: общий `seed` (uint32,
+     `crypto.randomInt`), выровненный `startTime = now + MP_START_DELAY_MS (2 с)`, seat-индекс;
+   - reconnect-сессия: при обрыве сокет держит место `MP_REJOIN_GRACE_MS = 120 с`
+     (`rejoin_room` по одноразовому токену; токен ротируется, чужой/старый → `bad_token`);
+     истечение grace в матче = forfeit победителем выжившему, в лобби = удаление из ростера;
+   - `leave_room` в матче = forfeit; `surrender` → `match_over` (results: победитель первый,
+     `lines` = сумма репортнутых `piece_lock`, `score: 0` до сертифицирования реплеем D —
+     честный ноль вместо фанты); rematch: ready в фазе `over` открывает лобби заново, новый seed;
+   - чат комнаты: только вне матча (в матче — быстрые фразы, блок C), ≤200 символов,
+     управление-символы вырезаны, cool-down 500 мс, история 20 сообщений отдаётся новичку;
+   - лимиты: переиспользован чистый `RateLimiter` — 60 msg/s на соединение + 1 msg/500 ms на
+     чат; ≥30 протокольных нарушений → terminate; `piece_lock` пока только аккумулируется
+     (реплей-верификация — блок D, GDD §2.3).
+3. **Heartbeat:** транспортный ws-ping каждые 30 с + terminate без pong (паттерн README `ws`) —
+   держит и nginx-idle (60 с) на тихих комнатах; прикладной `ping/pong {clientTs, serverTs}`
+   для браузеров (у браузерного WS нет транспортных пингов) — клиентские часы к `startTime`
+   синхронизируются по нему в блоке C. Константы в протоколе: `MP_CLIENT_PING_MS = 25 с`.
+4. **index.ts:** `maxPayload = MP_CONFIG.MP_MAX_PAYLOAD (16 KiB)`, `/api/health.websocket`
+   теперь отдаёт `mpRooms`/`mpPlayers`; конфиг `backend/src/config/mpConfig.ts` c env-перекрытиями.
+5. **Тесты: BE 75/75 (6 сюит: +23 roomServer-теста на фейковом сокете и фейковых таймерах —
+   реальный вход `handleConnection`), FE 247/247 (+protocol-сюита), E2E 46/46.** Live-smoke
+   вне jest (`tmp-audit/mp-smoke-blockb.cjs`, не коммитится — tmp-audit в gitignore) против
+   **prod-образа**: 9 проверок — код комнаты, нормализация кода, общий seed uint32, разные
+   player_index, surrender→match_over, ping/pong, bad_message, oversized-кадр рвёт соединение,
+   health с mpRooms. `tsc`, `vue-tsc && vite build` — exit 0; FE-бандл не изменился
+   (`index-Cno2R3fo.js` — FE-код не трогали, MP UI ещё нет).
+
+### Куда дальше (мультиплеер, после B)
+
+Блок C — фронтенд: `multiplayerStore` (WS-клиент: реконнект + rejoin-токен в localStorage,
+app-ping 25 с, сверка часов по pong/startTime), `RoomView.vue` (код комнаты, список игроков,
+ready, чат), `MultiplayerGameView.vue` (два стакана + очередь входящего мусора — визуал),
+отправка `piece_lock` из `onPieceLocked` движка. Мусор/атаки считаются на сервере в блоке D.

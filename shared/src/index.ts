@@ -14,3 +14,4 @@ export * from './input/input-actions';
 export * from './input/input-controller';
 export * from './input/repeat-controller';
 export * from './input/touch';
+export * from './net/protocol';

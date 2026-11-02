@@ -42,6 +42,8 @@ export interface HealthRouterOptions {
   distPath: string
   /** Live WebSocket connection count, provided by the caller (wss.clients.size). */
   clients?: () => number
+  /** Room-server load (MP block B): open MP rooms and connected players. */
+  rooms?: () => { rooms: number; players: number }
   /** Score rate-limit posture (D1), reported so a deploy can be verified from /api/health. */
   scoreRateLimit?: () => { max: number; windowMs: number; trackedKeys: number }
   /** WebSocket upgrade path advertised in the report. */
@@ -108,7 +110,13 @@ export const createHealthRouter = (options: HealthRouterOptions): Router => {
     try {
       if (!options.clients) return { ok: false, clients: 0, path: wsPath, error: 'no WebSocket server attached' }
       const open = options.clients()
-      return { ok: Number.isFinite(open) && open >= 0, clients: open, path: wsPath }
+      const rooms = options.rooms ? options.rooms() : undefined
+      return {
+        ok: Number.isFinite(open) && open >= 0,
+        clients: open,
+        path: wsPath,
+        ...(rooms ? { mpRooms: rooms.rooms, mpPlayers: rooms.players } : {}),
+      }
     } catch (err) {
       return { ok: false, clients: 0, path: wsPath, error: errorMessage(err) }
     }

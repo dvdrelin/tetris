@@ -1,12 +1,13 @@
 import express from 'express'
 import { createServer as createHttpServer } from 'http'
-import { WebSocketServer } from 'ws'
+import { WebSocketServer, WebSocket as WsSocket } from 'ws'
 import { join } from 'path'
 import { ScoreService } from './services/scoreService'
-import { GameServer } from './servers/gameServer'
+import { RoomServer } from './servers/roomServer'
 import { createGameRouter } from './routes/gameRouter'
 import { createHealthRouter } from './routes/healthRouter'
 import { RateLimiter } from './middleware/rate-limit'
+import { MP_CONFIG } from './config/mpConfig'
 
 const app = express()
 const httpServer = createHttpServer(app)
@@ -34,8 +35,10 @@ const scoreLimiter = new RateLimiter({ windowMs: SCORE_WINDOW_MS, max: SCORE_MAX
 const scoreService = new ScoreService()
 
 // WebSocket server is created before the routes so /api/health can report live clients.
-const wss = new WebSocketServer({ noServer: true })
-const gameServer = new GameServer(wss)
+// MP block B: maxPayload caps one inbound frame — protocol messages are small, 16 KiB kills
+// frame-level flooding before any JSON is parsed.
+const wss = new WebSocketServer({ noServer: true, maxPayload: MP_CONFIG.maxPayloadBytes })
+const roomServer = new RoomServer()
 
 // Built SPA directory (production image: /app/frontend/dist).
 const FRONTEND_DIST = join(__dirname, '..', '..', 'frontend', 'dist')
@@ -48,6 +51,7 @@ app.use(
     scoreService,
     distPath: FRONTEND_DIST,
     clients: () => wss.clients.size,
+    rooms: () => ({ rooms: roomServer.roomCount, players: roomServer.connectedPlayerCount }),
     scoreRateLimit: () => ({ max: scoreLimiter.limit, windowMs: scoreLimiter.window, trackedKeys: scoreLimiter.size }),
   }),
 )
@@ -74,9 +78,32 @@ httpServer.on('upgrade', (request, socket, head) => {
   }
 })
 
-wss.on('connection', (ws) => {
-  gameServer.handleConnection(ws)
+// The `ws` heartbeat bookkeeping lives on the socket itself (README pattern): a per-connection
+// flag flipped by pings, cleared by each interval ping and set again by each arriving pong.
+type AliveSocket = WsSocket & { isAlive: boolean }
+
+wss.on('connection', (client) => {
+  const ws = client as AliveSocket
+  roomServer.handleConnection(ws)
+  // Transport heartbeat (the `ws` README pattern): ping every 30 s, terminate whoever stops
+  // answering pongs. Browsers answer protocol pings automatically, and this also keeps the
+  // nginx-proxy idle timer (60 s) fed on an otherwise silent room connection.
+  ws.isAlive = true
+  ws.on('pong', () => {
+    ws.isAlive = true
+  })
 })
+
+const heartbeat = setInterval(() => {
+  wss.clients.forEach((client) => {
+    const ws = client as AliveSocket
+    if (ws.isAlive === false) return ws.terminate()
+    ws.isAlive = false
+    ws.ping()
+  })
+}, MP_CONFIG.transportPingMs)
+
+wss.on('close', () => clearInterval(heartbeat))
 
 httpServer.listen(PORT, () => {
   console.log(`Neon Tetris server running on port ${PORT}`)
