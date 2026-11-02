@@ -48,12 +48,19 @@ describe('attack pipeline (verify disabled, boards set up directly)', () => {
     if (!verdict.accepted) return
     expect(verdict.cleared).toBe(4)
     expect(verdict.sentTo).toEqual([{ playerId: 'B', lines: 7, applyAt: 1900 }])
+    // Что реально сгенерировано — в том же вердикте: лог пишет эти ряды, и реплей по им сверяет
+    // содержимое мусорки, вместо того чтобы перегенерировать своё.
+    expect(verdict.scheduled).toHaveLength(1)
+    expect(verdict.scheduled[0].victimId).toBe('B')
+    expect(verdict.scheduled[0].applyAt).toBe(1900)
+    expect(verdict.cancelled).toEqual([])
 
     expect(pendingRowCount(state, 'B')).toBe(7)
-    expect(state.takeDueArrivals('B', 1899)).toHaveLength(0)
-    const due = state.takeDueArrivals('B', 1900)
+    expect(state.takeDueArrivals('B', 1899).delivered).toHaveLength(0)
+    const due = state.takeDueArrivals('B', 1900).delivered
     expect(due).toHaveLength(1)
     expect(due[0].rows).toHaveLength(7)
+    expect(due[0].rows).toEqual(verdict.scheduled[0].rows) // handout matches what was scheduled
     for (const row of due[0].rows) {
       expect(row).toHaveLength(W)
       expect(row[5]).toBe(0) // the fixed rng put every hole at column 5
@@ -95,7 +102,11 @@ describe('attack pipeline (verify disabled, boards set up directly)', () => {
     state.debugInjectBoard('B', fillBottomRows(emptyGrid(), 1, 7))
     expect(state.applyLock('B', lock(1, 'L', 7, 18, 0, 1)).accepted).toBe(true)
     // A's perfect clear at t=1000 covers arrivals landing until 2000 → the 1500 row is absorbed.
-    expect(state.takeDueArrivals('A', 1500)).toHaveLength(0)
+    const absorbed = state.takeDueArrivals('A', 1500)
+    expect(absorbed.delivered).toHaveLength(0)
+    // Иммунитет тоже должен быть виден: эти ряды потратили RNG матча, и реплей без этой строки
+    // не понимает, почему его мусорка пошла дальше.
+    expect(absorbed.cancelled).toEqual([{ victimId: 'A', by: 'immunity', count: 1, rows: expect.any(Array) }])
     expect(pendingRowCount(state, 'A')).toBe(0)
   })
 
@@ -104,12 +115,16 @@ describe('attack pipeline (verify disabled, boards set up directly)', () => {
     const grid = fillBottomRows(emptyGrid(), 4, 9)
     grid[15][0] = 1 // not a perfect clear — 7 plain tetris rows
     state.debugInjectBoard('A', grid)
-    state.applyLock('A', lock(1, 'I', 7, 16, 1, 4)) // 7 rows against B
+    const first = state.applyLock('A', lock(1, 'I', 7, 16, 1, 4)) // 7 rows against B
     expect(pendingRowCount(state, 'B')).toBe(7)
     clock = 1300
     state.debugInjectBoard('B', fillBottomRows(emptyGrid(), 1, 7))
-    state.applyLock('B', lock(1, 'L', 7, 18, 0, 1)) // B clears 1 → cancels the pending arrival
+    const second = state.applyLock('B', lock(1, 'L', 7, 18, 0, 1)) // B clears 1 → cancels the pending arrival
     expect(pendingRowCount(state, 'B')).toBe(0)
+    if (!second.accepted) throw new Error('expected the lock to be accepted')
+    expect(second.cancelled).toHaveLength(1)
+    expect(second.cancelled[0]).toMatchObject({ victimId: 'B', by: 'counteract', count: 7 })
+    expect(second.cancelled[0].rows).toEqual(first.accepted ? first.scheduled[0].rows : [])
   })
 
   test('the per-player pending garbage cap (20 rows) clamps what can be stacked', () => {
@@ -204,7 +219,7 @@ describe('garbage state of the replay board (reported garbageRows counter)', () 
     const state = makeState()
     attack(state)
     clock = 1900
-    expect(state.takeDueArrivals('B', 1900)).toHaveLength(1) // the sweep handed the rows to B
+    expect(state.takeDueArrivals('B', 1900).delivered).toHaveLength(1) // the sweep handed the rows to B
 
     // B's honest placement: an O resting on the garbage surface (rows 13..19 are garbage with the
     // fixed rng's hole at column 5). Without the counter the server sees an empty board.
@@ -235,7 +250,7 @@ describe('garbage state of the replay board (reported garbageRows counter)', () 
     expect(v.accepted).toBe(false)
     if (!v.accepted) expect(v.violation).toMatch(/floating/)
     // And the honest path still works once the rows really arrive.
-    expect(state.takeDueArrivals('B', 1900)).toHaveLength(1)
+    expect(state.takeDueArrivals('B', 1900).delivered).toHaveLength(1)
     expect(state.applyLock('B', lock(1, 'O', 5, 11, 0, 0, { garbageRows: 7 })).accepted).toBe(true)
   })
 

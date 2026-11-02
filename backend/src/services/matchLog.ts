@@ -11,12 +11,16 @@
  * straight back into a real `MatchState` (see src/tools/mpReplay.ts) and replayed offline.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { join } from 'path'
+import { BOOT_ID } from '../config/runtime'
 
 export interface MatchLogPlayer {
   playerId: string
   name: string
   playerIndex: number
+  /** Frontend build that took this seat (deploy stamp), when the client reported one. */
+  client?: string
 }
 
 export interface MatchStartRecord {
@@ -24,7 +28,15 @@ export interface MatchStartRecord {
   seed: number
   startTime: number
   players: MatchLogPlayer[]
+  /** Snapshot of the rules that produced this match (MP_CONFIG/MP_BALANCE/board/version). */
+  config?: unknown
 }
+
+/**
+ * Bump when a line's meaning changes, so `mp:replay` can say "this file predates X" instead of
+ * silently mis-reading it. Additive fields do not need a bump.
+ */
+export const MATCH_LOG_SCHEMA = 3
 
 export interface MatchLogLine {
   t: number
@@ -32,6 +44,17 @@ export interface MatchLogLine {
   event: string
   playerId?: string
   data?: unknown
+  // Written on every line by the store (not by the call sites), so any line can be read on its own:
+  /** One id per match file — survives rematches of the same room. */
+  mid?: string
+  /** Seat number the `playerId` belongs to, when the store knows the roster. */
+  seat?: number
+  /** Milliseconds since the previous line of this match. */
+  dt?: number
+  /** Which backend process wrote it (`BOOT_ID`): spots restarts between/inside matches. */
+  boot?: string
+  /** Only on the `match_start` line: the log format version. */
+  schema?: number
 }
 
 export interface MatchLogIndexEntry {
@@ -46,6 +69,8 @@ export interface MatchLogIndexEntry {
   bytes: number
   closed: boolean
   verdict?: { reason: string; detail?: string; winnerId: string | null }
+  matchId?: string
+  boot?: string
 }
 
 /** The compact, replay-ready form of one match: everything a fresh MatchState needs, plus verdicts. */
@@ -82,13 +107,42 @@ export interface ReplayBundle {
   players: MatchLogPlayer[]
   locks: ReplayLock[]
   garbage: ReplayGarbage[]
+  /** Rows the server actually generated per attack (with the attacker line that produced them). */
+  scheduled: ReplayScheduled[]
+  /** Rows that never reached a client (counteract / immunity / pending cap): they still consumed RNG. */
+  cancelled: ReplayCancelled[]
+  /** Board fingerprints the server wrote next to its verdicts — the replay compares against these. */
+  digests: ReplayDigest[]
   verdicts: ReplayVerdict[]
   ends: { reason: string; detail?: string; winnerId: string | null; t: number }[]
   events: { t: number; event: string; playerId?: string; data?: unknown }[]
 }
 
+export interface ReplayScheduled {
+  attackerId: string
+  victimId: string
+  applyAt: number
+  rows: number[][]
+}
+
+export interface ReplayCancelled {
+  playerId: string
+  by: string
+  count: number
+}
+
+export interface ReplayDigest {
+  playerId: string
+  step: number
+  digest: string
+  snapshot?: string
+  origin: 'lock' | 'malformed' | 'resync'
+}
+
 export interface MatchLogOptions {
   dir?: string
+  /** Идентичность процесса для строк лога; по умолчанию — BOOT_ID этого запуска. */
+  bootId?: string
   /** Oldest files are deleted past this count (a match file is a few tens of KB). */
   maxFiles?: number
   enabled?: boolean
@@ -118,6 +172,12 @@ function startedAtFromFile(file: string): number {
  * Turns one match's log lines into the replay form. Exported because the CLI tool
  * (src/tools/mpReplay.ts) builds bundles straight from a downloaded file.
  */
+/** Для таймлайна: ряды мусорки показывать количеством, сами ряды лежат в `bundle.scheduled`. */
+function compactGarbageData(d: { victimId?: string; applyAt?: number; rows?: number[][] } | undefined): unknown {
+  if (!d) return undefined
+  return { victimId: d.victimId, applyAt: d.applyAt, rows: Array.isArray(d.rows) ? d.rows.length : 0 }
+}
+
 export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
   if (!lines.length) return null
   const start = lines.find((l) => l.event === 'match_start')
@@ -131,6 +191,9 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
     players: Array.isArray(data.players) ? data.players : [],
     locks: [],
     garbage: [],
+    scheduled: [],
+    cancelled: [],
+    digests: [],
     verdicts: [],
     ends: [],
     events: [],
@@ -138,7 +201,7 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
   for (const line of lines) {
     const { event, playerId, t } = line
     if (event === 'piece_lock') {
-      const rec = line.data as { lock?: ReplayLock; accepted?: boolean; violation?: string } | undefined
+      const rec = line.data as { lock?: ReplayLock; accepted?: boolean; violation?: string; digest?: string; snapshot?: string } | undefined
       const lock = rec?.lock
       if (!lock) continue
       if (rec && rec.accepted === false) {
@@ -146,6 +209,48 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
       } else {
         bundle.locks.push({ ...lock, playerId: playerId ?? '', t })
       }
+      if (rec?.digest) {
+        bundle.digests.push({
+          playerId: playerId ?? '',
+          step: lock.globalStep,
+          digest: rec.digest,
+          ...(rec.snapshot ? { snapshot: rec.snapshot } : {}),
+          origin: 'lock',
+        })
+      }
+    } else if (event === 'garbage_scheduled') {
+      const d = line.data as { victimId?: string; applyAt?: number; rows?: number[][] } | undefined
+      if (d?.victimId && Array.isArray(d.rows)) {
+        bundle.scheduled.push({ attackerId: playerId ?? '', victimId: d.victimId, applyAt: d.applyAt ?? 0, rows: d.rows })
+      }
+      bundle.events.push({ t, event, playerId, data: compactGarbageData(d) })
+    } else if (event === 'garbage_cancelled') {
+      const d = line.data as { by?: string; count?: number } | undefined
+      bundle.cancelled.push({ playerId: playerId ?? '', by: String(d?.by ?? ''), count: Number(d?.count ?? 0) })
+      bundle.events.push({ t, event, playerId, data: d })
+    } else if (event === 'malformed_lock') {
+      const d = line.data as { step?: number; digest?: string; snapshot?: string } | undefined
+      if (d?.digest) {
+        bundle.digests.push({
+          playerId: playerId ?? '',
+          step: Number(d.step ?? -1),
+          digest: d.digest,
+          ...(d.snapshot ? { snapshot: d.snapshot } : {}),
+          origin: 'malformed',
+        })
+      }
+      bundle.events.push({ t, event, playerId, data: d })
+    } else if (event === 'resync_requested') {
+      const d = line.data as { expectedStep?: number; digest?: string } | undefined
+      if (d?.digest) {
+        bundle.digests.push({
+          playerId: playerId ?? '',
+          step: Number(d.expectedStep ?? -1),
+          digest: d.digest,
+          origin: 'resync',
+        })
+      }
+      bundle.events.push({ t, event, playerId, data: d })
     } else if (event === 'garbage_delivered') {
       const d = line.data as { arrivals?: { applyAt: number; rows: number[][] }[]; groups?: number[][][] } | undefined
       if (Array.isArray(d?.arrivals)) {
@@ -202,12 +307,17 @@ export class MatchLogStore {
   private readonly openByRoom = new Map<string, string>()
   /** Highest match stamp used so far, so file names never collide. */
   private lastStamp = 0
+  /** Идентичность процесса: пишется в каждую строку, чтобы «матчи с разных перезапусков» были видны. */
+  private bootId: string
+  /** Время последней записанной строки на файл — ради `dt` (интервалы читаются глазами плохо). */
+  private lastLineT = new Map<string, number>()
 
   constructor(options: MatchLogOptions = {}) {
     this.dir = options.dir ?? DEFAULT_DIR
     this.maxFiles = options.maxFiles ?? 300
     this.enabled = options.enabled ?? true
     this.now = options.now ?? (() => Date.now())
+    this.bootId = options.bootId ?? BOOT_ID
     if (this.enabled) this.scan()
   }
 
@@ -236,6 +346,8 @@ export class MatchLogStore {
       events: 0,
       bytes: 0,
       closed: false,
+      matchId: randomUUID().slice(0, 8),
+      boot: this.bootId,
     }
     this.index.set(key, entry)
     this.openByRoom.set(record.code, key)
@@ -244,7 +356,8 @@ export class MatchLogStore {
       t: startedAt,
       room: record.code,
       event: 'match_start',
-      data: { seed: record.seed, startTime: record.startTime, players: record.players },
+      schema: MATCH_LOG_SCHEMA,
+      data: { seed: record.seed, startTime: record.startTime, players: record.players, config: record.config ?? null },
     }, entry)
     this.prune()
     return key
@@ -320,9 +433,22 @@ export class MatchLogStore {
   private append(file: string, line: MatchLogLine, entry?: MatchLogIndexEntry): void {
     try {
       this.ensureDir()
-      const text = `${JSON.stringify(line)}\n`
-      appendFileSync(join(this.dir, file), text)
       const target = entry ?? this.findEntryByFile(file)
+      // Каждая строка читается сама по себе: какой матч, какое место, сколько прошло времени,
+      // какой процесс это записал. Без этого лог из нескольких матчей одной комнаты превращается
+      // в «разберитесь сами».
+      const stamped: MatchLogLine = { ...line }
+      if (target?.matchId) stamped.mid = target.matchId
+      if (target?.boot) stamped.boot = target.boot
+      if (line.playerId && target?.players?.length) {
+        const seat = target.players.find((p) => p.playerId === line.playerId)?.playerIndex
+        if (seat !== undefined) stamped.seat = seat
+      }
+      const prev = this.lastLineT.get(file)
+      if (prev !== undefined) stamped.dt = Math.max(0, line.t - prev)
+      this.lastLineT.set(file, line.t)
+      const text = `${JSON.stringify(stamped)}\n`
+      appendFileSync(join(this.dir, file), text)
       if (target) {
         target.events += 1
         target.bytes += text.length
@@ -374,6 +500,8 @@ export class MatchLogStore {
         bytes: statSync(join(this.dir, file)).size,
         closed: Boolean(closed || over),
         verdict,
+        matchId: typeof start.mid === 'string' ? start.mid : undefined,
+        boot: typeof start.boot === 'string' ? start.boot : undefined,
       })
     }
   }

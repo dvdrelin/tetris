@@ -19,11 +19,13 @@ import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
   RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchOverDetail, MatchResult,
   PieceLockPayload, PieceType, ConnTestPayload, ConnTestAckPayload, ConnTransportStats, MpErrorPayload,
-  PIECE_SHAPES, GAME_CONFIG,
+  ClientInfoPayload, PIECE_SHAPES, GAME_CONFIG,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
 import { MP_CONFIG } from '../config/mpConfig'
+import { MP_BALANCE } from '../config/mpBalance'
+import { BOOT_ID, RUNTIME_VERSION } from '../config/runtime'
 import { MatchState } from '../services/matchState'
 import { MatchLogStore } from '../services/matchLog'
 
@@ -45,6 +47,9 @@ export interface ClientSocket {
 
 const WS_OPEN = 1
 
+/** Как часто в лог кладётся полный снимок доски (в отказах — всегда). 10 ≈ 2 снимка на матч. */
+const SNAPSHOT_EVERY_LOCKS = 10
+
 interface PlayerSlot {
   id: string
   name: string
@@ -57,6 +62,8 @@ interface PlayerSlot {
   graceTimer: ReturnType<typeof setTimeout> | null
   /** Counters accumulated from reported piece_lock messages (certified by the replay in D). */
   reportedLines: number
+  /** Which frontend build this seat came from — written into the match log header. */
+  client?: ClientInfoPayload
 }
 
 interface Room {
@@ -198,7 +205,7 @@ export class RoomServer {
 
   // ====== room commands ======
 
-  private createRoom(ws: ClientSocket, payload: { name?: string; maxPlayers?: number } | undefined): void {
+  private createRoom(ws: ClientSocket, payload: { name?: string; maxPlayers?: number; client?: ClientInfoPayload } | undefined): void {
     if (this.findPlayer(ws)) {
       this.sendError(ws, MpErrorCode.BadPhase, 'Leave the current room first')
       return
@@ -207,7 +214,7 @@ export class RoomServer {
     const maxPlayers = clampInt(payload?.maxPlayers, MP_CONFIG.defaultMaxPlayers, 2, MP_CONFIG.maxPlayersCap)
     const code = this.generateCode()
     const room: Room = { code, phase: 'lobby', maxPlayers, players: [], chat: [], createdAt: this.now() }
-    const slot = this.addPlayer(room, ws, name, true)
+    const slot = this.addPlayer(room, ws, name, true, this.clientStamp(payload?.client))
     this.rooms.set(code, room)
     this.send(ws, {
       type: ServerMsgType.RoomCreated,
@@ -215,7 +222,7 @@ export class RoomServer {
     })
   }
 
-  private joinRoom(ws: ClientSocket, payload: { code?: string; name?: string } | undefined): void {
+  private joinRoom(ws: ClientSocket, payload: { code?: string; name?: string; client?: ClientInfoPayload } | undefined): void {
     if (this.findPlayer(ws)) {
       this.sendError(ws, MpErrorCode.BadPhase, 'Leave the current room first')
       return
@@ -239,7 +246,7 @@ export class RoomServer {
       this.sendError(ws, MpErrorCode.RoomFull, 'Room is full')
       return
     }
-    const slot = this.addPlayer(room, ws, normalizePlayerName(payload?.name), false)
+    const slot = this.addPlayer(room, ws, normalizePlayerName(payload?.name), false, this.clientStamp(payload?.client))
     this.send(ws, {
       type: ServerMsgType.RoomCreated, // joiner gets the same envelope: room + personal token
       payload: { room: this.snapshot(room), token: slot.token, playerId: slot.id },
@@ -248,7 +255,7 @@ export class RoomServer {
     this.broadcastSnapshot(room)
   }
 
-  private rejoinRoom(ws: ClientSocket, payload: { code?: string; token?: string } | undefined): void {
+  private rejoinRoom(ws: ClientSocket, payload: { code?: string; token?: string; client?: ClientInfoPayload } | undefined): void {
     if (this.findPlayer(ws)) {
       this.sendError(ws, MpErrorCode.BadPhase, 'Leave the current room first')
       return
@@ -269,6 +276,9 @@ export class RoomServer {
       this.socketToPlayer.delete(slot.ws)
       try { slot.ws.terminate() } catch { /* already gone */ }
     }
+    const clientPrev = slot.client?.app ?? null
+    const stamped = this.clientStamp(payload?.client)
+    if (stamped) slot.client = stamped
     slot.ws = ws
     slot.connected = true
     this.socketToPlayer.set(ws, { code: room.code, playerId: slot.id })
@@ -278,6 +288,13 @@ export class RoomServer {
       payload: { room: this.snapshot(room), token: slot.token, playerId: slot.id },
     })
     this.broadcastSnapshot(room)
+    // Возврат места — обязательно с билдом клиента: «этот ход пришёл из вкладки со старым фронтом»
+    // раньше было чем предположить, но не чем ответить.
+    this.matchLog.event(room.code, 'seat_rejoined', slot.id, {
+      phase: room.phase,
+      client: slot.client?.app ?? null,
+      clientPrev,
+    })
     // Mid-match rejoin: hand over everything the server scheduled against this player while
     // the socket was down — the client reschedules past applyAt arrivals as immediate.
     if (room.phase === 'playing') {
@@ -285,7 +302,7 @@ export class RoomServer {
       const arrivals = state ? state.claimAllArrivals(slot.id) : []
       this.matchLog.event(room.code, 'rejoin', slot.id, {
         phase: room.phase,
-        pendingGarbage: arrivals.map((a) => ({ applyAt: a.applyAt, rows: a.rows.length })),
+        pendingGarbage: arrivals.map((a) => ({ applyAt: a.applyAt, rows: a.rows.length, content: a.rows })),
       })
       if (arrivals.length) this.send(ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals } })
     } else {
@@ -426,9 +443,13 @@ export class RoomServer {
       // The raw frame goes to the match log next to the reason: this is the only place where an
       // unparseable report can be told apart from a lost one, and it is what the next replay of a
       // "mystery forfeit" is read from.
+      const brokenState = this.matchStates.get(room.code)
       this.matchLog.event(room.code, 'malformed_lock', slot.id, {
         ...(problem ?? {}),
         raw: payload === undefined ? 'нет тела' : JSON.stringify(payload).slice(0, 600),
+        // Доска на момент сломанного отчёта: по ней видно, разошёлся ли реплей ещё до этого кадра
+        // (тогда кадр — следствие, а не причина).
+        ...(brokenState ? { digest: brokenState.boardDigest(slot.id), snapshot: brokenState.boardSnapshot(slot.id) } : {}),
       })
       this.violate(ws, {
         code: MpErrorCode.BadRequest,
@@ -443,11 +464,26 @@ export class RoomServer {
       const verdict = state.applyLock(slot.id, lock)
       // The lock and the verdict the replay produced travel together — this line *is* the evidence
       // for "why was this legal move rejected", and the input for an offline replay of the match.
+      // `digest` (board fingerprint after this lock) is what localizes the first divergence without
+      // reading every line; the full `snapshot` is written on a rejection and every Nth lock, so a
+      // divergence has a board to compare against right where it starts.
+      const rejected = !verdict.accepted
       this.matchLog.event(room.code, 'piece_lock', slot.id, {
         lock,
         accepted: verdict.accepted,
+        digest: state.boardDigest(slot.id),
+        ...(rejected || lock.globalStep % SNAPSHOT_EVERY_LOCKS === 0 ? { snapshot: state.boardSnapshot(slot.id) } : {}),
         ...(verdict.accepted ? {} : { violation: verdict.violation }),
       })
+      // What the server actually generated against the opponents (and what it ate with counteract):
+      // without these lines a replay regenerates garbage from its own RNG stream and drifts, which
+      // later reads as "the player lied" — the 5QBH post-mortem.
+      for (const s of verdict.accepted ? verdict.scheduled : []) {
+        this.matchLog.event(room.code, 'garbage_scheduled', slot.id, { victimId: s.victimId, applyAt: s.applyAt, rows: s.rows })
+      }
+      for (const c of verdict.accepted ? verdict.cancelled : []) {
+        this.matchLog.event(room.code, 'garbage_cancelled', slot.id, { by: c.by, count: c.count, ...(c.rows ? { rows: c.rows } : {}) })
+      }
       if (!verdict.accepted) {
         // A forward step gap is a lost report, not a cheat: give the client a chance to
         // retransmit the missing locks (it keeps a ring buffer of them) before the verdict.
@@ -496,7 +532,12 @@ export class RoomServer {
     if (count >= MP_CONFIG.resyncMaxPerMatch) return false // patience used up → hard verdict
 
     const deadline = this.now() + MP_CONFIG.resyncGraceMs
-    this.matchLog.event(room.code, 'resync_requested', slot.id, { ...gap, attempt: count + 1, deadline })
+    this.matchLog.event(room.code, 'resync_requested', slot.id, {
+      ...gap,
+      attempt: count + 1,
+      deadline,
+      digest: this.matchStates.get(room.code)?.boardDigest(slot.id),
+    })
     this.send(ws, { type: ServerMsgType.ResyncRequest, payload: { ...gap, deadline } })
     const timer = setTimeout(() => {
       this.resync.delete(slot.id)
@@ -584,7 +625,21 @@ export class RoomServer {
       code: room.code,
       seed,
       startTime,
-      players: room.players.map((p) => ({ playerId: p.id, name: p.name, playerIndex: p.playerIndex })),
+      players: room.players.map((p) => ({
+        playerId: p.id,
+        name: p.name,
+        playerIndex: p.playerIndex,
+        ...(p.client?.app ? { client: p.client.app } : {}),
+      })),
+      // Правила этого матча записываются рядом с ним: после изменения env сравнивать два матча
+      // без этого — гадание.
+      config: {
+        version: RUNTIME_VERSION,
+        boot: BOOT_ID,
+        board: { width: GAME_CONFIG.boardWidth, height: GAME_CONFIG.boardHeight },
+        mp: { ...MP_CONFIG },
+        balance: { ...MP_BALANCE } as Record<string, unknown>,
+      },
     })
     // heads_up survival limit: when time is up, the survivor wins; both alive → honest draw.
     // unref(): the timer must not hold the event loop open (tests, graceful shutdown).
@@ -622,14 +677,19 @@ export class RoomServer {
       if (!room || room.phase !== 'playing') continue
       for (const p of room.players) {
         if (!p.connected || !p.ws) continue
-        const due = state.takeDueArrivals(p.id, now)
-        if (due.length) {
+        const { delivered, cancelled } = state.takeDueArrivals(p.id, now)
+        if (delivered.length) {
           // Rows are logged on delivery (not at scheduling) because the replay needs the rows the
           // client was actually told to insert, in the order the client inserts them.
           this.matchLog.event(room.code, 'garbage_delivered', p.id, {
-            arrivals: due.map((a) => ({ applyAt: a.applyAt, rows: a.rows })),
+            arrivals: delivered.map((a) => ({ applyAt: a.applyAt, rows: a.rows })),
           })
-          this.send(p.ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals: due } })
+          this.send(p.ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals: delivered } })
+        }
+        // Immunity dropped rows are logged for the same reason scheduled rows are: they consumed
+        // the match's RNG, and a replay that regenerates garbage from the seed cannot know that.
+        for (const c of cancelled) {
+          this.matchLog.event(room.code, 'garbage_cancelled', p.id, { by: c.by, count: c.count, rows: c.rows })
         }
       }
     }
@@ -758,7 +818,17 @@ export class RoomServer {
 
   // ====== helpers ======
 
-  private addPlayer(room: Room, ws: ClientSocket, name: string, host: boolean): PlayerSlot {
+  /**
+   * Client-supplied build stamp: never trusted, never allowed to bloat a log line. Control chars and
+   * over-long strings are what a hostile or broken client sends; the value only ever goes to the log.
+   */
+  private clientStamp(client: ClientInfoPayload | undefined): ClientInfoPayload | undefined {
+    const raw = typeof client?.app === 'string' ? client.app : ''
+    const clean = raw.replace(/[^\x21-\x7e]/g, '').slice(0, 40)
+    return clean ? { app: clean } : undefined
+  }
+
+  private addPlayer(room: Room, ws: ClientSocket, name: string, host: boolean, client?: ClientInfoPayload): PlayerSlot {
     const nextIndex = room.players.reduce((m, p) => Math.max(m, p.playerIndex), -1) + 1
     const slot: PlayerSlot = {
       id: randomUUID(),
@@ -771,6 +841,7 @@ export class RoomServer {
       host,
       graceTimer: null,
       reportedLines: 0,
+      ...(client?.app ? { client: { app: client.app } } : {}),
     }
     room.players.push(slot)
     this.socketToPlayer.set(ws, { code: room.code, playerId: slot.id })

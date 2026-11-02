@@ -83,7 +83,7 @@ describe('connection and room join', () => {
   test('createRoom sends the wire message after the socket opens', () => {
     const store = setupStore()
     store.createRoom('Хост')
-    expect(ws().lastSent()).toEqual({ type: ClientMsgType.CreateRoom, payload: { name: 'Хост' } })
+    expect(ws().lastSent()).toEqual({ type: ClientMsgType.CreateRoom, payload: { name: 'Хост', client: { app: 'dev' } } })
     expect(store.connected).toBe(true)
   })
 
@@ -139,7 +139,7 @@ describe('reconnect behaviour', () => {
     store.ensureConnected()
     ws().simulateOpen()
 
-    expect(ws().lastSent()).toEqual({ type: ClientMsgType.RejoinRoom, payload: { code: 'AB12', token: 'legacy-1' } })
+    expect(ws().lastSent()).toEqual({ type: ClientMsgType.RejoinRoom, payload: { code: 'AB12', token: 'legacy-1', client: { app: 'dev' } } })
     expect(JSON.parse(sessionStorage.getItem('nt_mp_rejoin')!).token).toBe('legacy-1')
     expect(localStorage.getItem('nt_mp_rejoin')).toBeNull() // the shared copy is gone: no tab fight
   })
@@ -170,7 +170,7 @@ describe('reconnect behaviour', () => {
       ws().simulateOpen()
       expect(ws().lastSent()).toEqual({
         type: ClientMsgType.RejoinRoom,
-        payload: { code: 'AB12', token: 'tok-9' },
+        payload: { code: 'AB12', token: 'tok-9', client: { app: 'dev' } },
       })
       store.disconnect()
     } finally {

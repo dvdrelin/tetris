@@ -21,6 +21,7 @@
 import { readFileSync } from 'fs'
 import { MatchState } from '../services/matchState'
 import type { PieceLockPayload, GarbageArrival } from '@neon-tetris/shared'
+import { GAME_CONFIG } from '@neon-tetris/shared'
 import { readBundleFromText, type ReplayBundle, type ReplayLock } from '../services/matchLog'
 
 interface Options {
@@ -111,15 +112,25 @@ function main(): number {
 
   let divergence = 0
   let processed = 0
-  // Мусорные ряды генерирует RNG матча. Если в живом матче часть запланированных рядов была съедена
-  // counteract'ом или иммунитетом (они не попадают в `garbage_delivered`), поток RNG в реплее уходит
-  // вперёд, и содержимое рядов отличается от записанного. Тогда последующие «floating/overlap» — не
-  // обвинение игрокам, а следствие невоспроизводимости ряда: об этом надо сказать явно.
+  // Мусорные ряды: сервер пишет и то, что он их *создал* (`garbage_scheduled`), и то, что он их
+  // *съел* counteract'ом/иммунитетом/капом (`garbage_cancelled`). В свежих логах ряды берются
+  // записанные, а не перегенерированные нашим RNG — расхождение «дырка в другом столбце» перестаёт
+  // быть причиной ложных «overlap/floating». В старых логах рядов создания нет, остаётся сравнение
+  // с выданными и честное предупреждение.
   const recordedGroups = new Map<string, number[][][]>()
-  for (const g of bundle.garbage) {
-    const list = recordedGroups.get(g.targetId) ?? []
-    list.push(...g.groups)
-    recordedGroups.set(g.targetId, list)
+  const haveScheduled = (bundle.scheduled?.length ?? 0) > 0
+  if (haveScheduled) {
+    for (const s of bundle.scheduled ?? []) {
+      const list = recordedGroups.get(s.victimId) ?? []
+      list.push(s.rows)
+      recordedGroups.set(s.victimId, list)
+    }
+  } else {
+    for (const g of bundle.garbage) {
+      const list = recordedGroups.get(g.targetId) ?? []
+      list.push(...g.groups)
+      recordedGroups.set(g.targetId, list)
+    }
   }
   let rowsDiffer = false
   const checkRows = (playerId: string, due: GarbageArrival[]) => {
@@ -129,11 +140,19 @@ function main(): number {
       const expected = list.shift()
       if (!expected) continue
       if (JSON.stringify(expected) !== JSON.stringify(arrival.rows)) {
-        if (!rowsDiffer) console.log('   ⚠ содержимое мусорных рядов в реплее отличается от записанного матчем (поток RNG разошёлся): вердикты дальше этой строки — только ориентировочные')
+        if (!rowsDiffer) console.log(`   ⚠ содержимое мусорных рядов в реплее отличается от записанного матчем (${haveScheduled ? 'ряды записаны, значит разошёлся сам порядок/объём' : 'в логе нет garbage_scheduled — ряды перегенерированы нашим RNG'}): вердикты дальше этой строки — только ориентировочные`)
         rowsDiffer = true
       }
     }
   }
+  // Отпечатки досок, которые сервер писал рядом со своими вердиктами: по ним первое расхождение
+  // находится за O(1) глаз, а не чтением локов.
+  const loggedDigests = new Map<string, { digest: string; snapshot?: string; origin: string }>()
+  for (const d of bundle.digests ?? []) {
+    loggedDigests.set(`${d.playerId}:${d.step}`, { digest: d.digest, ...(d.snapshot ? { snapshot: d.snapshot } : {}), origin: d.origin })
+  }
+  let digestsChecked = 0
+  let firstDigestMismatch: string | null = null
   for (const lock of feed) {
     if (processed >= opts.steps) break
     // Reuse the recorded wall-clock gaps: MatchState schedules garbage on a clock, so the replay
@@ -144,8 +163,8 @@ function main(): number {
     // Without this step the replay board never receives them, so any lock resting on an incoming
     // garbage row turns into a bogus "floating" rejection — a PRA4 replay blamed the players for it.
     for (const p of bundle.players) {
-      const due = state.takeDueArrivals(p.playerId, fakeNow)
-      if (due.length) checkRows(p.playerId, due)
+      const { delivered } = state.takeDueArrivals(p.playerId, fakeNow)
+      if (delivered.length) checkRows(p.playerId, delivered)
     }
     const payload = {
       globalStep: lock.globalStep,
@@ -169,10 +188,32 @@ function main(): number {
     const applied = fresh.appliedGarbage.reduce((n, g) => n + g.length, 0)
     const extra = opts.heights ? `  height=${stackHeight(state, lock.playerId)} lines=${state.certifiedLines(lock.playerId)}` : ''
     console.log(`${tag}  ok${applied ? `  (+${applied} garbage rows absorbed)` : ''}${extra}`)
+    const want = loggedDigests.get(`${lock.playerId}:${lock.globalStep}`)
+    if (want && !firstDigestMismatch) {
+      digestsChecked += 1
+      const mine = state.boardDigest(lock.playerId)
+      if (mine !== want.digest) {
+        firstDigestMismatch = `шаг ${lock.globalStep} (${lock.playerId.slice(0, 8)}): сервер ${want.digest}, реплей ${mine} (${want.origin})`
+        console.log(`   ⚠ отпечаток доски разошёлся: ${firstDigestMismatch}`)
+        if (want.snapshot) console.log(diffBoard(want.snapshot, state.boardSnapshot(lock.playerId)))
+      }
+    }
     if (opts.ascii && processed % opts.ascii === 0) console.log(renderBoard(state, watchId || lock.playerId))
   }
 
   console.log('')
+  if (digestsChecked) {
+    console.log(firstDigestMismatch
+      ? `отпечатки досок: первое расхождение — ${firstDigestMismatch} (сверено ${digestsChecked} кадров)`
+      : `отпечатки досок: ${digestsChecked} кадров, все совпали — реплей воспроизвёл доски матча`)
+  } else if ((bundle.digests?.length ?? 0) === 0) {
+    console.log('отпечатков досок в этом логе нет (лог старше schema 3) — расхождение ищется по локам')
+  }
+  if (bundle.cancelled?.length) {
+    const by = new Map<string, number>()
+    for (const c of bundle.cancelled) by.set(c.by, (by.get(c.by) ?? 0) + c.count)
+    console.log(`мусорки не дошло до клиентов: ${[...by].map(([k, v]) => `${k} ${v} р.`).join(', ')}`)
+  }
   if (divergence) {
     console.log(`DIVERGED after ${processed} locks: the fresh replay rejected a lock the live match accepted.`)
     console.log('Compare the board above with the client report — this is where the two views split.')
@@ -189,6 +230,35 @@ function main(): number {
     }
   }
   return 0
+}
+
+/**
+ * Печатает только те ряды, где записанная сервером доска и доска реплея различаются. Снимок —
+ * это 1 бит на клетку (row-major, base64), 2 байта на ряд при ширине 10.
+ */
+function diffBoard(loggedSnapshot: string, replaySnapshot: string): string {
+  const decode = (b64: string): string[] => {
+    const buf = Buffer.from(b64, 'base64')
+    const rows: string[] = []
+    const bytesPerRow = Math.ceil(GAME_CONFIG.boardWidth / 8)
+    for (let y = 0; y < GAME_CONFIG.boardHeight; y++) {
+      let line = ''
+      for (let x = 0; x < GAME_CONFIG.boardWidth; x++) {
+        const byte = buf[y * bytesPerRow + Math.floor(x / 8)] ?? 0
+        line += byte & (1 << (x % 8)) ? '#' : '.'
+      }
+      rows.push(line)
+    }
+    return rows
+  }
+  const a = decode(loggedSnapshot)
+  const b = decode(replaySnapshot)
+  const out: string[] = ['   ряд: сервер / реплей']
+  for (let y = 0; y < a.length; y++) {
+    if (a[y] === b[y]) continue
+    out.push(`   ${String(y).padStart(3, ' ')}  ${a[y]}   ${b[y]}`)
+  }
+  return out.join('\n')
 }
 
 process.exitCode = main()

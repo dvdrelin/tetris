@@ -235,4 +235,74 @@ describe('a played match leaves the whole story in the log', () => {
       jest.useRealTimers()
     }
   })
+
+  test('лог v3: заголовок матча знает правила и билды клиентов, каждая строка — свой матч, место и интервал', () => {
+    jest.useFakeTimers()
+    try {
+      let clock = 2_000_000
+      const now = () => clock
+      const store = new MatchLogStore({ dir, now, bootId: 'boot-77' })
+      const server = new RoomServer({ now, graceMs: 5_000, seed: () => 777, matchLog: store })
+      const host = new FakeSocket()
+      const guest = new FakeSocket()
+      server.handleConnection(host)
+      server.handleConnection(guest)
+      host.emitMessage({ type: ClientMsgType.CreateRoom, payload: { name: 'Хост', client: { app: '2.26.11.aaaaaaa' } } })
+      const code = host.lastOf(ServerMsgType.RoomCreated).payload.room.code
+      guest.emitMessage({ type: ClientMsgType.JoinRoom, payload: { code, name: 'Гость', client: { app: '2.26.11.bbbbbbb' } } })
+      guest.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+      host.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+
+      clock += 40
+      const firstFromBag = new PieceFactoryProvider({ seed: 777 }).nextPieceType()
+      const wrongPiece = firstFromBag === 'O' ? 'I' : 'O'
+      guest.emitMessage({
+        type: ClientMsgType.PieceLock,
+        payload: { globalStep: 1, pieceType: wrongPiece, x: 0, y: 18, rotation: 0, linesCleared: 0, garbageRows: 0 },
+      })
+
+      const entry = store.list()[0]
+      const lines = store.readLines(entry.file)
+      const start = lines[0]
+      expect(start.schema).toBe(3)
+      // Правила матча лежат рядом с матчем: после смены env сравнивать два матча — не гадание.
+      expect(start.data).toMatchObject({
+        config: { board: { width: 10, height: 20 }, mp: { resyncMaxGap: 12 }, balance: { perPlayerGarbageCap: 20 } },
+      })
+      const roster = (start.data as { players: { client?: string }[] }).players
+      expect(roster.map((p) => p.client)).toEqual(['2.26.11.aaaaaaa', '2.26.11.bbbbbbb'])
+
+      // Любая строка отвечает «какой матч, какое место, сколько прошло времени, какой процесс».
+      for (const l of lines) {
+        expect(l.mid).toBe(start.mid)
+        expect(l.boot).toBe('boot-77')
+      }
+      expect(start.dt).toBeUndefined()
+      expect(lines[1].dt).toBe(40)
+      const lockLine = lines.find((l) => l.event === 'piece_lock')!
+      expect(lockLine.seat).toBe(1)
+      // Отказанный лок обязателен со снимком доски: иначе «где разошлись доски» ищется глазами.
+      expect(lockLine.data).toMatchObject({
+        digest: expect.stringMatching(/^[0-9a-f]{8}$/),
+        snapshot: expect.any(String),
+      })
+      const bundle = store.readBundle(entry.file)!
+      expect(entry.matchId).toBe(start.mid)
+      expect(bundle.digests).toHaveLength(1)
+      expect(bundle.digests[0]).toMatchObject({ playerId: expect.any(String), step: 1, origin: 'lock' })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('записанные ряды мусорки и её отмены доходят до бандла реплея', () => {
+    const store = new MatchLogStore({ dir, now: () => 500 })
+    store.startMatch({ code: 'CD23', seed: 1, startTime: 500, players: [{ playerId: 'p1', name: 'А', playerIndex: 0 }, { playerId: 'p2', name: 'Б', playerIndex: 1 }] })
+    store.event('CD23', 'garbage_scheduled', 'p1', { victimId: 'p2', applyAt: 1400, rows: [[1, 0, 1]] })
+    store.event('CD23', 'garbage_cancelled', 'p2', { by: 'counteract', count: 1, rows: [[1, 0, 1]] })
+    const bundle = store.readBundle(store.list()[0].file)!
+    expect(bundle.scheduled).toEqual([{ attackerId: 'p1', victimId: 'p2', applyAt: 1400, rows: [[1, 0, 1]] }])
+    expect(bundle.cancelled).toEqual([{ playerId: 'p2', by: 'counteract', count: 1 }])
+    expect(bundle.events.map((e) => e.event)).toEqual(['garbage_scheduled', 'garbage_cancelled'])
+  })
 })

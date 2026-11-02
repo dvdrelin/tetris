@@ -21,22 +21,35 @@ export enum ClientMsgType {
   ConnTest = 'conn_test',   // room-side link probe: the server acks each frame, client counts losses
 }
 
+/**
+ * What build of the frontend opened this socket. Logged with the seat, so a weird report can be
+ * placed on a specific client build instead of argued about (a "malformed payload from an old tab"
+ * hypothesis used to be unanswerable).
+ */
+export interface ClientInfoPayload {
+  /** Deployed frontend version (build stamp), e.g. `2.26.11.4209a02`. */
+  app?: string;
+}
+
 export interface CreateRoomPayload {
   name: string;
   /** MVP heads-up is 1v1; 2 keeps the door open for 4-player rooms later (GDD §3). */
   maxPlayers?: number;
+  client?: ClientInfoPayload;
 }
 
 export interface JoinRoomPayload {
   /** Room code as shown to the host (case-insensitive on the wire, normalized by the server). */
   code: string;
   name: string;
+  client?: ClientInfoPayload;
 }
 
 export interface RejoinRoomPayload {
   code: string;
   /** Rejoin token issued on the original join (block C stores it for reconnects). */
   token: string;
+  client?: ClientInfoPayload;
 }
 
 export interface SetReadyPayload {

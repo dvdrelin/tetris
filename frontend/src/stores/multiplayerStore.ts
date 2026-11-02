@@ -173,7 +173,16 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   // a lost UDP-era packet should not be punished as cheating.
   let reportedLocks: PieceLockPayload[] = []
   /** Steps whose report the server already refused to parse — never retransmit those. */
-  let rejectedSteps = new Set<number>()
+  /**
+ * Наш билд уезжает серверу вместе с create/join/rejoin: тот пишет его в заголовок матча. Когда
+ * разбор показывает странный кадр, вопрос «это старый фронт из фоновой вкладки или этот?» перестаёт
+ * быть догадкой. В тестах сборочная константа отсутствует — там 'dev'.
+ */
+function clientInfo(): { app: string } {
+  return { app: typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : 'dev' }
+}
+
+let rejectedSteps = new Set<number>()
   // Spawn/hold bookkeeping for the piece_lock holdExtra flag (see protocol.ts).
   let spawnedType: PieceType | null = null
   let awaitingSpawn = false
@@ -214,7 +223,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
       pingTimer = setInterval(() => send({ type: ClientMsgType.Ping, payload: { clientTs: Date.now() } }), MP_CLIENT_PING_MS)
       // A page reload during a live room: take the seat back with the stored token.
       const stored = readJson<StoredToken>(TOKEN_KEY)
-      if (stored) send({ type: ClientMsgType.RejoinRoom, payload: { code: stored.code, token: stored.token } })
+      if (stored) send({ type: ClientMsgType.RejoinRoom, payload: { code: stored.code, token: stored.token, client: clientInfo() } })
     }
 
     ws.onmessage = (ev: MessageEvent) => handleServerMessage(String(ev.data))
@@ -455,13 +464,13 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   // ====== room actions ======
 
   function createRoom(name: string): void {
-    send({ type: ClientMsgType.CreateRoom, payload: { name } })
+    send({ type: ClientMsgType.CreateRoom, payload: { name, client: clientInfo() } })
   }
 
   function joinRoom(code: string, name: string): void {
     const c = normalizeRoomCode(code)
     if (!c) return
-    send({ type: ClientMsgType.JoinRoom, payload: { code: c, name } })
+    send({ type: ClientMsgType.JoinRoom, payload: { code: c, name, client: clientInfo() } })
   }
 
   function setReady(ready: boolean): void {
