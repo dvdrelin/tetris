@@ -20,7 +20,7 @@
  */
 import { readFileSync } from 'fs'
 import { MatchState } from '../services/matchState'
-import type { PieceLockPayload } from '@neon-tetris/shared'
+import type { PieceLockPayload, GarbageArrival } from '@neon-tetris/shared'
 import { readBundleFromText, type ReplayBundle, type ReplayLock } from '../services/matchLog'
 
 interface Options {
@@ -111,6 +111,29 @@ function main(): number {
 
   let divergence = 0
   let processed = 0
+  // Мусорные ряды генерирует RNG матча. Если в живом матче часть запланированных рядов была съедена
+  // counteract'ом или иммунитетом (они не попадают в `garbage_delivered`), поток RNG в реплее уходит
+  // вперёд, и содержимое рядов отличается от записанного. Тогда последующие «floating/overlap» — не
+  // обвинение игрокам, а следствие невоспроизводимости ряда: об этом надо сказать явно.
+  const recordedGroups = new Map<string, number[][][]>()
+  for (const g of bundle.garbage) {
+    const list = recordedGroups.get(g.targetId) ?? []
+    list.push(...g.groups)
+    recordedGroups.set(g.targetId, list)
+  }
+  let rowsDiffer = false
+  const checkRows = (playerId: string, due: GarbageArrival[]) => {
+    const list = recordedGroups.get(playerId)
+    if (!list) return
+    for (const arrival of due) {
+      const expected = list.shift()
+      if (!expected) continue
+      if (JSON.stringify(expected) !== JSON.stringify(arrival.rows)) {
+        if (!rowsDiffer) console.log('   ⚠ содержимое мусорных рядов в реплее отличается от записанного матчем (поток RNG разошёлся): вердикты дальше этой строки — только ориентировочные')
+        rowsDiffer = true
+      }
+    }
+  }
   for (const lock of feed) {
     if (processed >= opts.steps) break
     // Reuse the recorded wall-clock gaps: MatchState schedules garbage on a clock, so the replay
@@ -120,7 +143,10 @@ function main(): number {
     // `takeDueArrivals`), and `applyReportedGarbage` only absorbs rows that were *handed out*.
     // Without this step the replay board never receives them, so any lock resting on an incoming
     // garbage row turns into a bogus "floating" rejection — a PRA4 replay blamed the players for it.
-    for (const p of bundle.players) state.takeDueArrivals(p.playerId, fakeNow)
+    for (const p of bundle.players) {
+      const due = state.takeDueArrivals(p.playerId, fakeNow)
+      if (due.length) checkRows(p.playerId, due)
+    }
     const payload = {
       globalStep: lock.globalStep,
       pieceType: lock.pieceType,

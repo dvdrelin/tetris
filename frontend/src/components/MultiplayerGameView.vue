@@ -270,7 +270,8 @@ export default defineComponent({
       </div>
       <div v-if="mp.lockRejected && !mp.matchOverInfo" class="mp-banner mp-banner-warn" data-testid="mp-lock-rejected">
         Сервер не смог разобрать ваш отчёт о ходе {{ mp.lockRejected.step }} (поле {{ mp.lockRejected.field }}
-        = {{ mp.lockRejected.value }}). Матч будет закрыт — это ошибка приложения, а не ваша.
+        = {{ mp.lockRejected.value }})<span v-if="mp.lockRejected.hint">: {{ mp.lockRejected.hint }}</span>.
+        Матч будет закрыт — это ошибка приложения, а не ваша.
       </div>
       <div v-if="phraseToast" class="mp-phrase-toast" data-testid="mp-phrase-toast">
         <b>{{ phraseToast.name }}:</b> {{ phraseToast.text }}

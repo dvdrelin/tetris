@@ -138,7 +138,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
    * that failed). Distinct from a rejected-but-understood move: re-sending it changes nothing, and
    * saying so out loud is what turns a three-second mystery forfeit into a reportable bug.
    */
-  const lockRejected = ref<{ step: number; field: string; value: string } | null>(null)
+  const lockRejected = ref<{ step: number; field: string; value: string; hint?: string } | null>(null)
   /** Code of a room we were dropped from (stale/rotated ticket) — the join form names it. */
   const lostRoomCode = ref<string | null>(null)
   /** Result of the last room-side link test («Тест связи»), null until one has run. */
@@ -363,7 +363,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
           const value = msg.payload.value ?? '?'
           rejectedSteps.add(step)
           reportedLocks = reportedLocks.filter((l) => l.globalStep !== step)
-          lockRejected.value = { step, field, value }
+          lockRejected.value = { step, field, value, ...(msg.payload.hint ? { hint: msg.payload.hint } : {}) }
           lastEvent.value = `Сервер не смог разобрать ваш отчёт о ходе ${step}: ${field}=${value}. Матч будет закрыт — это ошибка приложения, не ваша.`
         }
         if (msg.payload.code === MpErrorCode.BadToken || msg.payload.code === MpErrorCode.RoomNotFound) {

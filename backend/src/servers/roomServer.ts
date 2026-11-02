@@ -19,6 +19,7 @@ import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
   RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchOverDetail, MatchResult,
   PieceLockPayload, PieceType, ConnTestPayload, ConnTestAckPayload, ConnTransportStats, MpErrorPayload,
+  PIECE_SHAPES, GAME_CONFIG,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
@@ -431,7 +432,7 @@ export class RoomServer {
       })
       this.violate(ws, {
         code: MpErrorCode.BadRequest,
-        message: `Malformed piece_lock payload: ${detail}`,
+        message: `Malformed piece_lock payload: ${detail}${problem?.hint ? ` — ${problem.hint}` : ''}`,
         ...(problem ?? {}),
       })
       return
@@ -898,6 +899,41 @@ interface LockProblem {
   field: string
   value: string
   step?: number
+  /** How the value was expected to look — turns "malformed" into something a maintainer can act on. */
+  hint?: string
+}
+
+/**
+ * Legal *origin* range for a piece in a given rotation, derived from the occupied cells rather than
+ * from the bounding box. SRS keeps the box fixed (JLSTZ 3×3, I 4×4, O 2×2), so several rotations
+ * have empty leading/trailing columns: a T in r1 occupies columns 1..2, hence `x = -1` puts its
+ * cells at columns 0..1 — a perfectly legal placement that the previous fixed guard (`x ≥ 0`)
+ * rejected as "malformed", and that is exactly how 5QBH lost a match it had not cheated in.
+ * Geometry itself (out of bounds, overlap, support, bag order) stays the replay's job.
+ */
+export function originRange(pieceType: PieceType, rotation: number): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  const shape = PIECE_SHAPES[pieceType]?.[rotation]
+  if (!shape) return null
+  let minCol = Number.POSITIVE_INFINITY
+  let maxCol = -1
+  let minRow = Number.POSITIVE_INFINITY
+  let maxRow = -1
+  for (const [rowIdx, row] of shape.entries()) {
+    for (const [colIdx, cell] of row.entries()) {
+      if (!cell) continue
+      if (colIdx < minCol) minCol = colIdx
+      if (colIdx > maxCol) maxCol = colIdx
+      if (rowIdx < minRow) minRow = rowIdx
+      if (rowIdx > maxRow) maxRow = rowIdx
+    }
+  }
+  if (maxCol < 0) return null
+  return {
+    minX: -minCol,
+    maxX: GAME_CONFIG.boardWidth - 1 - maxCol,
+    minY: -minRow,
+    maxY: GAME_CONFIG.boardHeight - 1 - maxRow,
+  }
 }
 
 /**
@@ -906,7 +942,7 @@ interface LockProblem {
  * we say *why* it was rejected — that missing answer is what made PRA4 (and before it EX8H)
  * unanswerable. The reason travels to the client too, so a player can tell us about it.
  */
-function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): { lock: PieceLockPayload | null; problem?: LockProblem } {
+export function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): { lock: PieceLockPayload | null; problem?: LockProblem } {
   const show = (v: unknown): string => {
     if (v === undefined) return 'нет поля'
     if (v === null) return 'null'
@@ -914,16 +950,26 @@ function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): { lock: P
     return Array.isArray(v) ? 'array' : typeof v
   }
   const rawStep = typeof payload?.globalStep === 'number' ? payload.globalStep : undefined
-  const bad = (field: string, value: unknown): { lock: null; problem: LockProblem } =>
-    ({ lock: null, problem: { field, value: show(value), ...(rawStep !== undefined ? { step: rawStep } : {}) } })
+  const bad = (field: string, value: unknown, hint?: string): { lock: null; problem: LockProblem } =>
+    ({ lock: null, problem: { field, value: show(value), ...(rawStep !== undefined ? { step: rawStep } : {}), ...(hint ? { hint } : {}) } })
 
   if (!payload || typeof payload !== 'object') return bad('payload', payload)
   const { globalStep, pieceType, x, y, rotation, linesCleared, nextType, garbageRows } = payload
   if (!Number.isInteger(globalStep) || (globalStep as number) < 1) return bad('globalStep', globalStep)
   if (typeof pieceType !== 'string' || !PIECE_TYPE_SET.has(pieceType)) return bad('pieceType', pieceType)
-  if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 12) return bad('x', x)
-  if (!Number.isInteger(y) || (y as number) < 0 || (y as number) > 30) return bad('y', y)
   if (!Number.isInteger(rotation) || (rotation as number) < 0 || (rotation as number) > 3) return bad('rotation', rotation)
+  // Position: a shape check, not a geometry authority. The bounds come from the piece's occupied
+  // cells (see `originRange`); a fixed `0 ≤ x ≤ 12` used to reject honest reports — 5QBH, `T r1 x=-1`.
+  const where = originRange(pieceType as PieceType, rotation as number)
+  if (!where) return bad('rotation', rotation, `для ${pieceType} нет такой формы`)
+  if (!Number.isInteger(x)) return bad('x', x, `ожидалось целое ${where.minX}..${where.maxX} для ${pieceType} r${rotation}`)
+  if ((x as number) < where.minX || (x as number) > where.maxX) {
+    return bad('x', x, `для ${pieceType} r${rotation} origin x допустим ${where.minX}..${where.maxX} (клетки должны остаться в поле ${GAME_CONFIG.boardWidth})`)
+  }
+  if (!Number.isInteger(y)) return bad('y', y, `ожидалось целое ${where.minY}..${where.maxY} для ${pieceType} r${rotation}`)
+  if ((y as number) < where.minY || (y as number) > where.maxY) {
+    return bad('y', y, `для ${pieceType} r${rotation} origin y допустим ${where.minY}..${where.maxY} (поле ${GAME_CONFIG.boardHeight} рядов)`)
+  }
   if (!Number.isInteger(linesCleared) || (linesCleared as number) < 0 || (linesCleared as number) > 4) return bad('linesCleared', linesCleared)
   if (nextType !== undefined && (typeof nextType !== 'string' || !PIECE_TYPE_SET.has(nextType))) return bad('nextType', nextType)
   // Garbage counter: a bounded monotonic integer. MatchState clamps it to rows it actually handed

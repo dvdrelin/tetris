@@ -358,6 +358,8 @@ export interface MpErrorPayload {
   field?: string;
   value?: string;
   step?: number;
+  /** What the value was expected to be — e.g. the legal origin range for that piece and rotation. */
+  hint?: string;
 }
 
 export type ServerMessage =
