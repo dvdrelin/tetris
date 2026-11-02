@@ -163,6 +163,9 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   let reconnectDelay = 1000
   let intentionalClose = false
   let clockOffset = 0 // serverTs - Date.now(); one-way estimate, ±RTT/2 (block D refines)
+  /** RTT нашего же app-level ping/pong — кладётся в диагностику отчётов о ходе. */
+  let pingSentAt = 0
+  let appRttMs = 0
   // Garbage scheduled by the server, keyed to the synced clock.
   let garbageTimers: ReturnType<typeof setTimeout>[] = []
   // Locks that went out while the socket was down: retransmitted in order right after rejoin
@@ -220,7 +223,7 @@ let rejectedSteps = new Set<number>()
       connected.value = true
       reconnectDelay = 1000
       if (pingTimer) clearInterval(pingTimer)
-      pingTimer = setInterval(() => send({ type: ClientMsgType.Ping, payload: { clientTs: Date.now() } }), MP_CLIENT_PING_MS)
+      pingTimer = setInterval(() => { pingSentAt = Date.now(); send({ type: ClientMsgType.Ping, payload: { clientTs: Date.now() } }) }, MP_CLIENT_PING_MS)
       // A page reload during a live room: take the seat back with the stored token.
       const stored = readJson<StoredToken>(TOKEN_KEY)
       if (stored) send({ type: ClientMsgType.RejoinRoom, payload: { code: stored.code, token: stored.token, client: clientInfo() } })
@@ -347,6 +350,7 @@ let rejectedSteps = new Set<number>()
         break
       case ServerMsgType.Pong:
         if (typeof msg.payload.serverTs === 'number') clockOffset = msg.payload.serverTs - Date.now()
+        if (pingSentAt) appRttMs = Date.now() - pingSentAt
         break
       case ServerMsgType.ConnTestAck: {
         const sentAt = connPending.get(msg.payload.seq)
@@ -560,6 +564,16 @@ let rejectedSteps = new Set<number>()
             // How many garbage rows this engine has absorbed so far — the server's replay
             // applies exactly this many of the rows it handed out, so its board matches ours.
             garbageRows: engine?.getGarbageRowsApplied() ?? 0,
+            // Диагностика для разбора матча (сервер её не проверяет): чем был след поворотов и в
+            // каком состоянии были наши очереди перевыдачи в этот момент.
+            ...(info.trace ? { trace: info.trace } : {}),
+            diag: {
+              ring: reportedLocks.length,
+              unsent: unsentLocks.length,
+              resync: resyncCount.value,
+              clockOffsetMs: clockOffset,
+              ...(appRttMs ? { rttMs: appRttMs } : {}),
+            },
           }
           // Ring of everything reported: `resync_request` re-sends the missing steps from here.
           reportedLocks.push(payload)

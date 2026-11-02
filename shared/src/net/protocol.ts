@@ -4,6 +4,7 @@
 // (create/join/rejoin/ready/chat/surrender) — this supersedes the seven-type sketch in
 // docs/PHASE3_MULTIPLAYER.md.
 import { PieceType } from '../domain/types';
+import type { PieceTrace } from '../engine/game-engine';
 
 // ===== Client → Server =====
 
@@ -97,6 +98,31 @@ export interface PieceLockPayload {
    * The server applies exactly this many of the arrivals it had handed out, in FIFO order.
    */
   garbageRows?: number;
+  /**
+   * Как фигура попала в это место (спавн, число сдвигов, повороты с индексами SRS-киков). Сервер
+   * ничего по этому не проверяет — только пишет в лог матча: разбор «почему x=-1?» перестаёт быть
+   * гаданием, когда видно, каким киком фигура доехала до стены.
+   */
+  trace?: PieceTrace;
+  /**
+   * Самочувствие клиента в момент отчёта (его кольца перевыдачи, эпизоды ресинхрона, расхождение
+   * часов, измеренный им RTT). Правила сервера это не касается — это объяснение уже случившегося.
+   */
+  diag?: ClientDiagPayload;
+}
+
+/** Клиентская диагностика рядом с отчётом о ходе. Всё необязательное: старый фронт молчит. */
+export interface ClientDiagPayload {
+  /** Сколько своих ходов клиент держит для перевыдачи. */
+  ring?: number;
+  /** Сколько ходов не отправлено (сокет лежал). */
+  unsent?: number;
+  /** Эпизодов мягкого ресинхрона в этом матче. */
+  resync?: number;
+  /** Смещение клиентских часов относительно серверных, мс. */
+  clockOffsetMs?: number;
+  /** RTT приложения по нашим ping/pong, мс. */
+  rttMs?: number;
 }
 
 export interface PingPayload {

@@ -283,17 +283,27 @@ export class MatchState {
       }
     }
 
-    // Bounds + overlap on the server's own board.
+    // Bounds + overlap on the server's own board. Отказ обязан называть клетки: «overlap» без
+    // координат в логе — это загадка, а не доказательство.
     const cells: { x: number; y: number }[] = []
+    const colliding: string[] = []
+    let lowestRow = -1
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[r].length; c++) {
         if (!shape[r][c]) continue
         const x = lock.x + c
         const y = lock.y + r
-        if (x < 0 || x >= BOARD_W || y < 0 || y >= BOARD_H) return { accepted: false, violation: 'oob' }
-        if (sp.board.getCell(x, y).value !== 0) return { accepted: false, violation: 'overlap' }
+        if (x < 0 || x >= BOARD_W || y < 0 || y >= BOARD_H) {
+          return { accepted: false, violation: `oob cell(${x},${y}) for ${lock.pieceType} r${lock.rotation} origin(${lock.x},${lock.y})` }
+        }
+        if (sp.board.getCell(x, y).value !== 0) colliding.push(`${x},${y}`)
         cells.push({ x, y })
+        if (y > lowestRow) lowestRow = y
       }
+    }
+    if (colliding.length) {
+      const shown = colliding.slice(0, 3).join(') (')
+      return { accepted: false, violation: `overlap ${colliding.length} cell(s): (${shown})${colliding.length > 3 ? ' …' : ''}` }
     }
 
     // Support: at least one cell under the piece must be floor/solid (no mid-air freezes).
@@ -301,7 +311,9 @@ export class MatchState {
       const below = sp.board.getCell(cell.x, cell.y + 1)
       return cell.y + 1 >= BOARD_H || below.value !== 0
     })
-    if (!supported) return { accepted: false, violation: 'floating' }
+    if (!supported) {
+      return { accepted: false, violation: `floating: nothing under the piece, lowest row ${lowestRow} of ${BOARD_H}` }
+    }
 
     // Apply on the server board; the clear count must match the report exactly.
     sp.board.setCells(buildPiece(lock.pieceType, shape), { x: lock.x, y: lock.y })

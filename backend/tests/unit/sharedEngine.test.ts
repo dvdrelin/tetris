@@ -59,4 +59,36 @@ describe('shared engine under Node (server replay feasibility)', () => {
     expect(a.engine.getBoardSnapshot()).toEqual(b.engine.getBoardSnapshot());
     expect(a.seen).toEqual([{ rows: 3, pushedOut: 0 }]);
   });
+
+  test('лок несёт след фигуры: спавн, успешные сдвиги и повороты с индексами киков', () => {
+    const locks: PieceLockInfo[] = [];
+    const engine = new GameEngine({ onPieceLocked: (l) => locks.push({ ...l }) }, { seed: 4242 });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Arcade } });
+    for (let i = 0; i < 8; i++) engine.handleCommand({ type: CommandType.MovePiece, payload: { direction: 'left' } });
+    engine.handleCommand({ type: CommandType.RotatePiece, payload: { direction: 'cw' } });
+    engine.handleCommand({ type: CommandType.HardDrop });
+    engine.handleCommand({ type: CommandType.HardDrop }); // следующая фигура падает без нашего участия
+
+    expect(locks).toHaveLength(2);
+    const first = locks[0].trace;
+    const second = locks[1].trace;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    // Спавн — верхний ряд, по горизонтали в пределах поля (ширина фигуры у всех разная).
+    expect(first!.spawn.y).toBe(0);
+    expect(first!.spawn.x).toBeGreaterThanOrEqual(0);
+    expect(first!.spawn.x).toBeLessThanOrEqual(GAME_CONFIG.boardWidth - 2);
+    // Считаются только успешные сдвиги: упор в стену — не движение.
+    expect(first!.moves).toBeGreaterThan(0);
+    expect(first!.moves).toBeLessThanOrEqual(8);
+    expect(locks[0].x).toBeLessThan(first!.spawn.x);
+    // Поворот записан из какого спавна (0) и куда; индекс кика 0 = поворот без смещения.
+    expect(first!.rotations.length).toBeGreaterThan(0);
+    expect(first!.rotations[0].from).toBe(0);
+    expect(first!.rotations[0].kick).toBeGreaterThanOrEqual(0);
+    // След принадлежит фигуре, а не «всему матчу»: у второй фигуры он обнулён.
+    expect(second!.moves).toBe(0);
+    expect(second!.rotations).toEqual([]);
+    expect(second!.spawn.y).toBe(0);
+  });
 });

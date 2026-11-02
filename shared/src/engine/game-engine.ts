@@ -14,6 +14,19 @@ import { GAME_CONFIG, LOCK_CONFIG, QUEUE_SIZE, SCORING_CONFIG, dropInterval } fr
 // for the session, and the payload is exactly what a client reports in `piece_lock` and the
 // server's replay compares against. Positions/rotation are the lock-time values (before the
 // next spawn), counters are post-lock so score/lines/combo match the client's view.
+/**
+ * Как фигура добралась до того места, где встала: спавн, число успешных сдвигов и повороты с
+ * индексами применённого SRS-кика (0 = поворот без смещения). Это диагностика разбора матча, а не
+ * правила: сервер пишет след в лог и ничего по нему не проверяет.
+ */
+export interface PieceTrace {
+  spawn: { x: number; y: number };
+  moves: number;
+  rotations: { from: number; to: number; kick: number }[];
+  /** Сколько поворотов не влезло в обрезанный список (обычно 0). */
+  more?: number;
+}
+
 export interface PieceLockInfo {
   globalStep: number;
   pieceType: PieceType;
@@ -25,6 +38,7 @@ export interface PieceLockInfo {
   level: number;
   totalLines: number;
   combo: number;
+  trace?: PieceTrace;
 }
 
 // Result of an applied InsertGarbage command (also the server's `attack_apply` evidence).
@@ -141,6 +155,10 @@ export class GameEngine {
   // Placement counter for the multiplayer protocol (GDD global_step): incremented on every
   // successful placement, 1-based at emit time.
   private globalStep: number = 0;
+  /** След текущей фигуры для диагностики матчей (см. PieceTrace): спавн, сдвиги, повороты с киками. */
+  private traceSpawn: { x: number; y: number } = { x: 0, y: 0 };
+  private traceMoves = 0;
+  private traceRotations: { from: number; to: number; kick: number }[] = [];
   // Total garbage rows this engine has absorbed since the match started. The reporting client
   // rides this number on every `piece_lock` so the server replay applies exactly the rows the
   // real board has — scheduled-but-not-yet-inserted garbage must not appear on the replay board.
@@ -335,6 +353,7 @@ export class GameEngine {
     if (this.isValidPosition(this.currentPiece, { x: this.currentPos.x + dx, y: this.currentPos.y + dy })) {
       this.currentPos.x += dx;
       this.currentPos.y += dy;
+      this.traceMoves += 1;
       this.onSuccessfulManipulation();
     } else if (this.mode === GameMode.Hardcore && this.hitsPlacedBlock(this.currentPiece, this.currentPos, dx, dy)) {
       // Hardcore rule (A2), refined in A13: a sideways move into a PLACED BLOCK is instant death —
@@ -382,11 +401,14 @@ export class GameEngine {
 
     const rotatedPiece = buildPiece(this.currentPiece.type, rotatedShape);
 
-    for (const kick of kicks) {
+    for (const [kickIndex, kick] of kicks.entries()) {
       const testPos = { x: this.currentPos.x + kick.x, y: this.currentPos.y + kick.y };
       if (this.isValidPosition(rotatedPiece, testPos)) {
         this.currentRotation.index = newRotation;
         this.currentPos = testPos;
+        // Индекс кика — то, что отличает «чистый» поворот от wall/floor-смещения: по нему видно,
+        // легально ли фигура оказалась у стены (разбор 5QBH начался именно с этого вопроса).
+        this.traceRotations.push({ from: rotationIndex, to: newRotation, kick: kickIndex });
         // Rebuild shape + matching colors for the active rotation.
         this.currentPiece = rotatedPiece;
         this.onSuccessfulManipulation();
@@ -537,6 +559,9 @@ export class GameEngine {
     const offsetX = Math.floor((this.width - piece.shape[0].length) / 2);
     this.currentPos = { x: offsetX, y: 0 };
     this.currentRotation = { index: 0 };
+    this.traceSpawn = { x: offsetX, y: 0 };
+    this.traceMoves = 0;
+    this.traceRotations = [];
     this.gravityAccumulator = 0;
     this.lockAccumulator = 0;
     this.lockResets = 0;
@@ -652,6 +677,7 @@ export class GameEngine {
     // MP block A: the lock is a protocol event. The client store (reporting `piece_lock`) and
     // the server replay subscribe to the same payload; globalStep numbers it for the session.
     this.globalStep++;
+    const TRACED_ROTATIONS = 8
     this.callbacks.onPieceLocked?.({
       globalStep: this.globalStep,
       pieceType: placedPiece.type,
@@ -663,6 +689,12 @@ export class GameEngine {
       level: this.level,
       totalLines: this.linesCleared,
       combo: this.combo,
+      trace: {
+        spawn: { ...this.traceSpawn },
+        moves: this.traceMoves,
+        rotations: this.traceRotations.slice(0, TRACED_ROTATIONS),
+        ...(this.traceRotations.length > TRACED_ROTATIONS ? { more: this.traceRotations.length - TRACED_ROTATIONS } : {}),
+      },
     });
 
     // Next piece: spawnNextPiece pulls from the queue and refills it.

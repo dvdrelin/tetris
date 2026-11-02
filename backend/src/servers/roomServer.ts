@@ -19,7 +19,7 @@ import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
   RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchOverDetail, MatchResult,
   PieceLockPayload, PieceType, ConnTestPayload, ConnTestAckPayload, ConnTransportStats, MpErrorPayload,
-  ClientInfoPayload, PIECE_SHAPES, GAME_CONFIG,
+  ClientInfoPayload, PieceTrace, ClientDiagPayload, PIECE_SHAPES, GAME_CONFIG,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
@@ -468,11 +468,16 @@ export class RoomServer {
       // reading every line; the full `snapshot` is written on a rejection and every Nth lock, so a
       // divergence has a board to compare against right where it starts.
       const rejected = !verdict.accepted
+      const extra = (payload ?? {}) as { trace?: PieceTrace; diag?: ClientDiagPayload }
       this.matchLog.event(room.code, 'piece_lock', slot.id, {
         lock,
         accepted: verdict.accepted,
         digest: state.boardDigest(slot.id),
         ...(rejected || lock.globalStep % SNAPSHOT_EVERY_LOCKS === 0 ? { snapshot: state.boardSnapshot(slot.id) } : {}),
+        // След фигуры и самочувствие клиента: не влияют на правила, но объясняют, как кадр получился
+        // именно таким (каким киком доехал до стены, сколько ходов было в кольце перевыдачи).
+        ...(extra.trace ? { trace: extra.trace } : {}),
+        ...(extra.diag ? { diag: extra.diag } : {}),
         ...(verdict.accepted ? {} : { violation: verdict.violation }),
       })
       // What the server actually generated against the opponents (and what it ate with counteract):
@@ -537,6 +542,7 @@ export class RoomServer {
       attempt: count + 1,
       deadline,
       digest: this.matchStates.get(room.code)?.boardDigest(slot.id),
+      transport: ws.transportStats ?? null,
     })
     this.send(ws, { type: ServerMsgType.ResyncRequest, payload: { ...gap, deadline } })
     const timer = setTimeout(() => {
@@ -586,6 +592,18 @@ export class RoomServer {
       transport: ws.transportStats ?? { pingsSent: 0, pingsLost: 0, lastPongRttMs: null },
     }
     this.send(ws, { type: ServerMsgType.ConnTestAck, payload: ack })
+    // Тест канала живёт только в памяти сокета, а через минуту его уже не восстановить. Пишем в лог
+    // матча (реже, чем кадры): «линия была кривая в этот момент» должно читаться по факту.
+    if (ctx && (ack.seq === 0 || ack.seq % 4 === 0)) {
+      this.matchLog.event(ctx.code, 'conn_test', ctx.playerId, {
+        seq: ack.seq,
+        msgsIn: ack.msgsIn,
+        msgsOut: ack.msgsOut,
+        bytesIn: ack.bytesIn,
+        bytesOut: ack.bytesOut,
+        transport: ack.transport,
+      })
+    }
   }
 
   private counters(ws: ClientSocket): { msgsIn: number; msgsOut: number; bytesIn: number; bytesOut: number } {
@@ -753,7 +771,11 @@ export class RoomServer {
     this.matchLog.event(ctx.code, 'socket_closed', ctx.playerId, {
       phase: room?.phase ?? 'unknown',
       stale: !ownsSeat,
+      seat: slot?.playerIndex ?? null,
+      name: slot?.name ?? null,
       graceUntil: ownsSeat && room?.phase === 'playing' && this.graceMs > 0 ? this.now() + this.graceMs : null,
+      // Транспортные счётчики `ws` на момент разрыва: «канал был дерганым» перестаёт быть словами.
+      transport: ws.transportStats ?? null,
     })
     if (!room || !slot || !ownsSeat) return
 
@@ -786,7 +808,14 @@ export class RoomServer {
   }
 
   private finalizeDisconnect(room: Room, slot: PlayerSlot, reason: 'left' | 'disconnect_timeout'): void {
-    this.matchLog.event(room.code, reason === 'left' ? 'seat_removed_left' : 'grace_expired', slot.id)
+    this.matchLog.event(room.code, reason === 'left' ? 'seat_removed_left' : 'grace_expired', slot.id, {
+      // Кто именно ушёл и почему: в PRA4 по логу нельзя было понять, какое место сняли и можно ли
+      // в эту комнату было вернуться.
+      seat: slot.playerIndex,
+      name: slot.name,
+      reason,
+      phase: room.phase,
+    })
     if (room.phase === 'playing') {
       // GDD: a disconnected player freezes out of the match — the others play on. In a 1v1 the
       // remaining player wins by forfeit; with more seats the verdict stays honest this way too.

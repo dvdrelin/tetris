@@ -258,9 +258,12 @@ describe('a played match leaves the whole story in the log', () => {
       const wrongPiece = firstFromBag === 'O' ? 'I' : 'O'
       guest.emitMessage({
         type: ClientMsgType.PieceLock,
-        payload: { globalStep: 1, pieceType: wrongPiece, x: 0, y: 18, rotation: 0, linesCleared: 0, garbageRows: 0 },
+        payload: {
+          globalStep: 1, pieceType: wrongPiece, x: 0, y: 18, rotation: 0, linesCleared: 0, garbageRows: 0,
+          trace: { spawn: { x: 3, y: 0 }, moves: 3, rotations: [{ from: 0, to: 1, kick: 2 }] },
+          diag: { ring: 0, unsent: 0, resync: 0, clockOffsetMs: -120, rttMs: 90 },
+        },
       })
-
       const entry = store.list()[0]
       const lines = store.readLines(entry.file)
       const start = lines[0]
@@ -290,6 +293,16 @@ describe('a played match leaves the whole story in the log', () => {
       expect(entry.matchId).toBe(start.mid)
       expect(bundle.digests).toHaveLength(1)
       expect(bundle.digests[0]).toMatchObject({ playerId: expect.any(String), step: 1, origin: 'lock' })
+      // След фигуры и самочувствие клиента доезжают до лога в целости: по ним видно, каким киком
+      // фигура доехала до стены и сколько ходов в этот момент лежало в кольце перевыдачи.
+      expect(lockLine.data).toMatchObject({
+        trace: { spawn: { x: 3, y: 0 }, moves: 3, rotations: [{ from: 0, to: 1, kick: 2 }] },
+        diag: { ring: 0, unsent: 0, resync: 0, clockOffsetMs: -120, rttMs: 90 },
+      })
+      expect(bundle.verdicts[0].lock as Record<string, unknown>).toMatchObject({
+        trace: { spawn: { x: 3, y: 0 } },
+        diag: { rttMs: 90 },
+      })
     } finally {
       jest.useRealTimers()
     }

@@ -197,6 +197,13 @@ describe('match lifecycle', () => {
       const locks = ws().sent.filter((m) => m.type === ClientMsgType.PieceLock)
       expect(locks.length).toBeGreaterThan(0)
       expect(locks[0].payload).toMatchObject({ pieceType: expect.any(String), globalStep: expect.any(Number) })
+      // Серверный лог живёт и на следе фигуры, и на самочувствии клиента — оба едут в каждом отчёте.
+      expect(locks[0].payload.trace).toMatchObject({
+        spawn: { x: expect.any(Number), y: 0 },
+        moves: expect.any(Number),
+        rotations: expect.any(Array),
+      })
+      expect(locks[0].payload.diag).toMatchObject({ ring: expect.any(Number), resync: 0, clockOffsetMs: expect.any(Number) })
       store.leaveRoom()
     } finally {
       jest.useRealTimers()

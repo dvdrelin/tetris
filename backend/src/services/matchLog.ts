@@ -84,6 +84,10 @@ export interface ReplayLock {
   rotation: number
   linesCleared: number
   garbageRows: number
+  /** Клиентский след фигуры (спавн/сдвиги/повороты с киками) — только для чтения разбором. */
+  trace?: { spawn: { x: number; y: number }; moves: number; rotations: { from: number; to: number; kick: number }[]; more?: number }
+  /** Клиентская диагностика в момент отчёта (кольцо перевыдачи, ресинхроны, часы, RTT). */
+  diag?: Record<string, number>
 }
 
 export interface ReplayGarbage {
@@ -201,13 +205,17 @@ export function bundleFromLines(lines: MatchLogLine[]): ReplayBundle | null {
   for (const line of lines) {
     const { event, playerId, t } = line
     if (event === 'piece_lock') {
-      const rec = line.data as { lock?: ReplayLock; accepted?: boolean; violation?: string; digest?: string; snapshot?: string } | undefined
+      const rec = line.data as {
+        lock?: ReplayLock; accepted?: boolean; violation?: string; digest?: string; snapshot?: string
+        trace?: ReplayLock['trace']; diag?: ReplayLock['diag']
+      } | undefined
       const lock = rec?.lock
       if (!lock) continue
+      const enriched: ReplayLock = { ...lock, ...(rec?.trace ? { trace: rec.trace } : {}), ...(rec?.diag ? { diag: rec.diag } : {}) }
       if (rec && rec.accepted === false) {
-        bundle.verdicts.push({ playerId: playerId ?? '', t, violation: rec.violation ?? '', lock })
+        bundle.verdicts.push({ playerId: playerId ?? '', t, violation: rec.violation ?? '', lock: enriched })
       } else {
-        bundle.locks.push({ ...lock, playerId: playerId ?? '', t })
+        bundle.locks.push({ ...enriched, playerId: playerId ?? '', t })
       }
       if (rec?.digest) {
         bundle.digests.push({
