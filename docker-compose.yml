@@ -19,6 +19,14 @@ services:
       - VIRTUAL_PORT=3000
       - VIRTUAL_PATH=/
       - ACME_HOST=ntetris.ddns.net
+      # MP-логи матчей: один JSONL на матч в ./backend/data/mp-matches (volume ниже),
+      # старые файлы удаляются сами после MP_LOG_MAX_FILES (по умолчанию 300).
+      # Чтение логов по HTTP (GET /api/mp/matches) закрыто, пока не задан MP_ADMIN_TOKEN:
+      # пусто => эндпоинты отвечают 503, логи доступны только по SSH.
+      # Значение хранится в /opt/neon-tetris/.env на сервере (его не касается git и rsync).
+      - MP_ADMIN_TOKEN=${MP_ADMIN_TOKEN:-}
+      - MP_LOGS=${MP_LOGS:-1}
+      - MP_LOG_MAX_FILES=${MP_LOG_MAX_FILES:-300}
     volumes:
       - ./backend/data:/app/backend/data:rw
     networks:

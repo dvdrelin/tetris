@@ -24,6 +24,7 @@ import {
 import { RateLimiter } from '../middleware/rate-limit'
 import { MP_CONFIG } from '../config/mpConfig'
 import { MatchState } from '../services/matchState'
+import { MatchLogStore } from '../services/matchLog'
 
 /** Minimal surface of a `ws` WebSocket used by the room logic (readyState 1 = OPEN). */
 export interface ClientSocket {
@@ -67,6 +68,8 @@ export interface RoomServerOptions {
   graceMs?: number
   /** Match-seed source. Injectable so an integration test can replay a known bag; default: uint32 CSPRNG. */
   seed?: () => number
+  /** Where the match-by-match JSONL diagnostics go. Default: a disabled store (tests stay silent). */
+  matchLog?: MatchLogStore
 }
 
 export class RoomServer {
@@ -84,11 +87,14 @@ export class RoomServer {
   private readonly now: () => number
   private readonly graceMs: number
   private readonly seedFn: () => number
+  /** Per-match JSONL diagnostics (see services/matchLog.ts). */
+  private readonly matchLog: MatchLogStore
 
   constructor(options: RoomServerOptions = {}) {
     this.now = options.now ?? (() => Date.now())
     this.graceMs = options.graceMs ?? MP_CONFIG.rejoinGraceMs
     this.seedFn = options.seed ?? (() => randomInt(0, 2 ** 32)) // uint32 per GDD §2.2
+    this.matchLog = options.matchLog ?? new MatchLogStore({ enabled: false })
     this.msgLimiter = new RateLimiter({
       windowMs: MP_CONFIG.msgWindowMs,
       max: MP_CONFIG.msgMaxPerWindow,
@@ -250,7 +256,13 @@ export class RoomServer {
     if (room.phase === 'playing') {
       const state = this.matchStates.get(room.code)
       const arrivals = state ? state.claimAllArrivals(slot.id) : []
+      this.matchLog.event(room.code, 'rejoin', slot.id, {
+        phase: room.phase,
+        pendingGarbage: arrivals.map((a) => ({ applyAt: a.applyAt, rows: a.rows.length })),
+      })
       if (arrivals.length) this.send(ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals } })
+    } else {
+      this.matchLog.event(room.code, 'rejoin', slot.id, { phase: room.phase })
     }
   }
 
@@ -279,6 +291,7 @@ export class RoomServer {
     const ctx = this.requirePlayer(ws)
     if (!ctx) return
     const { room, slot } = ctx
+    this.matchLog.event(room.code, 'leave_room', slot.id)
     this.socketToPlayer.delete(ws)
     if (room.phase === 'playing') {
       // Walking out mid-match is a forfeit (same verdict as surrender, different reason).
@@ -306,6 +319,13 @@ export class RoomServer {
       cause === 'topout' ? 'topout' : cause === 'reload' ? 'forfeit' : 'surrender'
     const detail: MatchOverDetail =
       cause === 'topout' ? 'topout' : cause === 'reload' ? 'reload' : 'surrender_button'
+    // What the client *claims* happened (button / topout / reload) is logged verbatim: when a
+    // player says "nobody reloaded anything", this line plus socket_closed shows the truth.
+    this.matchLog.event(room.code, 'surrender', slot.id, {
+      claimedCause: typeof cause === 'string' ? cause : 'button',
+      reason,
+      detail,
+    })
     this.matchOver(room, reason, this.firstOtherPlayer(room, slot), detail)
   }
 
@@ -382,6 +402,13 @@ export class RoomServer {
     let appliedGarbage: number[][][] = []
     if (state) {
       const verdict = state.applyLock(slot.id, lock)
+      // The lock and the verdict the replay produced travel together — this line *is* the evidence
+      // for "why was this legal move rejected", and the input for an offline replay of the match.
+      this.matchLog.event(room.code, 'piece_lock', slot.id, {
+        lock,
+        accepted: verdict.accepted,
+        ...(verdict.accepted ? {} : { violation: verdict.violation }),
+      })
       if (!verdict.accepted) {
         console.warn(`[mp] piece_lock violation room=${room.code} player=${slot.name}: ${verdict.violation}`)
         this.sendError(ws, MpErrorCode.InvalidMove, 'Ход отклонён сервером')
@@ -431,6 +458,14 @@ export class RoomServer {
     const startTime = this.now() + MP_CONFIG.startDelayMs
     room.phase = 'playing'
     this.matchStates.set(room.code, new MatchState(room.players.map((p) => p.id), seed, this.now))
+    // One log file per match: the seed and the roster are the header, everything else is events.
+    // A rematch opens a new file, so a room's history stays readable.
+    this.matchLog.startMatch({
+      code: room.code,
+      seed,
+      startTime,
+      players: room.players.map((p) => ({ playerId: p.id, name: p.name, playerIndex: p.playerIndex })),
+    })
     // heads_up survival limit: when time is up, the survivor wins; both alive → honest draw.
     // unref(): the timer must not hold the event loop open (tests, graceful shutdown).
     const limitTimer = setTimeout(() => {
@@ -468,7 +503,14 @@ export class RoomServer {
       for (const p of room.players) {
         if (!p.connected || !p.ws) continue
         const due = state.takeDueArrivals(p.id, now)
-        if (due.length) this.send(p.ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals: due } })
+        if (due.length) {
+          // Rows are logged on delivery (not at scheduling) because the replay needs the rows the
+          // client was actually told to insert, in the order the client inserts them.
+          this.matchLog.event(room.code, 'garbage_delivered', p.id, {
+            arrivals: due.map((a) => ({ applyAt: a.applyAt, rows: a.rows })),
+          })
+          this.send(p.ws, { type: ServerMsgType.GarbageArrive, payload: { arrivals: due } })
+        }
       }
     }
   }
@@ -496,6 +538,8 @@ export class RoomServer {
       score: 0,
       lines: state?.certifiedLines(p.id) ?? p.reportedLines,
     }))
+    this.matchLog.event(room.code, 'match_over', winner?.id, { reason, detail, winnerId: winner?.id ?? null, results })
+    this.matchLog.close(room.code, { reason, detail, winnerId: winner?.id ?? null })
     for (const p of alive) {
       // `detail` rides to both seats: each of them renders its own point of view of the same event.
       this.send(p.ws, { type: ServerMsgType.MatchOver, payload: { reason, detail, winnerId: winner?.id ?? null, results } })
@@ -520,7 +564,17 @@ export class RoomServer {
     this.socketToPlayer.delete(ws)
     const room = this.rooms.get(ctx.code)
     const slot = room?.players.find((p) => p.id === ctx.playerId)
-    if (!room || !slot || slot.ws !== ws) return
+    // Every socket that was mapped to a seat leaves a line — even a stale one, and even after the
+    // match already ended. The moment the connection died is the evidence in a dispute like
+    // "nobody reloaded the page": a drop at :12 and a surrender claiming 'reload' at :40 are two
+    // different stories in the log.
+    const ownsSeat = slot ? slot.ws === ws : false
+    this.matchLog.event(ctx.code, 'socket_closed', ctx.playerId, {
+      phase: room?.phase ?? 'unknown',
+      stale: !ownsSeat,
+      graceUntil: ownsSeat && room?.phase === 'playing' && this.graceMs > 0 ? this.now() + this.graceMs : null,
+    })
+    if (!room || !slot || !ownsSeat) return
 
     slot.ws = null
     slot.connected = false
@@ -551,6 +605,7 @@ export class RoomServer {
   }
 
   private finalizeDisconnect(room: Room, slot: PlayerSlot, reason: 'left' | 'disconnect_timeout'): void {
+    this.matchLog.event(room.code, reason === 'left' ? 'seat_removed_left' : 'grace_expired', slot.id)
     if (room.phase === 'playing') {
       // GDD: a disconnected player freezes out of the match — the others play on. In a 1v1 the
       // remaining player wins by forfeit; with more seats the verdict stays honest this way too.

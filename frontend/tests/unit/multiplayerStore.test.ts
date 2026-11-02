@@ -227,6 +227,36 @@ describe('match lifecycle', () => {
     expect(localStorage.getItem('nt_mp_match')).toBeNull()
   })
 
+  test('a reconnect while the engine is still alive resumes — nobody is blamed for a reload', () => {
+    // The false accusation the 5.1 live test ran into: a dropped WebSocket is not a page reload.
+    // With the local engine intact the store must keep playing: no surrender, no forfeit cause,
+    // and the match record stays so the game can be finished.
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 12, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(1)
+      expect(localStorage.getItem('nt_mp_match')).not.toBeNull()
+
+      ws().close() // the socket dies (nginx idle, a wifi hop); the tab and its engine survive
+      jest.advanceTimersByTime(2000) // the reconnect backoff, then the new socket opens
+      ws().simulateOpen()
+      ws().feed({
+        type: ServerMsgType.RoomCreated,
+        payload: { room: roomSnapshot({ phase: 'playing' }), token: 't2', playerId: 'p1' },
+      })
+
+      const types = ws().sent.map((m: any) => m.type)
+      expect(types).not.toContain(ClientMsgType.Surrender)
+      expect(store.myOverCause).toBeNull()
+      expect(store.inMatch).toBe(true)
+      expect(localStorage.getItem('nt_mp_match')).not.toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   test('fast_phrase from the server lands in lastPhrase for the toast', () => {
     const store = setupStore()
     ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })

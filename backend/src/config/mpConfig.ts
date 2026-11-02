@@ -38,4 +38,9 @@ export const MP_CONFIG = Object.freeze({
   /** GDD room.fast_phrase: one preset phrase per player per window, length cap 50. */
   fastPhraseRateLimitMs: num('MP_FAST_PHRASE_MS', 3000),
   fastPhraseMaxLen: num('MP_FAST_PHRASE_MAX_LEN', 50),
+  /** Match diagnostics: one append-only JSONL per match under backend/data/mp-matches. MP_LOGS=0 off. */
+  logsEnabled: process.env.MP_LOGS !== '0',
+  logMaxFiles: num('MP_LOG_MAX_FILES', 300),
+  /** Secret for GET /api/mp/matches… Empty → the endpoints answer 503, logs stay SSH-only. */
+  logAdminToken: (process.env.MP_ADMIN_TOKEN ?? '').trim(),
 })

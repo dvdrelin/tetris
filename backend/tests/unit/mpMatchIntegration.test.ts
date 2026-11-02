@@ -6,11 +6,16 @@
  * closed as a forfeit — the player "died right after a legal drop".
  */
 import { EventEmitter } from 'events'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import {
   ClientMsgType, ServerMsgType, ServerMessage, GameEngine, GameMode, CommandType,
   PieceLockPayload, GAME_CONFIG,
 } from '@neon-tetris/shared'
 import { RoomServer, ClientSocket } from '../../src/servers/roomServer'
+import { MatchState } from '../../src/services/matchState'
+import { MatchLogStore } from '../../src/services/matchLog'
 
 class FakeSocket extends EventEmitter implements ClientSocket {
   readyState = 1
@@ -134,12 +139,12 @@ function takeGarbage(socket: FakeSocket): number[][][] {
 }
 
 describe('live match: honest garbage exchange no longer kills the victim', () => {
-  function playMatch(seed: number) {
+  function playMatch(seed: number, matchLog?: MatchLogStore) {
     jest.useFakeTimers()
     try {
       clock = 1_000_000
       // The seed source is injected so a given seed replays the same greedy game every run.
-      const server = new RoomServer({ now, graceMs: 5_000, seed: () => seed })
+      const server = new RoomServer({ now, graceMs: 5_000, seed: () => seed, matchLog })
       const socketA = new FakeSocket()
       const socketB = new FakeSocket()
       server.handleConnection(socketA)
@@ -198,7 +203,7 @@ describe('live match: honest garbage exchange no longer kills the victim', () =>
     // Deterministic per seed (the seed source is injected), so this is a regression test and not
     // a dice roll. Greedy play does not always clear a line, but across these bags an attack
     // happens — and none of these honest matches may produce a single anticheat verdict.
-    const runs = [1, 7, 42, 99, 20261102, 4242, 555, 13, 88, 31337].map(playMatch)
+    const runs = [1, 7, 42, 99, 20261102, 4242, 555, 13, 88, 31337].map((seed) => playMatch(seed))
     const attacked = runs.filter((r) => r.garbageSeen > 0)
     expect(attacked.length).toBeGreaterThan(0)
 
@@ -212,5 +217,50 @@ describe('live match: honest garbage exchange no longer kills the victim', () =>
     const winner = attacked[0]
     expect(winner.lockRelays).toBeGreaterThan(0)
     expect(winner.appliedRelay).toBeGreaterThan(0)
+  })
+
+  test('a logged match replays offline on the same seed, lock for lock', () => {
+    // This is what `npm run mp:replay` does with a downloaded log: rebuild the verification state
+    // from the recorded seed and feed the recorded locks back into it. If the log were missing
+    // anything the replay needs (the seed, the garbage a lock absorbed, the step order), the
+    // replay would start rejecting honest locks — so this test guards the log's completeness.
+    const dir = mkdtempSync(join(tmpdir(), 'neon-mp-replay-'))
+    try {
+      const store = new MatchLogStore({ dir, now })
+      const run = playMatch(42, store)
+      const entry = store.list()[0]
+      expect(entry).toBeTruthy()
+      const bundle = store.readBundle(entry!.file)!
+      expect(bundle.seed).toBe(42)
+      expect(bundle.locks.length).toBe(run.lockCount)
+      expect(bundle.locks.length).toBeGreaterThan(20)
+      expect(store.readBundle(entry!.file)!.verdicts).toEqual([])
+
+      let replayClock = bundle.startedAt
+      const fresh = new MatchState(bundle.players.map((p) => p.playerId), bundle.seed, () => replayClock)
+      let firstRejection = ''
+      for (const lock of bundle.locks) {
+        replayClock = Math.max(replayClock, lock.t)
+        const verdict = fresh.applyLock(lock.playerId, {
+          globalStep: lock.globalStep,
+          pieceType: lock.pieceType,
+          x: lock.x,
+          y: lock.y,
+          rotation: lock.rotation,
+          linesCleared: lock.linesCleared,
+          garbageRows: lock.garbageRows ?? 0,
+        })
+        if (!verdict.accepted && !firstRejection) {
+          firstRejection = `${lock.playerId.slice(0, 8)} step ${lock.globalStep} ${lock.pieceType} x=${lock.x} y=${lock.y}: ${verdict.violation}`
+        }
+      }
+      expect(firstRejection).toBe('')
+      // Certified line counts survive the replay too — the log is enough to audit the score.
+      for (const p of bundle.players) {
+        expect(fresh.certifiedLines(p.playerId)).toBeGreaterThanOrEqual(0)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

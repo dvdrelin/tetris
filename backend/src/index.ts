@@ -6,8 +6,10 @@ import { ScoreService } from './services/scoreService'
 import { RoomServer } from './servers/roomServer'
 import { createGameRouter } from './routes/gameRouter'
 import { createHealthRouter } from './routes/healthRouter'
+import { createMpLogRouter } from './routes/mpLogRouter'
 import { RateLimiter } from './middleware/rate-limit'
 import { MP_CONFIG } from './config/mpConfig'
+import { MatchLogStore } from './services/matchLog'
 
 const app = express()
 const httpServer = createHttpServer(app)
@@ -38,7 +40,11 @@ const scoreService = new ScoreService()
 // MP block B: maxPayload caps one inbound frame — protocol messages are small, 16 KiB kills
 // frame-level flooding before any JSON is parsed.
 const wss = new WebSocketServer({ noServer: true, maxPayload: MP_CONFIG.maxPayloadBytes })
-const roomServer = new RoomServer()
+// Match-by-match MP diagnostics (JSONL in backend/data/mp-matches, which deploy.sh preserves and
+// the container mounts). Read them back over GET /api/mp/matches (needs MP_ADMIN_TOKEN) and replay
+// any of them offline with `npm run mp:replay`.
+const matchLog = new MatchLogStore({ enabled: MP_CONFIG.logsEnabled, maxFiles: MP_CONFIG.logMaxFiles })
+const roomServer = new RoomServer({ matchLog })
 
 // Built SPA directory (production image: /app/frontend/dist).
 const FRONTEND_DIST = join(__dirname, '..', '..', 'frontend', 'dist')
@@ -58,6 +64,9 @@ app.use(
 
 // Game API routes (must come BEFORE catch-all)
 app.use('/api', createGameRouter(scoreService, { scoreLimiter }))
+
+// MP match-log API (read-only, MP_ADMIN_TOKEN-protected; 503 when no token is configured).
+app.use('/api/mp', createMpLogRouter(matchLog, { adminToken: MP_CONFIG.logAdminToken }))
 
 // Serve frontend static files in production
 app.use(express.static(FRONTEND_DIST))

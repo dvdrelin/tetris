@@ -20,7 +20,9 @@
     "test": "npm-run-all test:unit test:backend",
     "test:unit": "npm run test --workspace frontend",
     "test:backend": "npm run test --workspace backend",
-    "test:e2e": "playwright test --config tests/playwright.config.ts"
+    "test:e2e": "playwright test --config tests/playwright.config.ts",
+    "mp:logs": "node scripts/mp-logs.mjs",
+    "mp:replay": "tsx backend/src/tools/mpReplay.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

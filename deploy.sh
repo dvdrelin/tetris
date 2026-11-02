@@ -40,8 +40,11 @@
 # Формат 2.{YY}.{MM}.{hash}, например 2.26.11.317de99; мажор меняется вручную (2 = MP MVP).
 # Скрипт сверяет её с реальным ответом /api/health: несовпадение = собран не тот коммит.
 #
-# `--exclude=backend/data` сохраняет scores.json (он примонтирован в контейнер),
+# `--exclude=backend/data` сохраняет scores.json (он примонтирован в контейнер)
+#   и mp-логи матчей (backend/data/mp-matches),
 # `--exclude=nginx-proxy` сохраняет nginx-proxy/.env с EMAIL (адрес для Let's Encrypt),
+# `--exclude=.env` сохраняет серверный /opt/neon-tetris/.env — там MP_ADMIN_TOKEN
+#   (секрет для GET /api/mp/matches). В git он не попадает и с сервера не уезжает.
 # которого нет в репозитории. Оба исключения обязательны.
 # ============================================================================
 
@@ -137,7 +140,7 @@ echo ""
 log "Синхронизирую $CLONE_DIR -> $REMOTE_DIR..."
 run "mkdir -p $REMOTE_DIR && rsync -a --delete \
     --exclude=.git --exclude=node_modules --exclude=dist \
-    --exclude=backend/data --exclude=nginx-proxy \
+    --exclude=backend/data --exclude=nginx-proxy --exclude=.env \
     $CLONE_DIR/ $REMOTE_DIR/"
 
 # APP_VERSION вычисляется из клонированного репозитория (в $REMOTE_DIR нет .git —
@@ -151,7 +154,7 @@ else
 fi
 
 run "rm -rf $CLONE_DIR"
-ok "Файлы синхронизированы (backend/data и nginx-proxy не тронуты)"
+ok "Файлы синхронизированы (backend/data, nginx-proxy и .env не тронуты)"
 echo ""
 
 # ---------------------------------------------------------------------------

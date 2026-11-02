@@ -77,6 +77,9 @@ nginx-proxy/volumes/
 backend/data/*.db
 backend/data/*.sqlite
 
+# MP match logs downloaded for analysis (they carry player names)
+mp-logs/
+
 # Backups
 *.bak
 *.backup

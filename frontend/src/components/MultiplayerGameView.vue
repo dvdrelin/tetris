@@ -65,9 +65,12 @@ export default defineComponent({
         case 'surrender_button':
           return mine === 'button' ? 'Вы сдались' : 'Соперник нажал «Сдаться»'
         case 'reload':
+          // The client can only state a fact it observed locally — the board state was gone when we
+          // rejoined. Whether the human reloaded or the browser discarded a background tab is the
+          // server log's job to tell (socket_closed vs surrender), so the wording stays neutral.
           return mine === 'reload'
-            ? 'Вы перезагрузили страницу: стакан не восстановить — матч потерян технически'
-            : 'Соперник перезагрузил страницу или закрыл вкладку — техническая победа'
+            ? 'Состояние нашего стакана пропало: страница закрыта, выгружена браузером или перезагружена — матч потерян технически'
+            : 'Состояние стакана соперника пропало (страница закрыта, выгружена браузером или перезагружена) — техническая победа'
         case 'left_room':
           return mine ? 'Вы вышли из комнаты прямо во время матча' : 'Соперник вышел из комнаты прямо во время матча'
         case 'disconnect':
