@@ -187,3 +187,76 @@ describe('piece_lock verification (verify enabled, seeded bag)', () => {
     if (!fv2.accepted) expect(fv2.violation).toMatch(/lines/)
   })
 })
+
+// The bug this section exists for: the replay board used to stay clean while the real boards were
+// full of attack rows, so an honest lock resting on garbage read as 'floating' to the server —
+// the player died right after a legal drop and the match closed as a forfeit.
+describe('garbage state of the replay board (reported garbageRows counter)', () => {
+  /** A tetris by A: 7 garbage rows scheduled against B, landing at t=1900. */
+  function attack(state: MatchState): void {
+    const grid = fillBottomRows(emptyGrid(), 4, 9)
+    grid[15][0] = 1 // a survivor above the cleared rows: not a perfect clear
+    state.debugInjectBoard('A', grid)
+    expect(state.applyLock('A', lock(1, 'I', 7, 16, 1, 4)).accepted).toBe(true)
+  }
+
+  test('a lock resting on delivered garbage is accepted once the report says the rows landed', () => {
+    const state = makeState()
+    attack(state)
+    clock = 1900
+    expect(state.takeDueArrivals('B', 1900)).toHaveLength(1) // the sweep handed the rows to B
+
+    // B's honest placement: an O resting on the garbage surface (rows 13..19 are garbage with the
+    // fixed rng's hole at column 5). Without the counter the server sees an empty board.
+    const without = state.applyLock('B', lock(1, 'O', 5, 11, 0, 0))
+    expect(without.accepted).toBe(false)
+    if (!without.accepted) expect(without.violation).toMatch(/floating/)
+
+    const v = state.applyLock('B', lock(1, 'O', 5, 11, 0, 0, { garbageRows: 7 }))
+    expect(v.accepted).toBe(true)
+    if (!v.accepted) return
+    expect(v.appliedGarbage).toHaveLength(1)
+    expect(v.appliedGarbage[0]).toHaveLength(7)
+
+    // The replay board now carries what B's real board carries.
+    const board = state.debugBoardSnapshot('B')
+    expect(board).not.toBeNull()
+    expect(board![19][0]).toBe(4) // garbage row (fixed rng colour 4), hole at column 5
+    expect(board![19][5]).toBe(0)
+    expect(board![13].every((v2, x) => (x === 5 ? v2 === 0 : v2 === 4))).toBe(true)
+    expect(board![11][5]).not.toBe(0) // B's own O sits on top of the garbage
+  })
+
+  test('rows that were never handed out cannot be conjured onto the board by a counter', () => {
+    const state = makeState()
+    attack(state) // scheduled at t=1900, but the sweep never ran
+    // B claims to have absorbed 7 rows the server has not delivered: clamped to zero.
+    const v = state.applyLock('B', lock(1, 'O', 5, 11, 0, 0, { garbageRows: 7 }))
+    expect(v.accepted).toBe(false)
+    if (!v.accepted) expect(v.violation).toMatch(/floating/)
+    // And the honest path still works once the rows really arrive.
+    expect(state.takeDueArrivals('B', 1900)).toHaveLength(1)
+    expect(state.applyLock('B', lock(1, 'O', 5, 11, 0, 0, { garbageRows: 7 })).accepted).toBe(true)
+  })
+
+  test('a mid-match rejoin hands the pending rows over, and they absorb on the next report', () => {
+    const state = makeState()
+    attack(state)
+    clock = 1900
+    // A rejoin claims every still-pending arrival; the client inserts them immediately.
+    expect(state.claimAllArrivals('B')).toHaveLength(1)
+    expect(state.applyLock('B', lock(1, 'O', 5, 11, 0, 0, { garbageRows: 7 })).accepted).toBe(true)
+  })
+
+  test('a counter that overstates the truth absorbs only what exists and stays accepted', () => {
+    const state = makeState()
+    attack(state)
+    clock = 1900
+    state.takeDueArrivals('B', 1900)
+    // 999 claimed, 7 delivered: the replay applies the 7 (extra rows would only hurt their owner).
+    const v = state.applyLock('B', lock(1, 'O', 5, 11, 0, 0, { garbageRows: 999 }))
+    expect(v.accepted).toBe(true)
+    if (!v.accepted) return
+    expect(v.appliedGarbage[0]).toHaveLength(7)
+  })
+})

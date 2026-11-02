@@ -25,15 +25,17 @@ function createEngine(
   mode: GameMode = GameMode.Arcade,
   script: PieceType[] = [PieceType.T, PieceType.S, PieceType.Z, PieceType.J, PieceType.L, PieceType.I, PieceType.O],
 ) {
+  // The scripted factory goes in through the constructor: the engine deals its queue there and
+  // never re-deals it (a seed's bag must be dealt exactly once — that is what lets the server
+  // replay mirror it). Swapping the factory after construction would deal from a random one first.
   const engine = new GameEngine({
     onStateChange: () => {},
     onLineClear: () => {},
     onGameOver: () => {},
-  });
+  }, { pieceFactory: (script ? scriptedFactory(script) : new PieceFactoryProvider()) as PieceFactoryProvider });
   (engine as any).boardManager = new BoardManager(W, H);
   (engine as any).width = W;
   (engine as any).height = H;
-  (engine as any).pieceFactory = script ? scriptedFactory(script) : new PieceFactoryProvider();
   engine.handleCommand({ type: CommandType.StartGame, payload: { mode } });
   return engine;
 }

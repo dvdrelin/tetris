@@ -47,7 +47,14 @@ export interface ChatPayload {
 }
 
 export interface SurrenderPayload {
-  // No fields: the socket identifies the player. (payload stays for envelope uniformity)
+  /**
+   * Why this client ended its own side of the match. The server turns it into the `match_over`
+   * reason, so the *other* seat learns what actually happened instead of guessing:
+   *  - 'button': the player pressed «Сдаться»;
+   *  - 'topout': the local engine died (block-out / garbage pushed the stack off the top);
+   *  - 'reload': the page reloaded mid-match and the local board state is gone for good.
+   */
+  cause?: 'button' | 'topout' | 'reload';
 }
 
 // Mirrors PieceLockInfo from the engine: what the client's engine observed at the lock.
@@ -68,6 +75,14 @@ export interface PieceLockPayload {
    * the locked piece then equals the server's remembered `held` piece.)
    */
   holdExtra?: boolean;
+  /**
+   * How many garbage rows this player has already inserted into their own board since the match
+   * started (monotonic counter). The server *schedules* garbage but cannot see which arrivals the
+   * client actually absorbed; without this counter the replay board is missing rows the real
+   * board has, and every honest lock resting on that garbage then fails the support/line checks.
+   * The server applies exactly this many of the arrivals it had handed out, in FIFO order.
+   */
+  garbageRows?: number;
 }
 
 export interface PingPayload {
@@ -83,7 +98,7 @@ export type ClientMessage =
   | { type: ClientMsgType.LeaveRoom; payload?: Record<string, never> }
   | { type: ClientMsgType.Chat; payload: ChatPayload }
   | { type: ClientMsgType.FastPhrase; payload: FastPhrasePayload }
-  | { type: ClientMsgType.Surrender; payload?: Record<string, never> }
+  | { type: ClientMsgType.Surrender; payload?: SurrenderPayload }
   | { type: ClientMsgType.PieceLock; payload: PieceLockPayload }
   | { type: ClientMsgType.Ping; payload?: PingPayload };
 
@@ -98,7 +113,9 @@ export enum ServerMsgType {
   FastPhrase = 'fast_phrase', // one-tap sportsmanship during a match (GDD room.fast_phrase) — ephemeral, not chat history
   GameStart = 'game_start', // per-recipient: the shared seed + this player's index
   PieceLockedRelay = 'piece_locked', // one player's lock forwarded to the opponents (shadow boards)
+  GarbageApplied = 'garbage_applied', // rows a player just absorbed — keeps the shadow boards honest
   GarbageArrive = 'garbage_arrive', // server-scheduled attack rows against this player
+  OpponentDropped = 'opponent_dropped', // a seat lost its socket mid-match; the seat is held for a rejoin
   MatchOver = 'match_over',
   Pong = 'pong',
   Error = 'error',
@@ -182,7 +199,7 @@ export interface GameStartPayload {
   league: 'heads_up';
 }
 
-export type MatchOverReason = 'surrender' | 'forfeit' | 'survival' | 'points';
+export type MatchOverReason = 'surrender' | 'forfeit' | 'survival' | 'points' | 'topout';
 
 // One player's lock, relayed to the opponents so they can draw a shadow board: the receiver
 // replays the placement (pieceType+rotation at x/y, then line clears) on a local BoardManager.
@@ -199,6 +216,28 @@ export interface GarbageArrival {
 }
 export interface GarbageArrivePayload {
   arrivals: GarbageArrival[];
+}
+
+/**
+ * Garbage a player has just absorbed, relayed to the opponents so their shadow boards show the
+ * same stack the real board has. `groups` are the arrival row-sets in the order the player
+ * inserted them (each group bottom-to-top, same encoding as `GarbageArrival.rows`). The relay
+ * goes out *before* the `piece_locked` of the same report: rows first, then the piece placement.
+ */
+export interface GarbageAppliedPayload {
+  playerId: string;
+  groups: number[][][];
+}
+
+/**
+ * A seat lost its socket while a match was running. Sent immediately (not only when the rejoin
+ * grace expires) so the players still in the match know why the opponent stopped moving, and
+ * until when a return still counts as a return. `returnBy` is a server-clock deadline.
+ */
+export interface OpponentDroppedPayload {
+  playerId: string;
+  name: string;
+  returnBy: number | null;
 }
 
 export interface MatchResult {
@@ -250,6 +289,8 @@ export type ServerMessage =
   | { type: ServerMsgType.GameStart; payload: GameStartPayload }
   | { type: ServerMsgType.PieceLockedRelay; payload: PlayerPieceLockPayload }
   | { type: ServerMsgType.GarbageArrive; payload: GarbageArrivePayload }
+  | { type: ServerMsgType.GarbageApplied; payload: GarbageAppliedPayload }
+  | { type: ServerMsgType.OpponentDropped; payload: OpponentDroppedPayload }
   | { type: ServerMsgType.MatchOver; payload: MatchOverPayload }
   | { type: ServerMsgType.Pong; payload: PongPayload }
   | { type: ServerMsgType.Error; payload: MpErrorPayload };

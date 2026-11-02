@@ -77,6 +77,23 @@ describe('engine-level determinism under a seed', () => {
     expect(a.locks.length).toBe(8);
   });
 
+  test('the hand order equals the bag order of a same-seed factory (the MP mirror contract)', () => {
+    // The server's replay (backend MatchState) mirrors the bag with plain `nextPieceType()` pulls.
+    // If the engine ever re-deals its queue at StartGame, its first hand becomes pull #4 and every
+    // real match dies on the first lock with `invalid_move` — this test is the tripwire.
+    const seed = 1;
+    const factory = new PieceFactoryProvider({ seed });
+    const expected = drawN(factory, 8);
+    const engine = new GameEngine({}, { seed });
+    engine.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Arcade } });
+    const hands: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      hands.push(engine.getGameState().currentPiece?.type ?? 'none');
+      engine.handleCommand({ type: CommandType.HardDrop });
+    }
+    expect(hands).toEqual(expected);
+  });
+
   test('a different seed diverges the board', () => {
     const a = playScriptedGame(11111);
     const b = playScriptedGame(22222);

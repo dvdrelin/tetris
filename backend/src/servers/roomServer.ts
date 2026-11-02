@@ -65,6 +65,8 @@ interface Room {
 export interface RoomServerOptions {
   now?: () => number
   graceMs?: number
+  /** Match-seed source. Injectable so an integration test can replay a known bag; default: uint32 CSPRNG. */
+  seed?: () => number
 }
 
 export class RoomServer {
@@ -81,10 +83,12 @@ export class RoomServer {
   private phraseLimiter: RateLimiter
   private readonly now: () => number
   private readonly graceMs: number
+  private readonly seedFn: () => number
 
   constructor(options: RoomServerOptions = {}) {
     this.now = options.now ?? (() => Date.now())
     this.graceMs = options.graceMs ?? MP_CONFIG.rejoinGraceMs
+    this.seedFn = options.seed ?? (() => randomInt(0, 2 ** 32)) // uint32 per GDD §2.2
     this.msgLimiter = new RateLimiter({
       windowMs: MP_CONFIG.msgWindowMs,
       max: MP_CONFIG.msgMaxPerWindow,
@@ -156,7 +160,7 @@ export class RoomServer {
       case ClientMsgType.LeaveRoom: this.leaveRoom(ws); break
       case ClientMsgType.Chat: this.chat(ws, msg.payload?.text); break
       case ClientMsgType.FastPhrase: this.fastPhrase(ws, msg.payload?.text); break
-      case ClientMsgType.Surrender: this.surrender(ws); break
+      case ClientMsgType.Surrender: this.surrender(ws, msg.payload?.cause); break
       case ClientMsgType.PieceLock: this.pieceLock(ws, msg.payload); break
       case ClientMsgType.Ping: this.pong(ws, msg.payload?.clientTs); break
       default:
@@ -287,7 +291,7 @@ export class RoomServer {
     }
   }
 
-  private surrender(ws: ClientSocket): void {
+  private surrender(ws: ClientSocket, cause: unknown): void {
     const ctx = this.requirePlayer(ws)
     if (!ctx) return
     const { room, slot } = ctx
@@ -295,7 +299,12 @@ export class RoomServer {
       this.sendError(ws, MpErrorCode.BadPhase, 'There is no running match to surrender')
       return
     }
-    this.matchOver(room, 'surrender', this.firstOtherPlayer(room, slot))
+    // The cause is not decoration: 'topout' means the stack killed this player (the other seat
+    // did not win a mind game, it simply outlived an accident), 'reload' means the board state
+    // was lost with the page, and only a bare surrender is a concession.
+    const reason: MatchOverReason =
+      cause === 'topout' ? 'topout' : cause === 'reload' ? 'forfeit' : 'surrender'
+    this.matchOver(room, reason, this.firstOtherPlayer(room, slot))
   }
 
   private chat(ws: ClientSocket, text: unknown): void {
@@ -368,18 +377,31 @@ export class RoomServer {
       return
     }
     const state = this.matchStates.get(room.code)
+    let appliedGarbage: number[][][] = []
     if (state) {
       const verdict = state.applyLock(slot.id, lock)
       if (!verdict.accepted) {
         console.warn(`[mp] piece_lock violation room=${room.code} player=${slot.name}: ${verdict.violation}`)
-        this.sendError(ws, MpErrorCode.InvalidMove, 'Move rejected by the server')
+        this.sendError(ws, MpErrorCode.InvalidMove, 'Ход отклонён сервером')
+        // The verdict travels before the socket dies: a player thrown out of a live match must
+        // learn *why* it ended (match_over is what stops their engine and shows the result),
+        // not sit in front of a frozen board.
+        this.matchOver(room, 'forfeit', this.firstOtherPlayer(room, slot))
         this.onSocketClosed(ws)
         this.finalizeDisconnect(room, slot, 'disconnect_timeout')
         try { ws.terminate() } catch { /* already gone */ }
         return
       }
+      appliedGarbage = verdict.appliedGarbage
     }
     slot.reportedLines += lock.linesCleared
+    // Rows first, then the piece placed on top of them — the shadow board replays in that order.
+    if (appliedGarbage.length) {
+      this.broadcast(room, ws, {
+        type: ServerMsgType.GarbageApplied,
+        payload: { playerId: slot.id, groups: appliedGarbage },
+      })
+    }
     this.broadcast(room, ws, {
       type: ServerMsgType.PieceLockedRelay,
       payload: { playerId: slot.id, lock },
@@ -403,7 +425,7 @@ export class RoomServer {
     if (room.players.length < MP_CONFIG.minPlayersToStart) return
     if (room.players.some((p) => !p.ready || !p.connected)) return
 
-    const seed = randomInt(0, 2 ** 32) // uint32 per GDD §2.2
+    const seed = this.seedFn() // uint32 per GDD §2.2
     const startTime = this.now() + MP_CONFIG.startDelayMs
     room.phase = 'playing'
     this.matchStates.set(room.code, new MatchState(room.players.map((p) => p.id), seed, this.now))
@@ -500,6 +522,20 @@ export class RoomServer {
     slot.ws = null
     slot.connected = false
     this.broadcastSnapshot(room)
+
+    if (room.phase === 'playing') {
+      // Mid-match the versus screen has no roster to show this in, and silence is indistinguishable
+      // from "the opponent is hiding". Say it the moment the socket drops, with the deadline a
+      // return still counts against — the survivor then knows what they are waiting for.
+      this.broadcast(room, ws, {
+        type: ServerMsgType.OpponentDropped,
+        payload: {
+          playerId: slot.id,
+          name: slot.name,
+          returnBy: this.graceMs > 0 ? this.now() + this.graceMs : null,
+        },
+      })
+    }
 
     if (this.graceMs <= 0) {
       this.finalizeDisconnect(room, slot, 'disconnect_timeout')
@@ -670,7 +706,7 @@ const PIECE_TYPE_SET = new Set<string>(['I', 'O', 'T', 'S', 'Z', 'J', 'L'])
 /** Shape-checks a reported lock and rebuilds a clean payload (never relay the raw object). */
 function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLockPayload | null {
   if (!payload) return null
-  const { globalStep, pieceType, x, y, rotation, linesCleared, nextType } = payload
+  const { globalStep, pieceType, x, y, rotation, linesCleared, nextType, garbageRows } = payload
   if (!Number.isInteger(globalStep) || (globalStep as number) < 1) return null
   if (typeof pieceType !== 'string' || !PIECE_TYPE_SET.has(pieceType)) return null
   if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 12) return null
@@ -678,6 +714,9 @@ function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLock
   if (!Number.isInteger(rotation) || (rotation as number) < 0 || (rotation as number) > 3) return null
   if (!Number.isInteger(linesCleared) || (linesCleared as number) < 0 || (linesCleared as number) > 4) return null
   if (nextType !== undefined && (typeof nextType !== 'string' || !PIECE_TYPE_SET.has(nextType))) return null
+  // Garbage counter: a bounded monotonic integer. MatchState clamps it to rows it actually handed
+  // out, so an inflated number cannot buy a cheater anything — a negative or fractional one can.
+  if (garbageRows !== undefined && (!Number.isInteger(garbageRows) || (garbageRows as number) < 0 || (garbageRows as number) > 4096)) return null
   const clean: PieceLockPayload = {
     globalStep: globalStep as number,
     pieceType: pieceType as PieceType,
@@ -687,6 +726,7 @@ function sanitizeLock(payload: Partial<PieceLockPayload> | undefined): PieceLock
     linesCleared: linesCleared as number,
   }
   if (nextType !== undefined) clean.nextType = nextType as PieceType
+  if (garbageRows !== undefined) clean.garbageRows = garbageRows as number
   if (payload.holdExtra === true) clean.holdExtra = true
   return clean
 }

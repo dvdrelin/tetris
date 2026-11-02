@@ -17,23 +17,24 @@ import { CONTROL_HINTS, VIEW_HINT_KEYS } from '@neon-tetris/shared/config/contro
 import { KEY_MAP_KEYS, actionForKey } from '@neon-tetris/shared/input/input-actions';
 
 function createEngine(script?: PieceType[]) {
+  // The factory is injected through the constructor: the engine deals its queue while being
+  // constructed and never re-deals it (the bag of a seed is dealt once — the MP server replay
+  // mirrors it pull by pull).
+  let i = 0;
+  const factory = script
+    ? ({
+        nextPieceType: () => script[i++ % script.length],
+        createPiece: (type: PieceType) => buildPiece(type, PIECE_SHAPES[type][0]),
+      } as unknown as PieceFactoryProvider)
+    : new PieceFactoryProvider();
   const engine = new GameEngine({
     onStateChange: () => {},
     onLineClear: () => {},
     onGameOver: () => {},
-  });
+  }, { pieceFactory: factory });
   (engine as any).boardManager = new BoardManager(10, 20);
   (engine as any).width = 10;
   (engine as any).height = 20;
-  if (script) {
-    let i = 0;
-    (engine as any).pieceFactory = {
-      nextPieceType: () => script[i++ % script.length],
-      createPiece: (type: PieceType) => buildPiece(type, PIECE_SHAPES[type][0]),
-    };
-  } else {
-    (engine as any).pieceFactory = new PieceFactoryProvider();
-  }
   engine.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Arcade } });
   return engine;
 }

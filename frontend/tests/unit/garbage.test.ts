@@ -68,9 +68,8 @@ describe('BoardManager.insertGarbageRows', () => {
 describe('engine InsertGarbage command', () => {
   test('garbage rides the active piece up and fires onGarbageInserted', () => {
     const { engine, events } = startEngine(4242);
-    // Let the active piece fall a couple of rows first: a piece still sitting in the spawn row
-    // is legitimately killed by a garbage push (it would cross the top edge), so the ride-up
-    // test needs the piece below the spawn area.
+    // Drop the piece a couple of rows first: the ride-up is measured against a piece that is not
+    // sitting in the spawn row (a spawn-row piece gets parked at y = 0 — see the next tests).
     for (let i = 0; i < 8; i++) {
       engine.handleCommand({ type: CommandType.Tick, payload: { dt: 250 } });
     }
@@ -114,7 +113,18 @@ describe('engine InsertGarbage command', () => {
     expect(engine.isGameOver()).toBe(false);
   });
 
-  test('being pushed past the spawn row is a block-out with the onGameOver callback', () => {
+  test('a piece parked in the spawn row survives a garbage push on an open field', () => {
+    // The old rule killed anyone whose piece was still up high: one incoming row on a nearly
+    // empty board was a sudden, unexplainable death. The piece is now parked at the spawn row.
+    const { engine, events } = startEngine(4242);
+    engine.handleCommand({ type: CommandType.InsertGarbage, payload: { rows: [garbageRow(5), garbageRow(4)] } });
+    expect(engine.getCurrentPos().y).toBe(0);
+    expect(engine.isGameOver()).toBe(false);
+    expect(events.garbage).toEqual([{ rows: 2, pushedOut: 0 }]);
+    expect(engine.getBoardSnapshot()[HEIGHT - 1]).toEqual(garbageRow(5));
+  });
+
+  test('a raised stack that swallows the piece is a block-out with the onGameOver callback', () => {
     const gameOvers: number[] = [];
     const engine = new GameEngine({ onGameOver: (s) => gameOvers.push(s) });
     engine.handleCommand({ type: CommandType.StartGame, payload: { mode: GameMode.Arcade } });

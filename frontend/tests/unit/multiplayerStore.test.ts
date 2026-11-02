@@ -2,7 +2,7 @@
 // token hygiene) tested against a fake WebSocket and the real protocol messages.
 import { setActivePinia, createPinia } from 'pinia'
 import {
-  ServerMsgType, ClientMsgType, MpErrorCode, RoomSnapshot,
+  ServerMsgType, ClientMsgType, MpErrorCode, RoomSnapshot, CommandType,
 } from '@neon-tetris/shared'
 import { useMultiplayerStore } from '../../src/stores/multiplayerStore'
 
@@ -260,5 +260,111 @@ describe('match lifecycle', () => {
     ws().feed({ type: ServerMsgType.Pong, payload: { serverTs } })
     // |serverNow - serverTs| stays inside a millisecond — this drives the countdown math.
     expect(Math.abs(store.serverNow() - serverTs)).toBeLessThanOrEqual(1)
+  })
+})
+
+// The 5.1 bug report: honest players dying after a legal drop, empty opponent glasses, and a match
+// that ends without anyone saying why. The store is the client half of all three fixes.
+describe('garbage bookkeeping and match-end notices (5.1 fixes)', () => {
+  const holeRow = (color: number) => {
+    const row = Array(10).fill(color)
+    row[0] = 0 // the engine rejects a garbage row without a hole
+    return row
+  }
+
+  test('every piece_lock carries how much garbage this board has absorbed', () => {
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 5, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(1)
+      ws().feed({ type: ServerMsgType.GarbageArrive, payload: { arrivals: [{ rows: [holeRow(6), holeRow(7)], applyAt: Date.now() }] } })
+      jest.advanceTimersByTime(1)
+      expect(store.mpGameState.board[19][1]).toBe(6) // two rows landed
+      for (let i = 0; i < 60; i++) store.mpTick(250) // gravity locks the hand somewhere on them
+      const locks = ws().sent.filter((m) => m.type === ClientMsgType.PieceLock)
+      expect(locks.length).toBeGreaterThan(0)
+      expect(locks[0].payload.garbageRows).toBeGreaterThanOrEqual(2)
+      store.leaveRoom()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('a garbage_applied relay lifts the opponent shadow to match their real stack', () => {
+    const store = setupStore()
+    ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+    ws().feed({
+      type: ServerMsgType.PieceLockedRelay,
+      payload: { playerId: 'p2', lock: { globalStep: 1, pieceType: 'O', x: 0, y: 18, rotation: 0, linesCleared: 0 } },
+    })
+    // One garbage row arrives: the O that sat on the floor now rides one row up.
+    ws().feed({ type: ServerMsgType.GarbageApplied, payload: { playerId: 'p2', groups: [[holeRow(4)]] } })
+    const shadow = store.shadows['p2']
+    expect(shadow.board[19][1]).toBe(4) // the garbage row itself
+    expect(shadow.board[17].filter((v: number) => v !== 0)).toHaveLength(2) // the O, pushed up
+    expect(shadow.board[18].filter((v: number) => v !== 0)).toHaveLength(2)
+    // Our own shadow is never touched by our opponent's garbage.
+    expect(store.shadows['p1']).toBeUndefined()
+  })
+
+  test('a dropped seat is announced as a banner notice and a room toast', () => {
+    const store = setupStore()
+    ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+    ws().feed({ type: ServerMsgType.OpponentDropped, payload: { playerId: 'p2', name: 'Гость', returnBy: Date.now() + 120_000 } })
+    expect(store.dropNotice?.name).toBe('Гость')
+    expect(store.lastEvent).toContain('Гость')
+  })
+
+  test('a local top-out ends the match as a topout, not as a surrender', () => {
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot({ phase: 'playing' }), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 3, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(1)
+      // A full-height garbage push leaves the stack nowhere to go: block-out.
+      store.mpHandleCommand({ type: CommandType.InsertGarbage, payload: { rows: Array.from({ length: 20 }, () => holeRow(5)) } })
+      expect(store.mpGameState.isGameOver).toBe(true)
+      expect(ws().lastSent()).toEqual({ type: ClientMsgType.Surrender, payload: { cause: 'topout' } })
+      expect(store.myOverCause).toBe('topout')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('the drop banner clears once the lost seat is connected again', () => {
+    const store = setupStore()
+    ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot({ phase: 'playing' }), token: 't', playerId: 'p1' } })
+    ws().feed({
+      type: ServerMsgType.OpponentDropped,
+      payload: { playerId: 'p2', name: 'Вова', returnBy: Date.now() + 60_000 },
+    })
+    expect(store.dropNotice?.name).toBe('Вова')
+    ws().feed({
+      type: ServerMsgType.RoomSnapshot,
+      payload: { room: roomSnapshot({ phase: 'playing' }) },
+    })
+    expect(store.dropNotice).toBeNull()
+  })
+
+  test('a rejoin after a page reload surrenders with cause reload', () => {
+    const store = setupStore()
+    localStorage.setItem('nt_mp_match', JSON.stringify({ seed: 1, startTime: 1, playerIndex: 0, code: 'AB12' }))
+    ws().feed({
+      type: ServerMsgType.RoomCreated,
+      payload: { room: roomSnapshot({ phase: 'playing' }), token: 't', playerId: 'p1' },
+    })
+    expect(ws().lastSent()).toEqual({ type: ClientMsgType.Surrender, payload: { cause: 'reload' } })
+    expect(store.myOverCause).toBe('reload')
+  })
+
+  test('an invalid_move verdict is remembered so the result panel can explain itself', () => {
+    const store = setupStore()
+    ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+    expect(store.invalidMoveSeen).toBe(false)
+    ws().feed({ type: ServerMsgType.Error, payload: { code: MpErrorCode.InvalidMove, message: 'nope' } })
+    expect(store.invalidMoveSeen).toBe(true)
   })
 })

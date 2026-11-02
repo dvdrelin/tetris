@@ -141,6 +141,10 @@ export class GameEngine {
   // Placement counter for the multiplayer protocol (GDD global_step): incremented on every
   // successful placement, 1-based at emit time.
   private globalStep: number = 0;
+  // Total garbage rows this engine has absorbed since the match started. The reporting client
+  // rides this number on every `piece_lock` so the server replay applies exactly the rows the
+  // real board has — scheduled-but-not-yet-inserted garbage must not appear on the replay board.
+  private garbageRowsApplied: number = 0;
 
   constructor(
     callbacks: GameEngineCallbacks,
@@ -294,9 +298,17 @@ export class GameEngine {
     this.lockAccumulator = 0;
     this.lockResets = 0;
     this.globalStep = 0;
+    this.garbageRowsApplied = 0;
     this.holdType = null;
     this.canHold = true;
-    this.nextQueue = this.fillQueue();
+    // The queue is topped up, never re-dealt. Re-dealing would drop QUEUE_SIZE pieces the bag had
+    // already dealt: the engine's first hand would become pull #(QUEUE_SIZE + 1) while a server
+    // replay of the same seed (MP block D) still expects pull #1 — every real match then died on
+    // the first lock with `invalid_move`. A seed's bag is dealt exactly once, in order, over the
+    // whole life of this engine.
+    while (this.nextQueue.length < QUEUE_SIZE) {
+      this.nextQueue.push(this.pieceFactory.nextPieceType());
+    }
   }
 
   // ====== Movement ======
@@ -567,9 +579,10 @@ export class GameEngine {
    * payloads (empty, wrong row length, out-of-range colors, a fully filled row, more rows than
    * the board is tall) are ignored — the server's replay and the client's optimistic view run
    * the same rule, so a buggy or hostile host cannot desync them by a corrupt message.
-   * The active piece rides up with the stack; a piece pushed past the spawn row, or locked rows
-   * pushed off the top, ends the game exactly like a stack block-out (GDD §1.1: garbage raises
-   * the whole field).
+   * The active piece rides up with the stack (GDD §1.1: garbage raises the whole field). The field
+   * has no hidden rows, so a ride that would carry the piece past the top parks it at the spawn row
+   * instead — and the game then ends only when the raised stack actually swallows that piece or when
+   * locked rows are pushed off the top, never because a piece happened to sit near the top.
    */
   private insertGarbage(command: InsertGarbageCommand): void {
     const rows = command.payload?.rows;
@@ -585,14 +598,21 @@ export class GameEngine {
     }
 
     const pushedOut = this.boardManager.insertGarbageRows(rows);
+    this.garbageRowsApplied += rows.length;
     if (this.currentPiece) {
-      this.currentPos.y -= rows.length;
+      // The active piece rides up with the stack. This engine has no hidden buffer rows (a piece
+      // never enters y < 0), so a piece the push would carry past the top edge is parked at the
+      // spawn row instead. Dying there then requires the stack itself to have swallowed the piece
+      // — otherwise a single incoming row would kill anyone whose piece is still up high, which is
+      // what "я умер после броска фигуры, стаканы ещё пустые" reports come from.
+      const riddenY = this.currentPos.y - rows.length;
+      this.currentPos = { x: this.currentPos.x, y: riddenY < 0 ? 0 : riddenY };
     }
     this.callbacks.onGarbageInserted?.({ rows: rows.length, pushedOut });
 
-    const pushedOffBoard =
-      pushedOut > 0 ||
-      (this.currentPiece !== null && !this.isValidPosition(this.currentPiece, this.currentPos));
+    const buried =
+      this.currentPiece !== null && !this.isValidPosition(this.currentPiece, this.currentPos);
+    const pushedOffBoard = pushedOut > 0 || buried;
     if (pushedOffBoard) {
       this._isGameOver = true;
       this._isRunning = false;
@@ -687,6 +707,14 @@ export class GameEngine {
   getGhostY(): number {
     if (!this.currentPiece) return -1;
     return this.landingRow(this.currentPiece, this.currentPos);
+  }
+
+  /**
+   * Garbage rows this engine has inserted since the match started — the number the MP client
+   * reports on every `piece_lock` (`PieceLockPayload.garbageRows`).
+   */
+  getGarbageRowsApplied(): number {
+    return this.garbageRowsApplied;
   }
 
   // ====== Getters ======

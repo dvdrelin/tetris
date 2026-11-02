@@ -9,6 +9,7 @@ import {
   MatchOverPayload, PlayerPieceLockPayload, ChatMessagePayload, FastPhraseReceived, ServerMessage, MpErrorPayload,
   MP_CLIENT_PING_MS, normalizeRoomCode,
   PieceType, PIECE_SHAPES, buildPiece, BoardManager, GameEngine,
+  GarbageAppliedPayload, OpponentDroppedPayload, SurrenderPayload,
 } from '@neon-tetris/shared'
 import { GameMode, GameOverReason } from '@neon-tetris/shared/domain/types'
 import { AnyCommand, CommandType } from '@neon-tetris/shared/cqrs/commands'
@@ -76,6 +77,15 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   const match = ref<GameStartPayload | null>(null)
   const matchOverInfo = ref<MatchOverPayload | null>(null)
   const lastPhrase = ref<FastPhraseReceived | null>(null) // fast-phrase toast, server-stamped
+  // A seat lost its socket mid-match: who, and until when the server still counts a return.
+  // The versus screen turns this into a banner — without it a crashed opponent looks like a
+  // player who simply stopped moving.
+  const dropNotice = ref<OpponentDroppedPayload | null>(null)
+  // Why *this* client ended the match ('button' | 'topout' | 'reload'), so the result panel can
+  // explain its own side instead of showing the opponent's point of view only.
+  const myOverCause = ref<SurrenderPayload['cause'] | null>(null)
+  // True once the server has rejected one of our reports (invalid_move → anticheat verdict).
+  const invalidMoveSeen = ref(false)
   const mpGameState = ref<GameStateDTO>(emptyGameState())
   const shadows = ref<Record<string, ShadowBoard>>({})
 
@@ -189,7 +199,11 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
             break
           }
           if (storedMatch && storedMatch.code === room.value.code) {
-            send({ type: ClientMsgType.Surrender })
+            // Honest and irreversible: the local board is gone, so the match cannot continue.
+            // The cause rides to the server (the other seat reads "forfeit", not "сдался") and is
+            // remembered locally so our own result panel can explain what happened.
+            myOverCause.value = 'reload'
+            send({ type: ClientMsgType.Surrender, payload: { cause: 'reload' } })
             localStorage.removeItem(MATCH_KEY)
           }
         } else {
@@ -200,6 +214,10 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
       case ServerMsgType.RoomSnapshot:
         room.value = msg.payload.room
         if (room.value.phase !== 'playing' && !matchOverInfo.value) resetMatchLocal()
+        // The dropped seat came back — stop warning the players who are still in the match.
+        if (dropNotice.value && msg.payload.room.players.every((p) => p.connected)) {
+          dropNotice.value = null
+        }
         break
       case ServerMsgType.PlayerJoined:
         lastEvent.value = `${msg.payload.player.name} зашёл`
@@ -222,8 +240,16 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
       case ServerMsgType.GarbageArrive:
         for (const a of msg.payload.arrivals) scheduleGarbage(a)
         break
+      case ServerMsgType.GarbageApplied:
+        applyShadowGarbage(msg.payload)
+        break
+      case ServerMsgType.OpponentDropped:
+        dropNotice.value = msg.payload
+        lastEvent.value = `${msg.payload.name} потерял связь`
+        break
       case ServerMsgType.MatchOver:
         matchOverInfo.value = msg.payload
+        dropNotice.value = null
         stopEngine()
         localStorage.removeItem(MATCH_KEY)
         break
@@ -232,6 +258,10 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
         break
       case ServerMsgType.Error: {
         lastError.value = msg.payload
+        // The server ended the match because our own report failed its replay (block D anticheat).
+        // Without this flag the result panel would only say "техническая победа соперника" and the
+        // player never learns the server rejected a move.
+        if (msg.payload.code === MpErrorCode.InvalidMove) invalidMoveSeen.value = true
         if (msg.payload.code === MpErrorCode.BadToken || msg.payload.code === MpErrorCode.RoomNotFound) {
           localStorage.removeItem(TOKEN_KEY)
         }
@@ -271,8 +301,9 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     if (clean) send({ type: ClientMsgType.FastPhrase, payload: { text: clean } })
   }
 
-  function surrender(): void {
-    send({ type: ClientMsgType.Surrender })
+  function surrender(cause: SurrenderPayload['cause'] = 'button'): void {
+    myOverCause.value = cause
+    send({ type: ClientMsgType.Surrender, payload: { cause } })
   }
 
   function leaveRoom(): void {
@@ -303,6 +334,9 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     matchOverInfo.value = null
     shadows.value = {}
     shadowBoards.clear()
+    dropNotice.value = null
+    myOverCause.value = null
+    invalidMoveSeen.value = false
     resetMatchLocal()
     match.value = p
     localStorage.setItem(MATCH_KEY, JSON.stringify({
@@ -335,15 +369,19 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
               // hold on an EMPTY slot pulled an extra bag piece this step (the only kind the
               // server mirror cannot infer from piece identity alone):
               holdExtra: pendingHoldExtra || undefined,
+              // How many garbage rows this engine has absorbed so far — the server's replay
+              // applies exactly this many of the rows it handed out, so its board matches ours.
+              garbageRows: engine?.getGarbageRowsApplied() ?? 0,
             },
           })
           pendingHoldExtra = false
           awaitingSpawn = true
         },
-        // In a match, topping out is the loss signal: report it as a surrender; the server
-        // answers match_over, which stops the engine and shows the results panel.
+        // In a match, topping out is the loss signal: report it (with the cause, so the other
+        // seat reads "развалился" rather than "сдался"); the server answers match_over, which
+        // stops the engine and shows the results panel.
         onGameOver: () => {
-          if (inMatch.value) send({ type: ClientMsgType.Surrender })
+          if (inMatch.value) surrender('topout')
         },
       },
       { seed: p.seed },
@@ -435,6 +473,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     awaitingSpawn = false
     pendingHoldExtra = false
     lastPhrase.value = null
+    dropNotice.value = null
     mpGameState.value = emptyGameState()
   }
 
@@ -469,6 +508,35 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     }
   }
 
+  /**
+   * The garbage an opponent has just absorbed, applied to their shadow board before the lock that
+   * rides on top of it. Shadow boards are otherwise rebuilt from locks alone, so without this the
+   * opponent's glass would show a clean floor under a stack that actually sits on attack rows.
+   * Rows arrive in the same encoding the server sent them to the victim (each group bottom-to-top).
+   */
+  function applyShadowGarbage(p: GarbageAppliedPayload): void {
+    if (!p.playerId || p.playerId === myId.value || !Array.isArray(p.groups)) return
+    let mgr = shadowBoards.get(p.playerId)
+    if (!mgr) {
+      mgr = new BoardManager(BOARD_WIDTH, BOARD_HEIGHT)
+      shadowBoards.set(p.playerId, mgr)
+    }
+    for (const rows of p.groups) {
+      if (Array.isArray(rows) && rows.length) mgr.insertGarbageRows(rows)
+    }
+    const prev = shadows.value[p.playerId]
+    shadows.value = {
+      ...shadows.value,
+      [p.playerId]: {
+        board: mgr.getSnapshot(),
+        nextType: prev?.nextType ?? null,
+        linesCleared: prev?.linesCleared ?? 0,
+        locks: prev?.locks ?? 0,
+        stale: prev?.stale ?? false,
+      },
+    }
+  }
+
   function cellColor(value: number): CellStyle {
     return CELL_COLORS[value] ?? CELL_COLORS[0]
   }
@@ -481,6 +549,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
 
   return {
     connected, room, myId, lastError, lastEvent, match, matchOverInfo, mpGameState, shadows,
+    dropNotice, myOverCause, invalidMoveSeen,
     me, inMatch, serverNow,
     ensureConnected, createRoom, joinRoom, setReady, sendChat, sendFastPhrase, lastPhrase, surrender, leaveRoom, disconnect,
     mpHandleCommand, mpTick, clearNotice, cellColor,

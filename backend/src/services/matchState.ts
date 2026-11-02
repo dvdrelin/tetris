@@ -26,6 +26,8 @@ export type LockVerdict =
       cleared: number
       perfect: boolean
       sentTo: { playerId: string; lines: number; applyAt: number }[]
+      /** Row groups this player absorbed at this very report (for the opponents' shadow boards). */
+      appliedGarbage: number[][][]
     }
   | { accepted: false; violation: string }
 
@@ -36,7 +38,12 @@ interface SimPlayer {
   spawned: PieceType | null
   held: PieceType | null
   combo: number
+  /** Scheduled but not yet handed to the client: counteract and PC-immunity may still drop these. */
   pending: GarbageArrival[]
+  /** Handed to the client (delivered or claimed on rejoin) but not yet absorbed by the replay board. */
+  delivered: GarbageArrival[]
+  /** Garbage rows already present on the replay board — the mirror of the client's own counter. */
+  appliedRows: number
   lastPerfectAt: number
   /** Certified clears observed by the server itself — feeds MatchResult.lines. */
   linesCleared: number
@@ -72,6 +79,8 @@ export class MatchState {
         held: null,
         combo: 0,
         pending: [],
+        delivered: [],
+        appliedRows: 0,
         lastPerfectAt: Number.NEGATIVE_INFINITY,
         linesCleared: 0,
       })
@@ -94,6 +103,7 @@ export class MatchState {
     if (!sp) return []
     const all = sp.pending
     sp.pending = []
+    sp.delivered.push(...all) // the client inserts them, so the replay board must absorb them too
     return all
   }
 
@@ -113,6 +123,9 @@ export class MatchState {
       due.push(a)
       return false
     })
+    // Delivered means "the client will insert these" — the replay board absorbs them only when
+    // the client's next reports say it did (see applyReportedGarbage).
+    sp.delivered.push(...due)
     return due
   }
 
@@ -120,11 +133,18 @@ export class MatchState {
     return this.sims.get(playerId)?.linesCleared ?? null
   }
 
+  /** Read view of one replay board (top→bottom cell values) — diagnostics and tests only. */
+  debugBoardSnapshot(playerId: string): number[][] | null {
+    return this.sims.get(playerId)?.board.getSnapshot() ?? null
+  }
+
   /** Test-only board setup (see the constructor's `verify` flag). Not used by production code. */
   debugInjectBoard(playerId: string, grid: number[][]): void {
     const sp = this.sims.get(playerId)
     if (!sp) return
     sp.board.reset()
+    sp.delivered = []
+    sp.appliedRows = 0
     for (let y = 0; y < BOARD_H; y++) {
       for (let x = 0; x < BOARD_W; x++) {
         const v = grid[y]?.[x] ?? 0
@@ -145,6 +165,12 @@ export class MatchState {
 
     const shape = PIECE_SHAPES[lock.pieceType]?.[lock.rotation]
     if (!shape) return { accepted: false, violation: 'rotation' }
+
+    // Garbage first: the report says how many rows the player has actually absorbed, and the
+    // replay board must carry exactly those before support/overlap/line counts are judged.
+    // Skipping this is what used to kill honest players — a piece resting on incoming garbage
+    // looked 'floating' to a replay board that never received the rows.
+    const appliedGarbage = this.applyReportedGarbage(sp, lock.garbageRows)
 
     // Piece identity, mirroring the engine's bag/hold bookkeeping:
     //  - a hold press on an EMPTY slot makes the engine pull one extra bag piece; the client
@@ -198,7 +224,7 @@ export class MatchState {
 
     if (cleared === 0) {
       sp.combo = 0
-      return { accepted: true, cleared: 0, perfect: false, sentTo: [] }
+      return { accepted: true, cleared: 0, perfect: false, sentTo: [], appliedGarbage }
     }
 
     sp.combo += 1
@@ -222,13 +248,38 @@ export class MatchState {
     const sentTo: { playerId: string; lines: number; applyAt: number }[] = []
     for (const [victimId, victim] of this.sims) {
       if (victimId === playerId) continue
-      const room = MP_BALANCE.perPlayerGarbageCap - this.pendingRows(victim)
+      const room = MP_BALANCE.perPlayerGarbageCap - this.queuedRows(victim)
       const n = Math.min(lines, Math.max(0, room))
       if (n <= 0) continue
       victim.pending.push({ rows: this.makeGarbageRows(n), applyAt })
       sentTo.push({ playerId: victimId, lines: n, applyAt })
     }
-    return { accepted: true, cleared, perfect, sentTo }
+    return { accepted: true, cleared, perfect, sentTo, appliedGarbage }
+  }
+
+  /**
+   * Absorb the garbage the reporting client says its board already holds. The client counts the
+   * rows it really inserted (`PieceLockPayload.garbageRows`, engine-side and monotonic per match);
+   * the replay may only apply rows it scheduled and handed out itself, in FIFO order. A client
+   * claiming more rows than exist simply gets what there is: extra rows would only damage its own
+   * board, so this is not a cheat worth ending a match over — unlike a wrong piece or a fake clear.
+   */
+  private applyReportedGarbage(sp: SimPlayer, claimed: number | undefined): number[][][] {
+    const groups: number[][][] = []
+    if (!Number.isInteger(claimed)) return groups // an older/absent counter: the board stays as is
+    const target = Math.max(sp.appliedRows, claimed as number)
+    while (sp.appliedRows < target && sp.delivered.length > 0) {
+      const arrival = sp.delivered.shift() as GarbageArrival
+      sp.board.insertGarbageRows(arrival.rows)
+      sp.appliedRows += arrival.rows.length
+      groups.push(arrival.rows)
+    }
+    return groups
+  }
+
+  /** Rows scheduled *or* handed out but not yet on the replay board — what the cap limits. */
+  private queuedRows(sp: SimPlayer): number {
+    return this.pendingRows(sp) + sp.delivered.reduce((sum, a) => sum + a.rows.length, 0)
   }
 
   private pendingRows(sp: SimPlayer): number {

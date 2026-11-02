@@ -28,11 +28,56 @@ export default defineComponent({
     const ownCanvas = ref<HTMLCanvasElement | null>(null)
     const countdown = ref<number | null>(null)
 
-    const opponents = computed(() =>
-      (mp.room?.players ?? [])
+    const opponents = computed(() => {
+      // The roster is authoritative while the seat exists; a seat that was already removed (a
+      // drop that ran out of grace) keeps its glass as long as we hold a picture of it — the
+      // panel disappearing mid-match reads as "стака́н соперника пустой".
+      const players = mp.room?.players ?? []
+      const seen = new Set(players.map((p) => p.id))
+      const extras = Object.keys(mp.shadows)
+        .filter((id) => id !== mp.myId && !seen.has(id))
+        .map((id) => ({ id, name: id.slice(0, 8), connected: false }))
+      return [...players, ...extras]
         .filter((p) => p.id !== mp.myId)
-        .map((p) => ({ player: p, shadow: mp.shadows[p.id] ?? null })),
-    )
+        .map((p) => ({ player: p, shadow: mp.shadows[p.id] ?? null }))
+    })
+
+    // ----- match narrative (bug class: "nothing told me why the match ended / stopped moving") -----
+    // A slowly refreshed clock so the reconnect countdown below actually counts down.
+    const nowTick = ref(Date.now())
+
+    const dropCountdown = computed<number | null>(() => {
+      const d = mp.dropNotice
+      if (!d) return null
+      if (d.returnBy === null) return 0
+      return Math.max(0, Math.ceil((d.returnBy - nowTick.value) / 1000))
+    })
+
+    /** One line that says why the match ended, from *this* player's point of view. */
+    const overReasonText = computed(() => {
+      const info = mp.matchOverInfo
+      if (!info) return ''
+      if (mp.invalidMoveSeen) {
+        return 'Сервер отклонил ваш ход (не совпал с его реплеем) — матч закрыт'
+      }
+      const mine = mp.myOverCause
+      switch (info.reason) {
+        case 'topout':
+          return mine ? 'Ваш стакан дошёл до верха' : 'Соперник развалился — его стакан дошёл до верха'
+        case 'surrender':
+          return mine === 'button' ? 'Вы сдались' : 'Соперник сдался'
+        case 'forfeit':
+          if (mine === 'reload') return 'Страница перезагрузилась — матч потерян технически'
+          return 'Соперник отключился — техническая победа'
+        case 'survival':
+          return 'Время матча вышло'
+        default:
+          return ''
+      }
+    })
+
+    // We lost the server while the match is still ours to play: say so instead of freezing.
+    const connectionLost = computed(() => Boolean(mp.match) && !mp.matchOverInfo && !mp.connected)
 
     // ----- input (no pause in a live match; the rules clock is shared) -----
     function fireAction(action: InputAction) {
@@ -77,11 +122,17 @@ export default defineComponent({
 
     let animFrame: number | null = null
     let lastTime = 0
+    let lastClockTick = 0
 
     function loop(timestamp: number) {
       if (!lastTime) lastTime = timestamp
       const dtMs = timestamp - lastTime
       lastTime = timestamp
+      // Cheap wall clock for the reconnect countdown — twice a second is plenty.
+      if (timestamp - lastClockTick > 500) {
+        lastClockTick = timestamp
+        nowTick.value = Date.now()
+      }
 
       if (mp.match && !mp.matchOverInfo) {
         if (!mp.mpGameState.isRunning && !mp.mpGameState.isGameOver) {
@@ -146,6 +197,7 @@ export default defineComponent({
     return {
       mp, ownCanvas, countdown, opponents, surrenderClick, emit, GAME_CONFIG, OPP_CELL,
       QUICK_PHRASES, quick, quickReadyAt, phraseToast,
+      overReasonText, dropCountdown, connectionLost,
     }
   },
 })
@@ -174,11 +226,18 @@ export default defineComponent({
     <div class="own-wrap">
       <canvas ref="ownCanvas" class="own-canvas" />
       <div v-if="countdown !== null" class="mp-countdown" data-testid="mp-countdown">{{ countdown }}</div>
+      <div v-if="connectionLost" class="mp-banner mp-banner-warn" data-testid="mp-conn-lost">
+        Нет связи с сервером — переподключение…
+      </div>
+      <div v-else-if="mp.dropNotice" class="mp-banner" data-testid="mp-drop-notice">
+        {{ mp.dropNotice.name }} потерял связь<span v-if="dropCountdown !== null"> — ждём возврата ещё {{ dropCountdown }} с</span>
+      </div>
       <div v-if="phraseToast" class="mp-phrase-toast" data-testid="mp-phrase-toast">
         <b>{{ phraseToast.name }}:</b> {{ phraseToast.text }}
       </div>
       <div v-if="mp.matchOverInfo" class="mp-over" data-testid="mp-over">
         <div class="over-title">МАТЧ ОКОНЧЕН</div>
+        <div v-if="overReasonText" class="over-reason" data-testid="mp-over-reason">{{ overReasonText }}</div>
         <div v-for="r in mp.matchOverInfo.results" :key="r.playerId" class="over-row">
           <span class="over-place">#{{ r.placement }}</span> {{ r.name }}
           <span class="over-lines">{{ r.lines }} лин.</span>
@@ -246,6 +305,21 @@ export default defineComponent({
   background: rgba(10, 10, 26, 0.55);
   border-radius: 8px;
 }
+.mp-banner {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  right: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: rgba(10, 10, 26, 0.88);
+  border: 1px solid #00f5ff;
+  color: #cfe8ff;
+  font-size: 13px;
+  text-align: center;
+  z-index: 4;
+}
+.mp-banner-warn { border-color: #ffe600; color: #ffe600; }
 .mp-over {
   position: absolute;
   inset: 0;
@@ -259,6 +333,7 @@ export default defineComponent({
   z-index: 5;
 }
 .over-title { font-size: 22px; font-weight: 900; letter-spacing: 4px; color: #ffe600; }
+.over-reason { font-size: 13px; color: #cfe8ff; text-align: center; max-width: 90%; }
 .over-row { display: flex; gap: 10px; }
 .over-place { color: #ffe600; font-weight: 700; }
 .over-lines { color: #8aa; margin-left: 6px; }

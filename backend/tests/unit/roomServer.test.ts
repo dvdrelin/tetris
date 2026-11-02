@@ -451,3 +451,69 @@ describe('protocol hygiene: ping/pong and message limits', () => {
     expect(ws.of(ServerMsgType.Error).every((m: any) => m.payload.code === MpErrorCode.NotInRoom)).toBe(true)
   })
 })
+
+describe('garbage counter, verdict visibility and drop notices (the 5.1 bug report)', () => {
+  function startedMatch() {
+    const server = newServer()
+    const host = createRoom(server)
+    const guest = joinRoom(server, host.code)
+    guest.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+    host.ws.emitMessage({ type: ClientMsgType.SetReady, payload: { ready: true } })
+    return { server, host, guest }
+  }
+
+  test('the garbageRows counter is validated, copied into the sanitized lock and relayed', () => {
+    const { host, guest } = startedMatch()
+    const lock = { ...honestFirstLock(seedOf(host)), garbageRows: 7 }
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: lock })
+    // The opponent sees the counter — their shadow board needs it to absorb the same rows.
+    expect(host.ws.lastOf(ServerMsgType.PieceLockedRelay).payload.lock).toEqual(lock)
+    // A nonsense counter is a malformed payload (bad_request), never a cheat verdict.
+    guest.emitMessage({
+      type: ClientMsgType.PieceLock,
+      payload: { ...honestFirstLock(seedOf(host)), globalStep: 2, garbageRows: -1 },
+    })
+    expect(guest.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.BadRequest)
+  })
+
+  test('the player the server throws out also receives match_over — they must see why it ended', () => {
+    const { host, guest } = startedMatch()
+    const honest = honestFirstLock(seedOf(host))
+    guest.emitMessage({ type: ClientMsgType.PieceLock, payload: { ...honest, pieceType: honest.pieceType === 'O' ? 'I' : 'O' } })
+    const over = guest.lastOf(ServerMsgType.MatchOver)
+    expect(over).toBeTruthy()
+    expect(over.payload.reason).toBe('forfeit')
+    expect(over.payload.winnerId).toBe(host.snapshot.players[0].id)
+    expect(host.ws.lastOf(ServerMsgType.MatchOver)).toBeTruthy()
+    expect(guest.terminated).toBe(true)
+  })
+
+  test('a socket drop mid-match is announced immediately, with the deadline a return counts against', () => {
+    jest.useFakeTimers()
+    try {
+      const { host, guest } = startedMatch()
+      const guestId = guest.lastOf(ServerMsgType.RoomCreated).payload.playerId
+      guest.emit('close')
+      const notice = host.ws.lastOf(ServerMsgType.OpponentDropped)
+      expect(notice).toBeTruthy()
+      expect(notice.payload.playerId).toBe(guestId)
+      expect(notice.payload.returnBy).toBe(clock + 5_000) // graceMs of these tests
+      // The verdict itself still waits for the grace to run out.
+      expect(host.ws.of(ServerMsgType.MatchOver)).toHaveLength(0)
+      jest.advanceTimersByTime(5_000 + 1)
+      expect(host.ws.lastOf(ServerMsgType.MatchOver).payload.reason).toBe('forfeit')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('a top-out death is reported as topout, a page reload as a forfeit', () => {
+    const first = startedMatch()
+    first.guest.emitMessage({ type: ClientMsgType.Surrender, payload: { cause: 'topout' } })
+    expect(first.host.ws.lastOf(ServerMsgType.MatchOver).payload.reason).toBe('topout')
+
+    const second = startedMatch()
+    second.host.ws.emitMessage({ type: ClientMsgType.Surrender, payload: { cause: 'reload' } })
+    expect(second.guest.lastOf(ServerMsgType.MatchOver).payload.reason).toBe('forfeit')
+  })
+})
