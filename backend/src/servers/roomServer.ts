@@ -78,6 +78,7 @@ export class RoomServer {
   private timeLimitTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private msgLimiter: RateLimiter
   private chatLimiter: RateLimiter
+  private phraseLimiter: RateLimiter
   private readonly now: () => number
   private readonly graceMs: number
 
@@ -92,6 +93,12 @@ export class RoomServer {
     this.chatLimiter = new RateLimiter({
       // Strict cooldown shape: one chat message per chatCooldownMs window per player.
       windowMs: MP_CONFIG.chatCooldownMs,
+      max: 1,
+      now: this.now,
+    })
+    this.phraseLimiter = new RateLimiter({
+      // GDD fast_phrase_rate_limit_ms: one preset phrase per player per window.
+      windowMs: MP_CONFIG.fastPhraseRateLimitMs,
       max: 1,
       now: this.now,
     })
@@ -148,6 +155,7 @@ export class RoomServer {
       case ClientMsgType.SetReady: this.setReady(ws, msg.payload?.ready); break
       case ClientMsgType.LeaveRoom: this.leaveRoom(ws); break
       case ClientMsgType.Chat: this.chat(ws, msg.payload?.text); break
+      case ClientMsgType.FastPhrase: this.fastPhrase(ws, msg.payload?.text); break
       case ClientMsgType.Surrender: this.surrender(ws); break
       case ClientMsgType.PieceLock: this.pieceLock(ws, msg.payload); break
       case ClientMsgType.Ping: this.pong(ws, msg.payload?.clientTs); break
@@ -159,8 +167,7 @@ export class RoomServer {
   // ====== room commands ======
 
   private createRoom(ws: ClientSocket, payload: { name?: string; maxPlayers?: number } | undefined): void {
-    const existing = this.requirePlayer(ws)
-    if (existing) {
+    if (this.findPlayer(ws)) {
       this.sendError(ws, MpErrorCode.BadPhase, 'Leave the current room first')
       return
     }
@@ -177,7 +184,7 @@ export class RoomServer {
   }
 
   private joinRoom(ws: ClientSocket, payload: { code?: string; name?: string } | undefined): void {
-    if (this.requirePlayer(ws)) {
+    if (this.findPlayer(ws)) {
       this.sendError(ws, MpErrorCode.BadPhase, 'Leave the current room first')
       return
     }
@@ -205,7 +212,7 @@ export class RoomServer {
   }
 
   private rejoinRoom(ws: ClientSocket, payload: { code?: string; token?: string } | undefined): void {
-    if (this.requirePlayer(ws)) {
+    if (this.findPlayer(ws)) {
       this.sendError(ws, MpErrorCode.BadPhase, 'Leave the current room first')
       return
     }
@@ -313,6 +320,31 @@ export class RoomServer {
     room.chat.push(msg)
     if (room.chat.length > MP_CONFIG.chatHistorySize) room.chat.splice(0, room.chat.length - MP_CONFIG.chatHistorySize)
     this.broadcast(room, null, { type: ServerMsgType.ChatMessage, payload: msg })
+  }
+
+  /**
+   * Fast phrases (GDD room.fast_phrase): one-tap sportsmanship during a match. Room chat stays
+   * lobby-only by design, so this is a separate ephemeral channel — sanitized, hard rate-limited
+   * (fastPhraseRateLimitMs per player), and never stored in chat history.
+   */
+  private fastPhrase(ws: ClientSocket, text: unknown): void {
+    const ctx = this.requirePlayer(ws)
+    if (!ctx) return
+    const { room, slot } = ctx
+    if (typeof text !== 'string') {
+      this.sendError(ws, MpErrorCode.BadRequest, 'Phrase text must be a string')
+      return
+    }
+    const clean = text.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MP_CONFIG.fastPhraseMaxLen)
+    if (!clean) return
+    if (!this.phraseLimiter.check(slot.id).allowed) {
+      this.sendError(ws, MpErrorCode.RateLimited, 'Fast phrases are on cooldown')
+      return
+    }
+    this.broadcast(room, null, {
+      type: ServerMsgType.FastPhrase,
+      payload: { playerId: slot.id, name: slot.name, text: clean, ts: this.now() },
+    })
   }
 
   /**
@@ -527,6 +559,15 @@ export class RoomServer {
     room.players.push(slot)
     this.socketToPlayer.set(ws, { code: room.code, playerId: slot.id })
     return slot
+  }
+
+  /** Side-effect-free lookup: for the "already in a room" guards (no error is emitted here). */
+  private findPlayer(ws: ClientSocket): { room: Room; slot: PlayerSlot } | null {
+    const ctx = this.socketToPlayer.get(ws)
+    if (!ctx) return null
+    const room = this.rooms.get(ctx.code)
+    const slot = room?.players.find((p) => p.id === ctx.playerId)
+    return room && slot ? { room, slot } : null
   }
 
   private requirePlayer(ws: ClientSocket): { room: Room; slot: PlayerSlot } | null {

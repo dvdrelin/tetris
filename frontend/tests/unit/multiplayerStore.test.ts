@@ -227,6 +227,13 @@ describe('match lifecycle', () => {
     expect(localStorage.getItem('nt_mp_match')).toBeNull()
   })
 
+  test('fast_phrase from the server lands in lastPhrase for the toast', () => {
+    const store = setupStore()
+    ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+    ws().feed({ type: ServerMsgType.FastPhrase, payload: { playerId: 'p2', name: 'Bob', text: 'GG', ts: 1 } })
+    expect(store.lastPhrase).toEqual({ playerId: 'p2', name: 'Bob', text: 'GG', ts: 1 })
+  })
+
   test('garbage_arrive lands the rows on the synced applyAt', () => {
     jest.useFakeTimers()
     try {

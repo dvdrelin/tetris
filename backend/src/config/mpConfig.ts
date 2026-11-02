@@ -35,4 +35,7 @@ export const MP_CONFIG = Object.freeze({
   timeLimitSec: num('MP_TIME_LIMIT_SEC', 180),
   /** How often scheduled garbage is checked against the clock and shipped out. */
   garbageSweepMs: num('MP_GARBAGE_SWEEP_MS', 250),
+  /** GDD room.fast_phrase: one preset phrase per player per window, length cap 50. */
+  fastPhraseRateLimitMs: num('MP_FAST_PHRASE_MS', 3000),
+  fastPhraseMaxLen: num('MP_FAST_PHRASE_MAX_LEN', 50),
 })

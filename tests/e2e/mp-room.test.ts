@@ -54,6 +54,11 @@ test('room lifecycle across two browsers', async ({ browser }) => {
     // When the countdown disappears, the seeded engines are running on both clients.
     await expect(pageA.getByTestId('mp-countdown')).toBeHidden({ timeout: 8000 })
 
+    // --- fast phrase: one tap lands as a toast on the opponent (never on the sender) ---
+    await pageA.getByTestId('mp-quick').getByRole('button', { name: 'GG' }).click()
+    await expect(pageB.getByTestId('mp-phrase-toast')).toContainText('GG', { timeout: 4000 })
+    await expect(pageA.getByTestId('mp-phrase-toast')).toBeHidden()
+
     // --- Alice surrenders; both screens get the verdict ---
     pageA.on('dialog', (d) => d.accept())
     await pageA.getByTestId('mp-surrender').click()

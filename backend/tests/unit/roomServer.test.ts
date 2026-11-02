@@ -126,6 +126,14 @@ describe('room creation and join', () => {
     expect(stranger.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.RoomNotFound)
   })
 
+  test('the create/join handshake emits no spurious errors (side-effect-free guards)', () => {
+    const server = newServer()
+    const host = createRoom(server)
+    const guest = joinRoom(server, host.code)
+    expect(host.of(ServerMsgType.Error)).toHaveLength(0)
+    expect(guest.of(ServerMsgType.Error)).toHaveLength(0)
+  })
+
   test('create_room while already in a room is refused', () => {
     const server = newServer()
     const host = createRoom(server)
@@ -348,6 +356,17 @@ describe('surrender, rematch and forfeit-by-leave', () => {
     expect(over.payload.reason).toBe('forfeit')
     expect(over.payload.winnerId).toBe(host.snapshot.players[0].id)
     void server
+  })
+
+  test('fast phrases relay instantly (sanitized) and are rate-limited per player', () => {
+    const { host, guest } = startedMatch()
+    guest.emitMessage({ type: ClientMsgType.FastPhrase, payload: { text: '  GG \u0001 ' } })
+    const ph = host.ws.lastOf(ServerMsgType.FastPhrase)
+    expect(ph.payload.text).toBe('GG')
+    expect(ph.payload.playerId).toBeDefined()
+    expect(ph.payload.name).toBeDefined()
+    guest.emitMessage({ type: ClientMsgType.FastPhrase, payload: { text: 'GG' } })
+    expect(guest.lastOf(ServerMsgType.Error).payload.code).toBe(MpErrorCode.RateLimited)
   })
 
   test('surrender outside a running match is refused', () => {

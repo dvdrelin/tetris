@@ -868,3 +868,18 @@ ready, чат), `MultiplayerGameView.vue` (два стакана + очеред�
 
 E — лиги/spectator/Glicko-2 (вне v1). Ближайшее по v1: быстрые фразы (пресеты чата), smoke-проверка
 garbage на живом стенде (docker + ws-клиент), деплой/пуш — по решению пользователя.
+
+### D6 (сделан): быстрые фразы матча + починка create_room handshake
+
+- `fast_phrase` — отдельный канал протокола (GDD room.fast_phrase): чат по PHASE3 остаётся
+  лобби-зоной (в матче сервер отвечал `bad_phase`), а спортивные фразы нужны именно в матче.
+  Сервер: sanitize (control-chars, ≤50), rate limit 1/3 с на игрока (`MP_FAST_PHRASE_MS`),
+  broadcast без истории. Клиент: 4 кнопки в-versus экрана (client-side зеркало лимита) + тост
+  имени и фразы оппонента (`lastPhrase` в сторе).
+- Попутный баг: `create_room` от нового сокета проходил через `requirePlayer`, который на
+  отсутствие регистрации шлёт `not_in_room` — ложная ошибка на ровном handshake. Добавлен
+  `findPlayer` (без side-effect'а) для трёх «already in a room» guards.
+- E2E hardcore-причина смерти — bag-random: стек иногда доходит до block-out раньше бокового
+  краша; тест получил mulligan-ретраи (до 5 мешков) — флейк 50% устранён (16/16 повторов).
+- Тесты: BE +2 (fast-phrase relay+rate limit, чистый create handshake) → 87; FE +1
+  (`lastPhrase`) → 260; mp-room E2E проверяет фразу кнопкой и тост у оппонента. 48 E2E зелёные.

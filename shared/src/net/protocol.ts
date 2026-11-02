@@ -14,6 +14,7 @@ export enum ClientMsgType {
   SetReady = 'set_ready',
   LeaveRoom = 'leave_room',
   Chat = 'chat',
+  FastPhrase = 'fast_phrase',
   Surrender = 'surrender',
   PieceLock = 'piece_lock', // handled (validated) from block D; the server accepts it once playing
   Ping = 'ping',            // app-level keepalive + clock offset (browser WS has no protocol ping)
@@ -81,6 +82,7 @@ export type ClientMessage =
   | { type: ClientMsgType.SetReady; payload: SetReadyPayload }
   | { type: ClientMsgType.LeaveRoom; payload?: Record<string, never> }
   | { type: ClientMsgType.Chat; payload: ChatPayload }
+  | { type: ClientMsgType.FastPhrase; payload: FastPhrasePayload }
   | { type: ClientMsgType.Surrender; payload?: Record<string, never> }
   | { type: ClientMsgType.PieceLock; payload: PieceLockPayload }
   | { type: ClientMsgType.Ping; payload?: PingPayload };
@@ -93,6 +95,7 @@ export enum ServerMsgType {
   PlayerJoined = 'player_joined',
   PlayerLeft = 'player_left',
   ChatMessage = 'chat_message',
+  FastPhrase = 'fast_phrase', // one-tap sportsmanship during a match (GDD room.fast_phrase) — ephemeral, not chat history
   GameStart = 'game_start', // per-recipient: the shared seed + this player's index
   PieceLockedRelay = 'piece_locked', // one player's lock forwarded to the opponents (shadow boards)
   GarbageArrive = 'garbage_arrive', // server-scheduled attack rows against this player
@@ -147,6 +150,23 @@ export interface PlayerLeftPayload {
 }
 
 export interface ChatMessagePayload {
+  playerId: string;
+  name: string;
+  text: string;
+  ts: number;
+}
+
+/**
+ * Client side: one preset sportsmanship phrase during a match (GDD room.fast_phrase). The
+ * presets are a client UX concern; the server sanitizes, rate-limits (one per player per
+ * fastPhraseRateLimitMs) and broadcasts — phrases never enter chat history.
+ */
+export interface FastPhrasePayload {
+  text: string;
+}
+
+/** Server side: who said it, stamped by the server clock. */
+export interface FastPhraseReceived {
   playerId: string;
   name: string;
   text: string;
@@ -226,6 +246,7 @@ export type ServerMessage =
   | { type: ServerMsgType.PlayerJoined; payload: PlayerJoinedPayload }
   | { type: ServerMsgType.PlayerLeft; payload: PlayerLeftPayload }
   | { type: ServerMsgType.ChatMessage; payload: ChatMessagePayload }
+  | { type: ServerMsgType.FastPhrase; payload: FastPhraseReceived }
   | { type: ServerMsgType.GameStart; payload: GameStartPayload }
   | { type: ServerMsgType.PieceLockedRelay; payload: PlayerPieceLockPayload }
   | { type: ServerMsgType.GarbageArrive; payload: GarbageArrivePayload }

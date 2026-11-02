@@ -6,7 +6,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
   ClientMsgType, ServerMsgType, MpErrorCode, ClientMessage, RoomSnapshot, RoomPlayerRef, GameStartPayload,
-  MatchOverPayload, PlayerPieceLockPayload, ChatMessagePayload, ServerMessage, MpErrorPayload,
+  MatchOverPayload, PlayerPieceLockPayload, ChatMessagePayload, FastPhraseReceived, ServerMessage, MpErrorPayload,
   MP_CLIENT_PING_MS, normalizeRoomCode,
   PieceType, PIECE_SHAPES, buildPiece, BoardManager, GameEngine,
 } from '@neon-tetris/shared'
@@ -75,6 +75,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   const lastEvent = ref<string | null>(null) // human line for toasts ("Гость вышел")
   const match = ref<GameStartPayload | null>(null)
   const matchOverInfo = ref<MatchOverPayload | null>(null)
+  const lastPhrase = ref<FastPhraseReceived | null>(null) // fast-phrase toast, server-stamped
   const mpGameState = ref<GameStateDTO>(emptyGameState())
   const shadows = ref<Record<string, ShadowBoard>>({})
 
@@ -209,6 +210,9 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
       case ServerMsgType.ChatMessage:
         appendChat(msg.payload)
         break
+      case ServerMsgType.FastPhrase:
+        lastPhrase.value = msg.payload
+        break
       case ServerMsgType.GameStart:
         beginMatch(msg.payload)
         break
@@ -260,6 +264,11 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   function sendChat(text: string): void {
     const clean = text.trim()
     if (clean) send({ type: ClientMsgType.Chat, payload: { text: clean } })
+  }
+
+  function sendFastPhrase(text: string): void {
+    const clean = text.trim()
+    if (clean) send({ type: ClientMsgType.FastPhrase, payload: { text: clean } })
   }
 
   function surrender(): void {
@@ -425,6 +434,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
     spawnedType = null
     awaitingSpawn = false
     pendingHoldExtra = false
+    lastPhrase.value = null
     mpGameState.value = emptyGameState()
   }
 
@@ -472,7 +482,7 @@ export const useMultiplayerStore = defineStore('multiplayer', () => {
   return {
     connected, room, myId, lastError, lastEvent, match, matchOverInfo, mpGameState, shadows,
     me, inMatch, serverNow,
-    ensureConnected, createRoom, joinRoom, setReady, sendChat, surrender, leaveRoom, disconnect,
+    ensureConnected, createRoom, joinRoom, setReady, sendChat, sendFastPhrase, lastPhrase, surrender, leaveRoom, disconnect,
     mpHandleCommand, mpTick, clearNotice, cellColor,
     // test seam: feeds one raw server frame through the real message handler
     __handleServerMessage: handleServerMessage,

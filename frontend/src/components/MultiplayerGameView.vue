@@ -2,7 +2,7 @@
 // MP block C — the versus screen: own board (canvas, same renderer as single-player, seeded
 // engine) + opponent shadow boards (DOM grids rebuilt from relayed locks) + aligned countdown
 // from the server's startTime, surrender and the match-over results overlay.
-import { defineComponent, ref, computed, onMounted, onUnmounted } from 'vue'
+import { defineComponent, ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useMultiplayerStore } from '../stores/multiplayerStore'
 import { render, RenderState } from '../engine/renderer'
 import { InputController } from '@neon-tetris/shared/input/input-controller'
@@ -13,6 +13,12 @@ const CELL = 24
 const BOARD_W = GAME_CONFIG.boardWidth
 const BOARD_H = GAME_CONFIG.boardHeight
 const OPP_CELL = 9
+
+// GDD room.fast_phrase (chat preset layer): one tap says the polite thing mid-tetris. The
+// design's fast_phrase_rate_limit_ms=3000 is honoured client-side; the server keeps its own
+// general chat cooldown as the outer guard.
+const QUICK_PHRASES = ['Удачи!', 'GG', 'Красиво!', 'Ой!']
+const QUICK_RATE_LIMIT_MS = 3000
 
 export default defineComponent({
   name: 'MultiplayerGameView',
@@ -97,6 +103,25 @@ export default defineComponent({
       if (window.confirm('Сдаться? Соперник победит.')) mp.surrender()
     }
 
+    // ----- fast phrases + toast -----
+    const quickReadyAt = ref(0)
+    const phraseToast = ref<{ name: string; text: string } | null>(null)
+    let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+    function quick(text: string) {
+      const now = Date.now()
+      if (now < quickReadyAt.value) return // client mirror of the server rate limit (no wasted round trip)
+      quickReadyAt.value = now + QUICK_RATE_LIMIT_MS
+      mp.sendFastPhrase(text)
+    }
+
+    watch(() => mp.lastPhrase, (p) => {
+      if (!p || p.playerId === mp.myId) return
+      phraseToast.value = { name: p.name, text: p.text }
+      if (toastTimer) clearTimeout(toastTimer)
+      toastTimer = setTimeout(() => { phraseToast.value = null }, 5000)
+    })
+
     onMounted(() => {
       const canvas = ownCanvas.value
       if (canvas) {
@@ -114,10 +139,14 @@ export default defineComponent({
       document.removeEventListener('keyup', handleKeyup)
       window.removeEventListener('blur', releaseHeldKeys)
       if (animFrame !== null) cancelAnimationFrame(animFrame)
+      if (toastTimer) clearTimeout(toastTimer)
       input.releaseAll()
     })
 
-    return { mp, ownCanvas, countdown, opponents, surrenderClick, emit, GAME_CONFIG, OPP_CELL }
+    return {
+      mp, ownCanvas, countdown, opponents, surrenderClick, emit, GAME_CONFIG, OPP_CELL,
+      QUICK_PHRASES, quick, quickReadyAt, phraseToast,
+    }
   },
 })
 </script>
@@ -145,6 +174,9 @@ export default defineComponent({
     <div class="own-wrap">
       <canvas ref="ownCanvas" class="own-canvas" />
       <div v-if="countdown !== null" class="mp-countdown" data-testid="mp-countdown">{{ countdown }}</div>
+      <div v-if="phraseToast" class="mp-phrase-toast" data-testid="mp-phrase-toast">
+        <b>{{ phraseToast.name }}:</b> {{ phraseToast.text }}
+      </div>
       <div v-if="mp.matchOverInfo" class="mp-over" data-testid="mp-over">
         <div class="over-title">МАТЧ ОКОНЧЕН</div>
         <div v-for="r in mp.matchOverInfo.results" :key="r.playerId" class="over-row">
@@ -163,6 +195,9 @@ export default defineComponent({
       <button v-if="!mp.matchOverInfo" class="mp-btn mp-btn-surrender" data-testid="mp-surrender" @click="surrenderClick">
         Сдаться
       </button>
+      <div class="mp-quick" data-testid="mp-quick">
+        <button v-for="p in QUICK_PHRASES" :key="p" class="mp-btn mp-btn-quick" @click="quick(p)">{{ p }}</button>
+      </div>
     </div>
   </div>
 </template>
@@ -241,6 +276,21 @@ export default defineComponent({
   cursor: pointer;
 }
 .mp-btn-surrender { border-color: #ff4444; color: #ff8888; background: rgba(255, 68, 68, 0.08); }
+.mp-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.mp-btn-quick { padding: 6px 8px; font-size: 12px; }
+.mp-phrase-toast {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: 80%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(10, 10, 26, 0.85);
+  border: 1px solid #ff00ff;
+  color: #cfe8ff;
+  font-size: 13px;
+  z-index: 4;
+}
 @media (max-width: 900px) {
   .mp-game { flex-direction: column; height: auto; padding: 40px 8px; }
 }

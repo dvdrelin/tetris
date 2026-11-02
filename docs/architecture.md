@@ -253,7 +253,8 @@ tetris/                          (корень monorepo, npm workspaces: fronten
 - **`roomServer.ts`** — мультиплеерные комнаты (MP block B/C/D): коды комнат, lifecycle
   `lobby→playing→over`, ready/старт с общим seed, grace/rejoin-токены, чат, лимиты на
   соединение, верифицированная ретрансляция `piece_lock`, доставка `garbage_arrive` по
-  `applyAt` (sweep каждые 250 мс), time-limit матча; heartbeat и `maxPayload` навешаны в `index.ts`.
+  `applyAt` (sweep каждые 250 мс), time-limit матча, быстрые фразы в матче (rate limit
+  3 с/игрок, отдельный от лобби-чата канал); heartbeat и `maxPayload` навешаны в `index.ts`.
 - **`matchState.ts`** — серверный реплей каждой идущей партии: собственный `BoardManager` +
   тот же seeded bag на игрока; каждый `piece_lock` проверяется (шаг, идентичность фигуры
   через spawned/held-зеркало с флагом `holdExtra`, границы, overlap, опора, точный счёт
