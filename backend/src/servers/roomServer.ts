@@ -18,7 +18,7 @@ import { randomUUID, randomInt } from 'crypto'
 import {
   ClientMsgType, ClientMessage, ServerMessage, ServerMsgType, MpErrorCode,
   RoomPhase, RoomSnapshot, ChatMessagePayload, MatchOverReason, MatchOverDetail, MatchResult,
-  PieceLockPayload, PieceType,
+  PieceLockPayload, PieceType, ConnTestPayload, ConnTestAckPayload, ConnTransportStats,
   normalizeRoomCode, normalizePlayerName,
 } from '@neon-tetris/shared'
 import { RateLimiter } from '../middleware/rate-limit'
@@ -35,6 +35,11 @@ export interface ClientSocket {
   on(event: 'message', cb: (raw: unknown) => void): void
   on(event: 'close', cb: () => void): void
   on(event: 'error', cb: (err: unknown) => void): void
+  /**
+   * Transport-level counters the `ws` heartbeat maintains on the real socket (the adapter fills
+   * them in; the room logic only reads them for `conn_test_ack`).
+   */
+  transportStats?: ConnTransportStats
 }
 
 const WS_OPEN = 1
@@ -75,11 +80,22 @@ export interface RoomServerOptions {
 export class RoomServer {
   private rooms = new Map<string, Room>()
   private socketToPlayer = new Map<ClientSocket, { code: string; playerId: string }>()
+  /**
+   * Application frames in/out per socket since it connected (with byte totals). Read back in
+   * `conn_test_ack` so a player can see what their link actually delivered — the same counters the
+   * match logs carry, but live.
+   */
+  private connCounters = new WeakMap<ClientSocket, { msgsIn: number; msgsOut: number; bytesIn: number; bytesOut: number }>()
   private violations = new Map<ClientSocket, number>()
   private preRoomKeys = new WeakMap<ClientSocket, string>()
   private preRoomSeq = 0
   /** Block D: server-side match simulation per room (verification + garbage scheduler). */
   private matchStates = new Map<string, MatchState>()
+  /**
+   * Soft resync state per player (playerId): how many resyncs this match already asked for and
+   * the forfeit timer armed by the last request. Cleared at match start and at match end.
+   */
+  private resync = new Map<string, { until: number; timer: ReturnType<typeof setTimeout>; count: number }>()
   private timeLimitTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private msgLimiter: RateLimiter
   private chatLimiter: RateLimiter
@@ -139,6 +155,10 @@ export class RoomServer {
   }
 
   private onMessage(ws: ClientSocket, raw: unknown): void {
+    const counters = this.counters(ws)
+    counters.msgsIn += 1
+    counters.bytesIn += Buffer.byteLength(String(raw ?? ''))
+
     const limitKey = this.limiterKey(ws)
     if (!this.msgLimiter.check(limitKey).allowed) {
       this.violate(ws, { code: MpErrorCode.RateLimited, message: 'Too many messages' })
@@ -169,6 +189,7 @@ export class RoomServer {
       case ClientMsgType.Surrender: this.surrender(ws, msg.payload?.cause); break
       case ClientMsgType.PieceLock: this.pieceLock(ws, msg.payload); break
       case ClientMsgType.Ping: this.pong(ws, msg.payload?.clientTs); break
+      case ClientMsgType.ConnTest: this.connTest(ws, msg.payload); break
       default:
         this.violate(ws, { code: MpErrorCode.BadMessage, message: 'Unknown message type' })
     }
@@ -410,6 +431,9 @@ export class RoomServer {
         ...(verdict.accepted ? {} : { violation: verdict.violation }),
       })
       if (!verdict.accepted) {
+        // A forward step gap is a lost report, not a cheat: give the client a chance to
+        // retransmit the missing locks (it keeps a ring buffer of them) before the verdict.
+        if (verdict.gap && this.requestResync(room, slot, ws, verdict.gap)) return
         console.warn(`[mp] piece_lock violation room=${room.code} player=${slot.name}: ${verdict.violation}`)
         this.sendError(ws, MpErrorCode.InvalidMove, 'Ход отклонён сервером')
         // The verdict travels before the socket dies: a player thrown out of a live match must
@@ -437,6 +461,83 @@ export class RoomServer {
     })
   }
 
+  /**
+   * Ask a client whose step counter ran ahead of the server's replay to retransmit the missing
+   * locks instead of ending the match as a cheat (the live EX8H case). Returns true when the
+   * soft path was taken — the offending lock is simply left unapplied, the client will resend it
+   * in order. The forfeit fires only if the retransmission does not restore the sequence in time.
+   */
+  private requestResync(room: Room, slot: PlayerSlot, ws: ClientSocket, gap: { expectedStep: number; gotStep: number }): boolean {
+    const pending = this.resync.get(slot.id)
+    if (pending && this.now() <= pending.until) {
+      // Already waiting for the retransmission: later out-of-order reports add nothing to log.
+      this.matchLog.event(room.code, 'resync_waiting', slot.id, gap)
+      return true
+    }
+    const count = pending?.count ?? 0
+    if (count >= MP_CONFIG.resyncMaxPerMatch) return false // patience used up → hard verdict
+
+    const deadline = this.now() + MP_CONFIG.resyncGraceMs
+    this.matchLog.event(room.code, 'resync_requested', slot.id, { ...gap, attempt: count + 1, deadline })
+    this.send(ws, { type: ServerMsgType.ResyncRequest, payload: { ...gap, deadline } })
+    const timer = setTimeout(() => {
+      this.resync.delete(slot.id)
+      if (room.phase !== 'playing') return
+      const state = this.matchStates.get(room.code)
+      if (state && state.stepsFor(slot.id) >= gap.gotStep) return // the client caught up in time
+      this.matchLog.event(room.code, 'resync_failed', slot.id, { ...gap })
+      console.warn(`[mp] resync failed room=${room.code} player=${slot.name}: expected ${gap.expectedStep}, got ${gap.gotStep}`)
+      this.sendError(ws, MpErrorCode.InvalidMove, 'Ход отклонён сервером')
+      this.matchOver(room, 'forfeit', this.firstOtherPlayer(room, slot), 'invalid_move')
+      this.onSocketClosed(ws)
+      this.finalizeDisconnect(room, slot, 'disconnect_timeout')
+      try { ws.terminate() } catch { /* already gone */ }
+    }, MP_CONFIG.resyncGraceMs)
+    timer.unref?.()
+    this.resync.set(slot.id, { until: deadline, timer, count: count + 1 })
+    return true
+  }
+
+  private clearResync(room: Room): void {
+    for (const p of room.players) {
+      const entry = this.resync.get(p.id)
+      if (!entry) continue
+      clearTimeout(entry.timer)
+      this.resync.delete(p.id)
+    }
+  }
+
+  /**
+   * One frame of the room-side link test (`conn_test`): ack it with everything the server knows
+   * about this connection — app frames in/out with bytes, plus the `ws` heartbeat's ping counters.
+   * The client measures RTT per frame and counts the frames that never come back.
+   */
+  private connTest(ws: ClientSocket, payload: ConnTestPayload | undefined): void {
+    const c = this.counters(ws)
+    const ctx = this.socketToPlayer.get(ws)
+    const ack: ConnTestAckPayload = {
+      seq: typeof payload?.seq === 'number' ? payload.seq : 0,
+      clientTs: typeof payload?.clientTs === 'number' ? payload.clientTs : 0,
+      serverTs: this.now(),
+      playerId: ctx?.playerId ?? null,
+      msgsIn: c.msgsIn,
+      msgsOut: c.msgsOut,
+      bytesIn: c.bytesIn,
+      bytesOut: c.bytesOut,
+      transport: ws.transportStats ?? { pingsSent: 0, pingsLost: 0, lastPongRttMs: null },
+    }
+    this.send(ws, { type: ServerMsgType.ConnTestAck, payload: ack })
+  }
+
+  private counters(ws: ClientSocket): { msgsIn: number; msgsOut: number; bytesIn: number; bytesOut: number } {
+    let c = this.connCounters.get(ws)
+    if (!c) {
+      c = { msgsIn: 0, msgsOut: 0, bytesIn: 0, bytesOut: 0 }
+      this.connCounters.set(ws, c)
+    }
+    return c
+  }
+
   private pong(ws: ClientSocket, clientTs: unknown): void {
     this.send(ws, {
       type: ServerMsgType.Pong,
@@ -458,6 +559,7 @@ export class RoomServer {
     const startTime = this.now() + MP_CONFIG.startDelayMs
     room.phase = 'playing'
     this.matchStates.set(room.code, new MatchState(room.players.map((p) => p.id), seed, this.now))
+    this.clearResync(room) // a rematch gets a fresh resync budget
     // One log file per match: the seed and the roster are the header, everything else is events.
     // A rematch opens a new file, so a room's history stays readable.
     this.matchLog.startMatch({
@@ -520,6 +622,7 @@ export class RoomServer {
     room.phase = 'over'
     const state = this.matchStates.get(room.code)
     this.matchStates.delete(room.code)
+    this.clearResync(room)
     const limitTimer = this.timeLimitTimers.get(room.code)
     if (limitTimer) {
       clearTimeout(limitTimer)
@@ -712,7 +815,11 @@ export class RoomServer {
 
   private send(ws: ClientSocket | null, msg: ServerMessage): void {
     if (!ws || ws.readyState !== WS_OPEN) return
-    ws.send(JSON.stringify(msg))
+    const data = JSON.stringify(msg)
+    const counters = this.counters(ws)
+    counters.msgsOut += 1
+    counters.bytesOut += Buffer.byteLength(data)
+    ws.send(data)
   }
 
   private sendError(ws: ClientSocket, code: MpErrorCode, message: string): void {
@@ -721,9 +828,15 @@ export class RoomServer {
 
   /** Protocol abuse: answer once, count, and drop the socket when the client keeps misbehaving. */
   private violate(ws: ClientSocket, error: { code: MpErrorCode; message: string }): void {
-    this.send(ws, { type: ServerMsgType.Error, payload: error })
+    const ctx = this.socketToPlayer.get(ws)
+    // Until now a protocol violation left no trace at all — the EX8H hunt had to guess that a
+    // malformed report was even possible. A malformed `piece_lock` returns before the lock event,
+    // so without this line the match log shows a step hole with no explanation.
     const n = (this.violations.get(ws) ?? 0) + 1
     this.violations.set(ws, n)
+    console.warn(`[mp] protocol violation ${error.code}: ${error.message}${ctx ? ` room=${ctx.code} player=${ctx.playerId.slice(0, 8)}` : ''} (#${n})`)
+    if (ctx) this.matchLog.event(ctx.code, 'protocol_violation', ctx.playerId, { code: error.code, message: error.message, violations: n })
+    this.send(ws, { type: ServerMsgType.Error, payload: error })
     if (n >= MP_CONFIG.maxViolations) {
       this.onSocketClosed(ws)
       try { ws.terminate() } catch { /* already gone */ }

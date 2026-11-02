@@ -16,6 +16,7 @@ import {
   PIECE_SHAPES, buildPiece, GarbageArrival,
 } from '@neon-tetris/shared'
 import { MP_BALANCE } from '../config/mpBalance'
+import { MP_CONFIG } from '../config/mpConfig'
 
 const BOARD_W = GAME_CONFIG.boardWidth
 const BOARD_H = GAME_CONFIG.boardHeight
@@ -29,7 +30,16 @@ export type LockVerdict =
       /** Row groups this player absorbed at this very report (for the opponents' shadow boards). */
       appliedGarbage: number[][][]
     }
-  | { accepted: false; violation: string }
+  | {
+      accepted: false
+      violation: string
+      /**
+       * Forward step gap (client is ahead by a few of its own locks): not a cheat verdict yet,
+       * just a lost/dropped report. The room server asks the client to retransmit the missing
+       * steps and only forfeits if that does not arrive (`MP_CONFIG.resyncGraceMs`).
+       */
+      gap?: { expectedStep: number; gotStep: number }
+    }
 
 interface SimPlayer {
   board: BoardManager
@@ -133,6 +143,11 @@ export class MatchState {
     return this.sims.get(playerId)?.linesCleared ?? null
   }
 
+  /** How many locks this player has through the replay so far (the next expected step is +1). */
+  stepsFor(playerId: string): number {
+    return this.sims.get(playerId)?.step ?? 0
+  }
+
   /** Read view of one replay board (top→bottom cell values) — diagnostics and tests only. */
   debugBoardSnapshot(playerId: string): number[][] | null {
     return this.sims.get(playerId)?.board.getSnapshot() ?? null
@@ -161,7 +176,19 @@ export class MatchState {
   applyLock(playerId: string, lock: PieceLockPayload): LockVerdict {
     const sp = this.sims.get(playerId)
     if (!sp) return { accepted: false, violation: 'player' }
-    if (lock.globalStep !== sp.step + 1) return { accepted: false, violation: `step ${lock.globalStep} != ${sp.step + 1}` }
+    const expectedStep = sp.step + 1
+    if (lock.globalStep !== expectedStep) {
+      const forward = lock.globalStep - expectedStep
+      // A small forward gap is a *lost report*, not a cheat (the live EX8H case: step 12 never
+      // arrived, step 13 did). Flag it so the room server can ask for a retransmission; a
+      // duplicate/backward step or an implausibly large jump stays a hard violation.
+      const soft = forward > 0 && forward <= MP_CONFIG.resyncMaxGap
+      return {
+        accepted: false,
+        violation: `step ${lock.globalStep} != ${expectedStep}`,
+        ...(soft ? { gap: { expectedStep, gotStep: lock.globalStep } } : {}),
+      }
+    }
 
     const shape = PIECE_SHAPES[lock.pieceType]?.[lock.rotation]
     if (!shape) return { accepted: false, violation: 'rotation' }

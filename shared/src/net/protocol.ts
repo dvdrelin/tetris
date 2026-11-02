@@ -18,6 +18,7 @@ export enum ClientMsgType {
   Surrender = 'surrender',
   PieceLock = 'piece_lock', // handled (validated) from block D; the server accepts it once playing
   Ping = 'ping',            // app-level keepalive + clock offset (browser WS has no protocol ping)
+  ConnTest = 'conn_test',   // room-side link probe: the server acks each frame, client counts losses
 }
 
 export interface CreateRoomPayload {
@@ -90,6 +91,44 @@ export interface PingPayload {
   clientTs?: number;
 }
 
+/**
+ * One frame of a room-side link test. The server answers every frame with `conn_test_ack`, so the
+ * client's unanswered frames are the losses on this connection — the same way `ping` measures it,
+ * but in a burst with a report the player can read.
+ */
+export interface ConnTestPayload {
+  seq: number;
+  total: number;
+  clientTs: number;
+}
+
+/** Transport-level counters the server keeps for this socket (the `ws` heartbeat, not the game). */
+export interface ConnTransportStats {
+  /** Protocol pings the server sent since the connection opened. */
+  pingsSent: number;
+  /** Pings whose pong never came before the next ping was due — real transport loss. */
+  pingsLost: number;
+  /** Last measured ping→pong round trip on this socket, ms. */
+  lastPongRttMs: number | null;
+}
+
+export interface ConnTestAckPayload {
+  seq: number;
+  clientTs: number;
+  serverTs: number;
+  /** Which seat answered: the client checks the test really ran on its own connection. */
+  playerId: string | null;
+  /**
+   * Application frames the server received from / sent to this socket since it opened, read at the
+   * moment the answer was prepared — so the ack being read does not count itself yet.
+   */
+  msgsIn: number;
+  msgsOut: number;
+  bytesIn: number;
+  bytesOut: number;
+  transport: ConnTransportStats;
+}
+
 export type ClientMessage =
   | { type: ClientMsgType.CreateRoom; payload?: CreateRoomPayload }
   | { type: ClientMsgType.JoinRoom; payload: JoinRoomPayload }
@@ -100,7 +139,8 @@ export type ClientMessage =
   | { type: ClientMsgType.FastPhrase; payload: FastPhrasePayload }
   | { type: ClientMsgType.Surrender; payload?: SurrenderPayload }
   | { type: ClientMsgType.PieceLock; payload: PieceLockPayload }
-  | { type: ClientMsgType.Ping; payload?: PingPayload };
+  | { type: ClientMsgType.Ping; payload?: PingPayload }
+  | { type: ClientMsgType.ConnTest; payload: ConnTestPayload };
 
 // ===== Server → Client =====
 
@@ -116,8 +156,10 @@ export enum ServerMsgType {
   GarbageApplied = 'garbage_applied', // rows a player just absorbed — keeps the shadow boards honest
   GarbageArrive = 'garbage_arrive', // server-scheduled attack rows against this player
   OpponentDropped = 'opponent_dropped', // a seat lost its socket mid-match; the seat is held for a rejoin
+  ResyncRequest = 'resync_request', // your step counter is ahead: retransmit the missing piece_locks
   MatchOver = 'match_over',
   Pong = 'pong',
+  ConnTestAck = 'conn_test_ack', // one ack per probe frame, with the server's counters for this socket
   Error = 'error',
 }
 
@@ -255,6 +297,19 @@ export interface OpponentDroppedPayload {
   returnBy: number | null;
 }
 
+/**
+ * The server's replay of your board is missing one or more of your own `piece_lock` reports
+ * (your step counter ran ahead of what it received — usually a report lost in transit, not a
+ * cheat). Retransmit every lock with `globalStep` in `[expectedStep, gotStep)` in order; the
+ * server keeps the match running until `deadline` (server clock) and only then calls it a
+ * forfeit. Clients that do not implement this simply keep the old behaviour.
+ */
+export interface ResyncRequestPayload {
+  expectedStep: number;
+  gotStep: number;
+  deadline: number;
+}
+
 export interface MatchResult {
   playerId: string;
   name: string;
@@ -308,8 +363,10 @@ export type ServerMessage =
   | { type: ServerMsgType.GarbageArrive; payload: GarbageArrivePayload }
   | { type: ServerMsgType.GarbageApplied; payload: GarbageAppliedPayload }
   | { type: ServerMsgType.OpponentDropped; payload: OpponentDroppedPayload }
+  | { type: ServerMsgType.ResyncRequest; payload: ResyncRequestPayload }
   | { type: ServerMsgType.MatchOver; payload: MatchOverPayload }
   | { type: ServerMsgType.Pong; payload: PongPayload }
+  | { type: ServerMsgType.ConnTestAck; payload: ConnTestAckPayload }
   | { type: ServerMsgType.Error; payload: MpErrorPayload };
 
 /** Interval an MP client should send app-level `ping` at (server answers `pong`). */

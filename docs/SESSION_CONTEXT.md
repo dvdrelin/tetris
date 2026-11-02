@@ -1172,3 +1172,77 @@ socket_closed Alice (phase over), затем Bob
 печатает таймлайн: `+1.2s surrender (claimedCause button)`, `match_closed`, `leave_room`.
 Без токена `GET /api/mp/matches` отвечает 401 (токен задан), без токена в окружении — 503.
 
+
+## Раунд «мягкий ресинхрон, тест связи, вкладочный токен» (2026-11-02)
+
+Триггер — разбор прод-лога матча EX8H (`2026-11-02-EX8H-1793632613637.jsonl`): DVDRELI
+(Delphi7IsAlive) выиграл у dvdrelin по forfeit, потому что сервер получил `step 13` при
+пропущенном `step 12` (`violation: "step 13 != 12"`) и сразу закрыл матч как `invalid_move`.
+Сам пропуск в логе объяснён не был: `RoomServer.violate()` (bad JSON / bad shape / BadPhase /
+rate limit) не писал ни в консоль, ни в лог матча.
+
+### 1. Мягкий ресинхрон вместо мгновенного forfeit (выбранный вариант «3»)
+
+- `shared/src/net/protocol.ts`: `ServerMsgType.ResyncRequest` + `ResyncRequestPayload
+  {expectedStep, gotStep, deadline}`.
+- `MatchState.applyLock`: прямой пропуск шага помечается `gap` (шаг вперёд на 1…`MP_RESYNC_MAX_GAP`);
+  назад/дубликаты/огромный прыжок остаются жёстким нарушением.
+- `RoomServer.requestResync`: шлёт `resync_request`, пишет `resync_requested`, ставит таймер
+  `MP_RESYNC_GRACE_MS`; повторные пропуски во время ожидания → `resync_waiting` без расхода
+  бюджета; просрочка → `resync_failed` + `invalid_move` + forfeit + terminate. Новый матч
+  получает свежий бюджет (`clearResync` в `maybeStart`/`matchOver`), максимум
+  `MP_RESYNC_MAX_PER_MATCH` эпизодов.
+- Клиент: кольцо `reportedLocks` (80 последних залов), по `resync_request` досылает всё с
+  `expectedStep` по порядку; счётчик `resyncCount` в сторе.
+- Тесты: `backend/tests/unit/mpResync.test.ts` (3) — досыл спасает матч; нет досыла → forfeit с
+  `resync_failed` в логе; огромный прыжок → мгновенный вердикт. FE-тест: досыл из кольца по
+  `resync_request`.
+
+### 2. `violate()` перестал быть немым
+
+`console.warn('[mp] protocol violation …')` + событие `protocol_violation {code, message,
+violations}` в JSONL матча, если соет привязан к комнате. Это ровно тот слепой пятно, из-за
+которого EX8H нельзя было объяснить полностью.
+
+### 3. Тест связи в комнате (кнопка + статистика)
+
+- Протокол: `ClientMsgType.ConnTest` → `ServerMsgType.ConnTestAck` c `ConnTestAckPayload`
+  (`seq`, `clientTs`, `serverTs`, `playerId`, `msgsIn/msgsOut/bytesIn/bytesOut`,
+  `transport {pingsSent, pingsLost, lastPongRttMs}`).
+- Счётчики прикладных кадров ведёт `RoomServer` (`connCounters` WeakMap; инкременты в `onMessage`
+  и `send`), транспортные — `index.ts` на реальном `ws`-сокете (`transportStats` в heartbeat:
+  пинг без pongа до следующего пинга = потерянный кадр канала).
+- Клиент: `startConnTest(12, 150ms)` → `connTest {sent, received, lost, minRtt, avgRtt, maxRtt,
+  jitter, server}`; незакрытые кадры на момент завершения — потери; обрыв сокета досрочно
+  завершает тест.
+- UI: кнопка `Тест связи` (`data-testid="mp-conn-test"`) и панель `mp-conn-stats` —
+  «отправлено/получено/потеряно», `min/средн./max` + `дёрганье ±N мс`, серверные кадры и байты,
+  строка `Транспорт WS`.
+- Тесты: `backend/tests/unit/mpConnTest.test.ts` (3), FE-тест таймингов/потерь, E2E
+  `the room link test reports frames delivered, losses and round trips`.
+
+### 4. Баг скриншота: «как будто я отсоединён, я пишу — чат пустой»
+
+Причина: токен реjoin жил в `localStorage`, то есть был **общим на профиль**. Две вкладки одного
+браузера использовали один токен, а `rejoinRoom` на сервере вращает токен места и терминирует
+прежний сокет → вкладки убивали соединение друг друга. Экран при этом оставался на старом
+ростере: место помечено `connected: false`, собственные сообщения в чат уходили в сокет без
+комнаты и молча отбрасывались (`not_in_room`).
+
+- `TOKEN_KEY`/`MATCH_KEY` переехали в `sessionStorage` (на вкладку; перезагрузка вкладки их
+  сохраняет, новая вкладка их не видит) + одноразовая миграция из `localStorage` (`readJson`,
+  `writeJson`, `clearKey`).
+- Отказ реjoin (`bad_token`/`room_not_found`) теперь роняет локальную комнату: `room = null`,
+  `lostRoomCode = <код>`, и RoomView показывает объяснение + предзаполняет код ввода
+  (`data-testid="mp-lost-room"`), вместо мёртвого ростера с немым чатом.
+- Тесты FE: миграция legacy-токена в вкладку и `RejoinRoom` им; отказ реjoin сбрасывает комнату.
+
+### 5. Документация механики сети
+
+`docs/MP_NETWORK.md`: транспорт (WSS/TCP, 16 КиБ рамка), двухуровневый heartbeat
+(серверный `ws`-ping 30 с ↔ nginx-idle 60 с, клиентский app-ping 25 с), оценка часов и `applyAt`
+для мусорки, нумерация `globalStep` и три механизма компенсации потерь (`unsentLocks`,
+`reportedLocks`, `resync_request`), где именно считается потеря (транспортные пины, `conn_test`),
+grace 120 с и вкладочный токен, лимиты и античит, диагностика (`/api/mp`, `mp:replay`).
+
+Тесты раунда: FE 274/274, BE 114/114, E2E 50/50; `tsc` shared/backend и `vue-tsc` чистые.

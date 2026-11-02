@@ -18,6 +18,16 @@ export default defineComponent({
 
     onMounted(() => mp.ensureConnected())
 
+    // A room we were dropped from keeps its code in the input: rejoining is one Enter press away,
+    // and the player sees which room the notice is about.
+    watch(
+      () => mp.lostRoomCode,
+      (code) => {
+        if (code && !codeDraft.value) codeDraft.value = code
+      },
+      { immediate: true },
+    )
+
     function createRoom() {
       gameStore.playerName = gameStore.playerName // commit the store's normalized name
       mp.createRoom(gameStore.playerName)
@@ -56,7 +66,7 @@ export default defineComponent({
       emit('menu')
     }
 
-    return { mp, codeDraft, chatDraft, chatBox, createRoom, joinByCode, toggleReady, sendChat, copyCode, goMenu }
+    return { mp, codeDraft, chatDraft, chatBox, createRoom, joinByCode, toggleReady, sendChat, copyCode, goMenu, kb: (n: number) => `${(n / 1024).toFixed(1)} КБ` }
   },
 })
 </script>
@@ -67,6 +77,10 @@ export default defineComponent({
 
     <div v-if="!mp.room" class="room-join">
       <h2 class="mp-title">МУЛЬТИПЛЕЕР</h2>
+      <div v-if="mp.lostRoomCode" class="mp-error mp-error-lost" data-testid="mp-lost-room">
+        Мы вышли из комнаты {{ mp.lostRoomCode }}: место забрала другая вкладка, комната закрылась
+        или сервер перезапустился. Введи код заново — состав и чат уже не те.
+      </div>
       <div v-if="!mp.connected" class="mp-hint">Подключение…</div>
       <div class="join-row">
         <input
@@ -130,6 +144,42 @@ export default defineComponent({
           {{ mp.me?.ready ? 'Отменить готовность' : 'Готов' }}
         </button>
         <button class="mp-btn mp-btn-ghost" data-testid="mp-leave" @click="mp.leaveRoom()">Покинуть</button>
+        <button
+          class="mp-btn mp-btn-ghost"
+          data-testid="mp-conn-test"
+          :disabled="mp.connTestRunning || !mp.connected"
+          title="12 кадров туда-обратно: сколько дошло, сколько потерялось, какой разброс задержки"
+          @click="mp.startConnTest()"
+        >
+          {{ mp.connTestRunning ? 'Проверяем связь…' : 'Тест связи' }}
+        </button>
+      </div>
+
+      <div v-if="mp.connTest" class="mp-results" data-testid="mp-conn-stats">
+        <div class="result-row">
+          <span class="result-name">Канал до сервера</span>
+          <span class="result-lines">
+            отправлено {{ mp.connTest.sent }}, получено {{ mp.connTest.received }}<template v-if="mp.connTest.lost">, потеряно {{ mp.connTest.lost }}</template>
+          </span>
+        </div>
+        <div class="result-row">
+          <span class="result-name">Задержка</span>
+          <span class="result-lines">
+            min {{ mp.connTest.minRtt }} / средн. {{ mp.connTest.avgRtt }} / max {{ mp.connTest.maxRtt }} мс · дёрганье ±{{ mp.connTest.jitter }} мс
+          </span>
+        </div>
+        <div v-if="mp.connTest.server" class="result-row">
+          <span class="result-name">Сервер</span>
+          <span class="result-lines">
+            принял {{ mp.connTest.server.msgsIn }} кадров ({{ kb(mp.connTest.server.bytesIn) }}), отправил {{ mp.connTest.server.msgsOut }} ({{ kb(mp.connTest.server.bytesOut) }})
+          </span>
+        </div>
+        <div v-if="mp.connTest.server" class="result-row">
+          <span class="result-name">Транспорт WS</span>
+          <span class="result-lines">
+            пингов {{ mp.connTest.server.transport.pingsSent }}, без ответа {{ mp.connTest.server.transport.pingsLost }}<template v-if="mp.connTest.server.transport.lastPongRttMs !== null"> · ping RTT {{ mp.connTest.server.transport.lastPongRttMs }} мс</template>
+          </span>
+        </div>
       </div>
 
       <div class="chat">

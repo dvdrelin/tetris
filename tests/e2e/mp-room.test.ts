@@ -87,6 +87,30 @@ test('room lifecycle across two browsers', async ({ browser }) => {
   }
 })
 
+test('the room link test reports frames delivered, losses and round trips', async ({ browser }) => {
+  const ctxA = await browser.newContext()
+  const pageA = await ctxA.newPage()
+  try {
+    await openMenuMp(pageA, 'Alice')
+    await pageA.getByTestId('mp-create').click()
+    await expect(pageA.getByTestId('mp-room-code')).toBeVisible()
+
+    await pageA.getByTestId('mp-conn-test').click()
+    const stats = pageA.getByTestId('mp-conn-stats')
+    await expect(stats).toBeVisible({ timeout: 10000 })
+    // 12 probes on loopback: all of them must come back, and the panel must show the server side
+    // too — that line only appears if the real `ws` socket carried its transport counters.
+    await expect(stats).toContainText('отправлено 12, получено 12')
+    await expect(stats).toContainText('min')
+    await expect(stats).toContainText('Сервер')
+    await expect(stats).toContainText('принял ')
+    await expect(stats).toContainText('Транспорт WS')
+    await expect(pageA.getByTestId('mp-conn-test')).toBeEnabled()
+  } finally {
+    await ctxA.close()
+  }
+})
+
 test('a third browser into the same room is refused (room_full)', async ({ browser }) => {
   const ctxA = await browser.newContext()
   const ctxB = await browser.newContext()

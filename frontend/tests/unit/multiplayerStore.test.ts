@@ -62,6 +62,7 @@ function setupStore() {
   setActivePinia(createPinia())
   FakeWebSocket.instances = []
   localStorage.clear()
+  sessionStorage.clear()
   const store = useMultiplayerStore()
   store.ensureConnected()
   ws().simulateOpen()
@@ -94,7 +95,7 @@ describe('connection and room join', () => {
     })
     expect(store.room?.code).toBe('AB12')
     expect(store.me?.name).toBe('Host')
-    expect(JSON.parse(localStorage.getItem('nt_mp_rejoin')!).token).toBe('tok-1')
+    expect(JSON.parse(sessionStorage.getItem('nt_mp_rejoin')!).token).toBe('tok-1')
   })
 
   test('chat arrives from the server into the room feed', () => {
@@ -109,7 +110,7 @@ describe('connection and room join', () => {
     ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 'tok-1', playerId: 'p1' } })
     ws().feed({ type: ServerMsgType.Error, payload: { code: MpErrorCode.BadToken, message: 'nope' } })
     expect(store.lastError?.code).toBe(MpErrorCode.BadToken)
-    expect(localStorage.getItem('nt_mp_rejoin')).toBeNull()
+    expect(sessionStorage.getItem('nt_mp_rejoin')).toBeNull()
   })
 
   test('leaveRoom resets local room state and drops the token', () => {
@@ -119,11 +120,44 @@ describe('connection and room join', () => {
     expect(ws().lastSent().type).toBe(ClientMsgType.LeaveRoom)
     expect(store.room).toBeNull()
     expect(store.me).toBeNull()
-    expect(localStorage.getItem('nt_mp_rejoin')).toBeNull()
+    expect(sessionStorage.getItem('nt_mp_rejoin')).toBeNull()
   })
 })
 
 describe('reconnect behaviour', () => {
+  test('the rejoin ticket is per tab; a legacy shared one is migrated once', () => {
+    // Two tabs of the same profile used to share one localStorage ticket: every reconnect rotated
+    // the server-side token and terminated the other tab's socket — the screens then showed a dead
+    // seat and a chat that silently went nowhere. The ticket now lives in the tab.
+    setActivePinia(createPinia())
+    FakeWebSocket.instances = []
+    localStorage.clear()
+    sessionStorage.clear()
+    localStorage.setItem('nt_mp_rejoin', JSON.stringify({ code: 'AB12', token: 'legacy-1' }))
+
+    const store = useMultiplayerStore()
+    store.ensureConnected()
+    ws().simulateOpen()
+
+    expect(ws().lastSent()).toEqual({ type: ClientMsgType.RejoinRoom, payload: { code: 'AB12', token: 'legacy-1' } })
+    expect(JSON.parse(sessionStorage.getItem('nt_mp_rejoin')!).token).toBe('legacy-1')
+    expect(localStorage.getItem('nt_mp_rejoin')).toBeNull() // the shared copy is gone: no tab fight
+  })
+
+  test('a refused rejoin drops the stale room instead of showing a dead roster', () => {
+    // The screenshot bug: after a takeover the seat looked disconnected and typed chat went
+    // nowhere, because the screen kept rendering a room the socket was no longer part of.
+    const store = setupStore()
+    ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+    expect(store.room?.code).toBe('AB12')
+
+    ws().feed({ type: ServerMsgType.Error, payload: { code: MpErrorCode.BadToken, message: 'Rejoin token is not valid for this room' } })
+
+    expect(store.room).toBeNull()
+    expect(store.lostRoomCode).toBe('AB12')
+    expect(sessionStorage.getItem('nt_mp_rejoin')).toBeNull()
+  })
+
   test('an unplanned close reconnects and rejoins with the stored token', () => {
     jest.useFakeTimers()
     try {
@@ -210,7 +244,7 @@ describe('match lifecycle', () => {
       })
       expect(store.matchOverInfo?.reason).toBe('surrender')
       expect(store.mpGameState.isRunning).toBe(false)
-      expect(localStorage.getItem('nt_mp_match')).toBeNull()
+      expect(sessionStorage.getItem('nt_mp_match')).toBeNull()
     } finally {
       jest.useRealTimers()
     }
@@ -218,13 +252,13 @@ describe('match lifecycle', () => {
 
   test('rejoining a live match after a reload surrenders (no replay yet — block D)', () => {
     const store = setupStore()
-    localStorage.setItem('nt_mp_match', JSON.stringify({ seed: 1, startTime: 1, playerIndex: 0, code: 'AB12' }))
+    sessionStorage.setItem('nt_mp_match', JSON.stringify({ seed: 1, startTime: 1, playerIndex: 0, code: 'AB12' }))
     ws().feed({
       type: ServerMsgType.RoomCreated,
       payload: { room: roomSnapshot({ phase: 'playing' }), token: 't', playerId: 'p1' },
     })
     expect(ws().lastSent().type).toBe(ClientMsgType.Surrender)
-    expect(localStorage.getItem('nt_mp_match')).toBeNull()
+    expect(sessionStorage.getItem('nt_mp_match')).toBeNull()
   })
 
   test('a reconnect while the engine is still alive resumes — nobody is blamed for a reload', () => {
@@ -237,7 +271,7 @@ describe('match lifecycle', () => {
       ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
       ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 12, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
       jest.advanceTimersByTime(1)
-      expect(localStorage.getItem('nt_mp_match')).not.toBeNull()
+      expect(sessionStorage.getItem('nt_mp_match')).not.toBeNull()
 
       ws().close() // the socket dies (nginx idle, a wifi hop); the tab and its engine survive
       jest.advanceTimersByTime(2000) // the reconnect backoff, then the new socket opens
@@ -251,7 +285,70 @@ describe('match lifecycle', () => {
       expect(types).not.toContain(ClientMsgType.Surrender)
       expect(store.myOverCause).toBeNull()
       expect(store.inMatch).toBe(true)
-      expect(localStorage.getItem('nt_mp_match')).not.toBeNull()
+      expect(sessionStorage.getItem('nt_mp_match')).not.toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('the link test reports losses, round trips and the server counters', () => {
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      store.startConnTest(3, 100)
+      const probes = () => ws().sent.filter((m: any) => m.type === ClientMsgType.ConnTest)
+      const ack = (seq: number) => ({
+        type: ServerMsgType.ConnTestAck,
+        payload: {
+          seq, clientTs: Date.now(), serverTs: Date.now(), playerId: 'p1',
+          msgsIn: 9, msgsOut: 4, bytesIn: 1000, bytesOut: 2500,
+          transport: { pingsSent: 3, pingsLost: 1, lastPongRttMs: 37 },
+        },
+      })
+
+      jest.advanceTimersByTime(40)
+      ws().feed(ack(1)) // probe 1 (sent at t=0) → 40 ms round trip
+      jest.advanceTimersByTime(100) // probe 2 goes out at t=100
+      ws().feed(ack(2)) // → 40 ms
+      jest.advanceTimersByTime(1360) // probe 3 at t=200 is never answered; the run closes at t=1500
+
+      expect(probes()).toHaveLength(3)
+      expect(store.connTestRunning).toBe(false)
+      expect(store.connTest).toMatchObject({ sent: 3, received: 2, lost: 1, minRtt: 40, avgRtt: 40, maxRtt: 40, jitter: 0 })
+      expect(store.connTest!.server).toMatchObject({
+        msgsIn: 9, msgsOut: 4,
+        transport: { pingsSent: 3, pingsLost: 1, lastPongRttMs: 37 },
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('a resync_request retransmits the piece_lock reports the server never saw', () => {
+    // The server's replay of our board is behind us: the store must hand the missing locks back
+    // from its ring of reported locks (a lost packet is not cheating).
+    jest.useFakeTimers()
+    try {
+      const store = setupStore()
+      ws().feed({ type: ServerMsgType.RoomCreated, payload: { room: roomSnapshot(), token: 't', playerId: 'p1' } })
+      ws().feed({ type: ServerMsgType.GameStart, payload: { seed: 5, startTime: Date.now(), playerIndex: 0, league: 'heads_up' } })
+      jest.advanceTimersByTime(1)
+      for (let i = 0; i < 600; i++) store.mpTick(50) // ~30 s of gravity: pieces lock by themselves
+
+      const locks = () => ws().sent.filter((m: any) => m.type === ClientMsgType.PieceLock)
+      const before = locks()
+      expect(before.length).toBeGreaterThan(0)
+      const lastStep = before[before.length - 1].payload.globalStep
+
+      ws().feed({
+        type: ServerMsgType.ResyncRequest,
+        payload: { expectedStep: lastStep, gotStep: lastStep + 1, deadline: Date.now() + 3000 },
+      })
+
+      const after = locks()
+      expect(after).toHaveLength(before.length + 1)
+      expect(after[after.length - 1].payload).toEqual(before[before.length - 1].payload)
+      expect(store.resyncCount).toBe(1)
     } finally {
       jest.useRealTimers()
     }
@@ -381,7 +478,7 @@ describe('garbage bookkeeping and match-end notices (5.1 fixes)', () => {
 
   test('a rejoin after a page reload surrenders with cause reload', () => {
     const store = setupStore()
-    localStorage.setItem('nt_mp_match', JSON.stringify({ seed: 1, startTime: 1, playerIndex: 0, code: 'AB12' }))
+    sessionStorage.setItem('nt_mp_match', JSON.stringify({ seed: 1, startTime: 1, playerIndex: 0, code: 'AB12' }))
     ws().feed({
       type: ServerMsgType.RoomCreated,
       payload: { room: roomSnapshot({ phase: 'playing' }), token: 't', playerId: 'p1' },

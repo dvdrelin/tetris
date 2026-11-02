@@ -1,6 +1,7 @@
 import express from 'express'
 import { createServer as createHttpServer } from 'http'
 import { WebSocketServer, WebSocket as WsSocket } from 'ws'
+import type { ConnTransportStats } from '@neon-tetris/shared'
 import { join } from 'path'
 import { ScoreService } from './services/scoreService'
 import { RoomServer } from './servers/roomServer'
@@ -89,7 +90,14 @@ httpServer.on('upgrade', (request, socket, head) => {
 
 // The `ws` heartbeat bookkeeping lives on the socket itself (README pattern): a per-connection
 // flag flipped by pings, cleared by each interval ping and set again by each arriving pong.
-type AliveSocket = WsSocket & { isAlive: boolean }
+// Alongside it we keep the transport counters (`transportStats`) that `conn_test_ack` reports:
+// how many protocol pings went out, how many never got a pong (that is real transport loss), and
+// the last measured ping→pong round trip.
+type AliveSocket = WsSocket & {
+  isAlive: boolean
+  transportStats: ConnTransportStats
+  pingSentAt?: number
+}
 
 wss.on('connection', (client) => {
   const ws = client as AliveSocket
@@ -98,16 +106,28 @@ wss.on('connection', (client) => {
   // answering pongs. Browsers answer protocol pings automatically, and this also keeps the
   // nginx-proxy idle timer (60 s) fed on an otherwise silent room connection.
   ws.isAlive = true
+  ws.transportStats = { pingsSent: 0, pingsLost: 0, lastPongRttMs: null }
   ws.on('pong', () => {
     ws.isAlive = true
+    if (ws.pingSentAt !== undefined) {
+      ws.transportStats.lastPongRttMs = Date.now() - ws.pingSentAt
+      ws.pingSentAt = undefined
+    }
   })
 })
 
 const heartbeat = setInterval(() => {
   wss.clients.forEach((client) => {
     const ws = client as AliveSocket
-    if (ws.isAlive === false) return ws.terminate()
+    if (ws.isAlive === false) {
+      // The previous ping was never answered: that frame (or its pong) was lost on the wire, and
+      // the connection is now dead enough to drop.
+      ws.transportStats.pingsLost += 1
+      return ws.terminate()
+    }
     ws.isAlive = false
+    ws.transportStats.pingsSent += 1
+    ws.pingSentAt = Date.now()
     ws.ping()
   })
 }, MP_CONFIG.transportPingMs)

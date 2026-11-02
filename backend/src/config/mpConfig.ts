@@ -41,6 +41,14 @@ export const MP_CONFIG = Object.freeze({
   /** Match diagnostics: one append-only JSONL per match under backend/data/mp-matches. MP_LOGS=0 off. */
   logsEnabled: process.env.MP_LOGS !== '0',
   logMaxFiles: num('MP_LOG_MAX_FILES', 300),
-  /** Secret for GET /api/mp/matches… Empty → the endpoints answer 503, logs stay SSH-only. */
+  /** Secret for GET /api/mp/matches… Empty → the endpoints answer 503, logs are SSH-only. */
   logAdminToken: (process.env.MP_ADMIN_TOKEN ?? '').trim(),
+  /**
+   * Soft resync of a lost `piece_lock` report (instead of an instant cheat verdict): the server
+   * asks for the missing steps and waits this long for the retransmission before forfeiting.
+   * A gap wider than resyncMaxGap, or more than resyncMaxPerMatch incidents, stays a forfeit.
+   */
+  resyncGraceMs: num('MP_RESYNC_GRACE_MS', 3000),
+  resyncMaxGap: num('MP_RESYNC_MAX_GAP', 12),
+  resyncMaxPerMatch: num('MP_RESYNC_MAX_PER_MATCH', 3),
 })
