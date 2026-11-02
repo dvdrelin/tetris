@@ -910,3 +910,17 @@ garbage на живом стенде (docker + ws-клиент), деплой/п
 - `deploy.sh`: `APP_VERSION='2.<YY>.<MM>.<hash>'` — формат в шапке и в `printf` обновлён.
 - История: прежний формат `1.<YYMMDD>.<hash>` (записи прошлых деплоев в документах — факты
   тех выпусков, не переписывать).
+
+Деплой релиза `2.26.11` (коммиты `ce731d1` + `2881ea9`, `bash deploy.sh root ntetris.ddns.net 3000`,
+2026-11-02, Git Bash на Windows — обычный `bash` из PATH это сломанный WSL-шейм):
+- тег `v2.26.11.ce731d1` и `main` запушены в `github.com/dvdrelin/tetris`;
+- первый прогон деплоя упал на `vite build` в образе: `vite.config.mts` требует
+  `scripts/app-version.cjs`, а `scripts/` не попадал в build-контекст → `2881ea9`
+  (`COPY scripts/ ./scripts/` в stage 1). Перед повторным деплоем проверено локальным
+  `docker build --build-arg APP_VERSION=…` + `docker run`: health и бандл несут точную строку;
+- сервер вычислил `APP_VERSION = 2.26.11.2881ea9`, контейнер поднят,
+  `https://ntetris.ddns.net/api/health` → `200`, `"version":"2.26.11.2881ea9"` (совпало с
+  вычисленной — образ из этого коммита), `websocket.mpRooms/mpPlayers` присутствуют,
+  `runtime.node v22.23.4`;
+- независимая сверка фронтенда: прод-бандл `assets/index-LcyGD4Xu.js` содержит строку
+  `2.26.11.2881ea9` — чип версии в меню отдаёт ту же сборку.
