@@ -1246,3 +1246,20 @@ violations}` в JSONL матча, если соет привязан к комн
 grace 120 с и вкладочный токен, лимиты и античит, диагностика (`/api/mp`, `mp:replay`).
 
 Тесты раунда: FE 274/274, BE 114/114, E2E 50/50; `tsc` shared/backend и `vue-tsc` чистые.
+
+### Деплой раунда v2.0 (2026-11-02, 19:07 МСК)
+
+- Коммит `06b00d9` (14 файлов, +1001/−50), `git push` в `main`, `deploy.sh root ntetris.ddns.net 3000`.
+- Версия образа: `2.26.11.06b00d9` (`GET /api/health`). Бандл `assets/index-CSmbVaXS.js`,
+  sha256 `6126d4d268c4cd17…cf1b0` — совпадает «домен отдаёт» и «в образе».
+- Живой бандл содержит: `Тест связи` ×1, `mp-conn-test` ×1, `Транспорт WS` ×1, `conn_test` ×2,
+  `resync_request` ×1, `Мы вышли из комнаты` ×1, `mp-lost-room` ×1 (плюс прежние
+  `выгружена браузером` ×2).
+- Прод-зонд `tmp-audit/prod-mp-resync-probe.mjs` (комната `AP9Z`, два WS-клиента):
+  `conn_test_ack` = `{msgsIn 4, msgsOut 8, bytesIn 245, bytesOut 2286, transport 0/0/null}`;
+  `piece_lock` с `globalStep 4` вместо 1 → `resync_request {expectedStep:1, gotStep:4,
+  deadline:+3s}` и НИКАКОГО раннего `invalid_move`; после молчания — `error invalid_move` +
+  `match_over forfeit detail invalid_move`.
+- Лог матча `AP9Z` теперь показывает всю цепочку: `match_start piece_lock resync_requested
+  resync_failed match_over match_closed socket_closed grace_expired socket_closed` — то, чего
+  не было в EX8H.
